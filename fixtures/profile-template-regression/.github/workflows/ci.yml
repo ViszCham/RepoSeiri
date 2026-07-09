@@ -1,0 +1,7 @@
+name: template-ci
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo validate generated output

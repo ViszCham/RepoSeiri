@@ -1,0 +1,3 @@
+# Contributing
+
+Docs contribution route.

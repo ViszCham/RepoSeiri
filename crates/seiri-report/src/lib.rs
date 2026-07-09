@@ -1,10 +1,16 @@
 use seiri_core::{
     stable_id, BaselineStatus, CalibrationRun, CodexReviewContext, Evidence, EvidenceKind,
-    EvidenceSource, ImportantFileKind, PatchPlan, ProfileKind, RepoSnapshot, RouteKind,
+    EvidenceSource, ImportantFileKind, PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState,
 };
 use seiri_fs::RepoFsScan;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+
+mod evidence;
+mod route_priority;
+
+use evidence::{build_evidence_ledger, build_route_states};
+use route_priority::build_missing_route_priority_report;
 
 #[derive(Debug)]
 pub enum AuditError {
@@ -77,16 +83,32 @@ pub fn audit_repository_with_profile(
     snapshot.important_files = fs_scan.important_files.clone();
     snapshot.readme = readme;
     snapshot.evidence = build_evidence(&fs_scan, snapshot.readme.as_ref());
+    snapshot.evidence_ledger = build_evidence_ledger(&snapshot.evidence);
     let baseline = seiri_patterns::evaluate_common_baseline(&snapshot);
     snapshot.pattern_matches = baseline.pattern_matches;
     snapshot.findings = baseline.findings;
     snapshot.baseline = Some(baseline.report);
+    snapshot.route_states = build_route_states(
+        &snapshot.evidence_ledger,
+        &snapshot.pattern_matches,
+        snapshot.readme.as_ref(),
+    );
     snapshot.profile = seiri_profiles::evaluate_profile(&snapshot, profile);
+    snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot);
     Ok(snapshot)
 }
 
 pub fn to_json(snapshot: &RepoSnapshot) -> Result<String, AuditError> {
     Ok(serde_json::to_string_pretty(snapshot)?)
+}
+
+pub fn pattern_registry_to_json() -> Result<String, AuditError> {
+    Ok(seiri_patterns::common_registry_to_json()?)
+}
+
+#[must_use]
+pub fn pattern_registry_to_markdown() -> String {
+    seiri_patterns::render_common_registry_markdown()
 }
 
 pub fn plan_repository(path: impl AsRef<Path>) -> Result<PatchPlan, AuditError> {
@@ -148,9 +170,18 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     out.push_str(&format!("- Schema: `{}`\n", run.schema_version));
     out.push_str(&format!("- Dataset: `{}`\n", run.dataset_id));
     out.push_str(&format!("- Records: `{}`\n", run.summary.records));
+    out.push_str(&format!("- Sources: `{}`\n", run.summary.sources));
     out.push_str(&format!(
         "- Known pattern stats: `{}`\n",
         run.summary.known_pattern_stats
+    ));
+    out.push_str(&format!(
+        "- Route requirements: `{}`\n",
+        run.summary.route_requirements
+    ));
+    out.push_str(&format!(
+        "- Profile branches: `{}`\n",
+        run.summary.profile_branches
     ));
     out.push_str(&format!(
         "- Pending patterns: `{}`\n",
@@ -160,7 +191,32 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
         "- Weight suggestions: `{}`\n",
         run.summary.weight_suggestions
     ));
-    out.push_str(&format!("- Boundary: {}\n\n", run.claim_boundary));
+    out.push_str(&format!("- Boundary: {}\n", run.claim_boundary.summary));
+    out.push_str(&format!(
+        "- Boundary gates: review_required `{}` runtime_rule_adoption `{}` automatic_weight_adoption `{}` guarantees `{}`\n\n",
+        run.claim_boundary.review_required,
+        run.claim_boundary.runtime_rule_adoption_allowed,
+        run.claim_boundary.automatic_weight_adoption_allowed,
+        run.claim_boundary.guarantee_allowed
+    ));
+
+    out.push_str("## Calibration Sources\n\n");
+    if run.sources.is_empty() {
+        out.push_str("- No calibration sources recorded.\n\n");
+    } else {
+        for source in &run.sources {
+            out.push_str(&format!(
+                "- `{}` kind `{:?}` label `{}` records `{}` scale `{:?}` status `{:?}`\n",
+                source.id,
+                source.kind,
+                source.label,
+                source.records,
+                source.scale,
+                source.review_status
+            ));
+        }
+        out.push('\n');
+    }
 
     out.push_str("## Pattern Stats\n\n");
     if run.stats.is_empty() {
@@ -168,12 +224,55 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     } else {
         for stat in &run.stats {
             out.push_str(&format!("### `{}`\n\n", stat.pattern_id));
+            match stat.route {
+                Some(route) => out.push_str(&format!("- Route: `{:?}`\n", route)),
+                None => out.push_str("- Route: none\n"),
+            }
             out.push_str(&format!("- Repositories: `{}`\n", stat.repositories));
             out.push_str(&format!("- Observations: `{}`\n", stat.observations));
             out.push_str(&format!("- Frequency x1000: `{}`\n", stat.frequency_x1000));
+            out.push_str(&format!("- Sources: `{}`\n", stat.source_ids.join("`, `")));
             out.push_str(&format!("- Confidence: `{:?}`\n", stat.confidence));
+            out.push_str(&format!("- Review status: `{:?}`\n", stat.review_status));
             out.push_str(&format!("- Note: {}\n\n", stat.confidence_note));
         }
+    }
+
+    out.push_str("## Route Requirements\n\n");
+    if run.route_requirements.is_empty() {
+        out.push_str("- No route requirement candidates generated.\n\n");
+    } else {
+        for requirement in &run.route_requirements {
+            out.push_str(&format!(
+                "- `{}` route `{:?}` repositories `{}` frequency `{}` requirement `{:?}` priority `{:?}` confidence `{:?}` status `{:?}`\n",
+                requirement.id,
+                requirement.route,
+                requirement.supporting_repositories,
+                requirement.frequency_x1000,
+                requirement.suggested_requirement,
+                requirement.priority,
+                requirement.confidence,
+                requirement.review_status
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Profile Branches\n\n");
+    if run.profile_branches.is_empty() {
+        out.push_str("- No profile branch candidates generated.\n\n");
+    } else {
+        for branch in &run.profile_branches {
+            out.push_str(&format!(
+                "- rank `{}` profile `{}` prior `{}` confidence `{}` score `{}`\n",
+                branch.rank,
+                branch.profile,
+                branch.prior_x1000,
+                branch.confidence_x100,
+                branch.score_x100
+            ));
+        }
+        out.push('\n');
     }
 
     out.push_str("## Pending Pattern Candidates\n\n");
@@ -201,10 +300,14 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
             let current = suggestion
                 .current_weight
                 .map_or_else(|| "none".to_string(), |weight| weight.to_string());
+            let route = suggestion
+                .route
+                .map_or_else(|| "none".to_string(), |route| format!("{route:?}"));
             out.push_str(&format!(
-                "- `{}` `{}` profile `{}` current `{}` suggested `{}` delta `{}` confidence `{:?}` status `{:?}`\n",
+                "- `{}` `{}` route `{}` profile `{}` current `{}` suggested `{}` delta `{}` confidence `{:?}` status `{:?}`\n",
                 suggestion.id,
                 suggestion.pattern_id,
+                route,
                 suggestion.profile,
                 current,
                 suggestion.suggested_weight,
@@ -223,11 +326,16 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
     let mut out = String::new();
     out.push_str("# RepoSeiri Patch Plan\n\n");
     out.push_str(&format!("- Schema: `{}`\n", plan.schema_version));
+    out.push_str(&format!("- Planner: `{}`\n", plan.planner_version));
     out.push_str(&format!("- Mode: `{:?}`\n", plan.mode));
     match plan.profile {
         Some(profile) => out.push_str(&format!("- Profile: `{profile}`\n")),
         None => out.push_str("- Profile: not selected\n"),
     }
+    out.push_str(&format!(
+        "- Total candidates: `{}`\n",
+        plan.summary.total_candidates
+    ));
     out.push_str(&format!(
         "- Safe operations: `{}`\n",
         plan.summary.safe_operations
@@ -244,16 +352,44 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
         "- Manual items: `{}`\n",
         plan.summary.manual_items
     ));
+    out.push_str(&format!(
+        "- Preview-only operations: `{}`\n",
+        plan.summary.preview_only_operations
+    ));
+    out.push_str(&format!(
+        "- Preflight passed: `{}`\n",
+        plan.summary.preflight_passed
+    ));
+    out.push_str(&format!(
+        "- Preflight failed or blocked: `{}`\n",
+        plan.summary.preflight_failed
+    ));
+    out.push_str(&format!(
+        "- Safety policy: writes_files `{}` applies_patches `{}` safe_gate_only `{}` existing_targets `{}` unsafe_to_invent_blocked `{}`\n",
+        plan.safety_policy.writes_files,
+        plan.safety_policy.applies_patches,
+        plan.safety_policy.safe_gate_only,
+        plan.safety_policy.requires_existing_targets,
+        plan.safety_policy.blocks_unsafe_to_invent
+    ));
     out.push_str(&format!("- Boundary: {}\n\n", plan.claim_boundary));
 
-    out.push_str("## Safe Operations\n\n");
+    out.push_str("## Safe Fixes\n\n");
     if plan.operations.is_empty() {
-        out.push_str("- No safe operations generated.\n\n");
+        out.push_str("- No safe fixes generated.\n\n");
     } else {
         for operation in &plan.operations {
             out.push_str(&format!("### {}\n\n", operation.id));
             out.push_str(&format!("- Gate: `{:?}`\n", operation.gate));
             out.push_str(&format!("- Kind: `{:?}`\n", operation.kind));
+            out.push_str(&format!("- Source: `{:?}`\n", operation.source));
+            out.push_str(&format!("- Safety: `{:?}`\n", operation.safety));
+            out.push_str(&format!("- Priority: `{:?}`\n", operation.priority));
+            out.push_str(&format!("- Preview only: `{}`\n", operation.preview_only));
+            out.push_str(&format!(
+                "- Requires confirmation: `{}`\n",
+                operation.requires_confirmation
+            ));
             out.push_str(&format!("- Path: `{}`\n", operation.path));
             out.push_str(&format!("- Pattern: `{}`\n", operation.pattern_id));
             if let Some(finding_id) = &operation.finding_id {
@@ -261,6 +397,14 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
             }
             out.push_str(&format!("- Change: {}\n", operation.planned_change));
             out.push_str(&format!("- Rationale: {}\n\n", operation.rationale));
+            out.push_str("Preflight:\n");
+            for check in &operation.preflight {
+                out.push_str(&format!(
+                    "- `{:?}` `{:?}`: {}\n",
+                    check.kind, check.status, check.detail
+                ));
+            }
+            out.push('\n');
             out.push_str("```diff\n");
             for line in &operation.diff_preview {
                 out.push_str(line);
@@ -270,15 +414,50 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
         }
     }
 
-    out.push_str("## Blocked Items\n\n");
-    if plan.blocked.is_empty() {
-        out.push_str("- No blocked items.\n");
+    out.push_str("## Guarded Drafts\n\n");
+    let guarded_items = plan
+        .blocked
+        .iter()
+        .filter(|item| item.gate == seiri_core::GateKind::Guarded)
+        .collect::<Vec<_>>();
+    if guarded_items.is_empty() {
+        out.push_str("- No guarded drafts.\n\n");
     } else {
-        for item in &plan.blocked {
+        for item in guarded_items {
             out.push_str(&format!(
-                "- `{}` `{:?}` `{}`: {}\n",
-                item.id, item.gate, item.pattern_id, item.reason
+                "- `{}` `{:?}` `{:?}` `{:?}` `{}`: {}\n",
+                item.id, item.gate, item.source, item.safety, item.pattern_id, item.reason
             ));
+            if let Some(route) = item.route {
+                out.push_str(&format!("  Route: `{:?}`\n", route));
+            }
+            for check in &item.preflight {
+                out.push_str(&format!(
+                    "  Preflight `{:?}` `{:?}`: {}\n",
+                    check.kind, check.status, check.detail
+                ));
+            }
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Manual Decisions\n\n");
+    let manual_items = plan
+        .blocked
+        .iter()
+        .filter(|item| item.gate == seiri_core::GateKind::Manual)
+        .collect::<Vec<_>>();
+    if manual_items.is_empty() {
+        out.push_str("- No manual decisions.\n");
+    } else {
+        for item in manual_items {
+            out.push_str(&format!(
+                "- `{}` `{:?}` `{:?}` `{}`: {}\n",
+                item.id, item.source, item.safety, item.pattern_id, item.reason
+            ));
+            if let Some(route) = item.route {
+                out.push_str(&format!("  Route: `{:?}`\n", route));
+            }
         }
     }
 
@@ -311,12 +490,64 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             "- Profile score: `{}` / `100` for `{}`\n",
             profile.score.score_x100, profile.profile
         ));
+        if let (Some(top_profile), Some(confidence)) = (
+            profile.branch_summary.top_profile,
+            profile.branch_summary.top_confidence_x100,
+        ) {
+            out.push_str(&format!(
+                "- Profile branch top: `{}` confidence `{}` / `100` across `{}` candidates\n",
+                top_profile, confidence, profile.branch_summary.emitted_profiles
+            ));
+        }
     }
     out.push_str(&format!(
         "- Evidence items: `{}`\n",
         snapshot.evidence.len()
     ));
+    out.push_str(&format!(
+        "- Evidence ledger records: `{}`\n",
+        snapshot.evidence_ledger.len()
+    ));
+    out.push_str(&format!(
+        "- Route states: `{}`\n",
+        snapshot.route_states.len()
+    ));
+    let (strong_routes, weak_routes, missing_routes) = route_strength_counts(snapshot);
+    out.push_str(&format!(
+        "- Route review: strong `{strong_routes}` / weak `{weak_routes}` / missing `{missing_routes}`\n"
+    ));
+    if let (Some(route), Some(priority)) = (
+        snapshot.missing_route_priority.summary.top_route,
+        snapshot.missing_route_priority.summary.top_priority_x100,
+    ) {
+        out.push_str(&format!(
+            "- Missing route top: `{:?}` priority `{}` / `100` across `{}` candidates\n",
+            route, priority, snapshot.missing_route_priority.summary.candidates
+        ));
+    }
+    out.push_str(&format!(
+        "- Co-occurrence gaps: `{}`\n",
+        snapshot.missing_route_priority.summary.co_occurrence_gaps
+    ));
     out.push_str(&format!("- Findings: `{}`\n\n", snapshot.findings.len()));
+
+    out.push_str("## Route Review v2\n\n");
+    if snapshot.route_states.is_empty() {
+        out.push_str("- No route states emitted.\n\n");
+    } else {
+        out.push_str("### Strong Routes\n\n");
+        render_route_strength_group(&mut out, snapshot, RouteStrength::Strong);
+        out.push_str("### Weak Routes\n\n");
+        render_route_strength_group(&mut out, snapshot, RouteStrength::Weak);
+        out.push_str("### Missing Routes\n\n");
+        render_route_strength_group(&mut out, snapshot, RouteStrength::Missing);
+    }
+    out.push_str(&format!(
+        "### Decision Gates\n\n- Missing route priorities: safe `{}` / guarded `{}` / manual `{}`\n\n",
+        snapshot.missing_route_priority.summary.safe_gated,
+        snapshot.missing_route_priority.summary.guarded_gated,
+        snapshot.missing_route_priority.summary.manual_gated
+    ));
 
     out.push_str("## README\n\n");
     match &snapshot.readme {
@@ -329,8 +560,57 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                 "- Route candidates: `{}`\n\n",
                 readme.route_candidates.len()
             ));
+            out.push_str(&format!(
+                "- Route map: `{}` routed / `{}` weak / `{}` conflicting / `{}` overloaded / `{}` stale / `{}` absent\n\n",
+                readme.route_map.summary.routed,
+                readme.route_map.summary.weak,
+                readme.route_map.summary.conflicting,
+                readme.route_map.summary.overloaded,
+                readme.route_map.summary.stale,
+                readme.route_map.summary.absent
+            ));
         }
         None => out.push_str("- Path: not found\n\n"),
+    }
+
+    out.push_str("## README Route Map\n\n");
+    match &snapshot.readme {
+        Some(readme) => {
+            for entry in &readme.route_map.entries {
+                let gap = entry
+                    .observed_gap_count
+                    .map_or_else(|| "n/a".to_string(), |count| count.to_string());
+                let targets = if entry.targets.is_empty() {
+                    "none".to_string()
+                } else {
+                    entry
+                        .targets
+                        .iter()
+                        .map(|target| {
+                            format!(
+                                "{} ({:?}, line {})",
+                                target.target, target.status, target.line
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                };
+                out.push_str(&format!(
+                    "- `{:?}` `{:?}` candidates `{}` targets `{}` stale `{}` conflicts `{}` gap `{}`: {}\n",
+                    entry.route,
+                    entry.state,
+                    entry.candidate_count,
+                    entry.target_count,
+                    entry.stale_target_count,
+                    entry.conflicting_target_count,
+                    gap,
+                    entry.reason
+                ));
+                out.push_str(&format!("  Targets: {targets}\n"));
+            }
+            out.push('\n');
+        }
+        None => out.push_str("- README was not found, so no route map was emitted.\n\n"),
     }
 
     out.push_str("## Important Files\n\n");
@@ -378,6 +658,91 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         None => out.push_str("- Baseline was not evaluated.\n\n"),
     }
 
+    out.push_str("## Route States\n\n");
+    if snapshot.route_states.is_empty() {
+        out.push_str("- No route states emitted.\n\n");
+    } else {
+        for state in &snapshot.route_states {
+            let evidence = if state.evidence_ids.is_empty() {
+                "none".to_string()
+            } else {
+                state.evidence_ids.join("`, `")
+            };
+            out.push_str(&format!(
+                "- `{:?}` `{:?}` confidence `{:?}` evidence `{}`: {}\n",
+                state.route, state.state, state.confidence, evidence, state.reason
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Missing Route Priority\n\n");
+    out.push_str(&format!(
+        "- Boundary: {}\n",
+        snapshot.missing_route_priority.boundary
+    ));
+    out.push_str(&format!(
+        "- Gates: safe `{}` / guarded `{}` / manual `{}`\n\n",
+        snapshot.missing_route_priority.summary.safe_gated,
+        snapshot.missing_route_priority.summary.guarded_gated,
+        snapshot.missing_route_priority.summary.manual_gated
+    ));
+    if snapshot.missing_route_priority.priorities.is_empty() {
+        out.push_str("- No missing or degraded route priorities emitted.\n\n");
+    } else {
+        out.push_str("### Route Priorities\n\n");
+        for priority in &snapshot.missing_route_priority.priorities {
+            let score = decimal_confidence(priority.priority_score_x100);
+            let observed = priority.observed_missing_repositories.map_or_else(
+                || "n/a".to_string(),
+                |repositories| repositories.to_string(),
+            );
+            let baseline = list_or_none(&priority.baseline_pattern_ids);
+            let candidate = list_or_none(&priority.candidate_pattern_ids);
+            let gaps = list_or_none(&priority.co_occurrence_gap_ids);
+            out.push_str(&format!(
+                "{}. `{:?}` `{:?}` priority `{}` gate `{:?}` observed_missing `{}`: {}\n",
+                priority.rank,
+                priority.route,
+                priority.priority,
+                score,
+                priority.gate,
+                observed,
+                priority.reason
+            ));
+            out.push_str(&format!("   Baseline: {baseline}\n"));
+            out.push_str(&format!("   Candidates: {candidate}\n"));
+            out.push_str(&format!("   Co-occurrence: {gaps}\n"));
+        }
+        out.push('\n');
+    }
+    if snapshot
+        .missing_route_priority
+        .co_occurrence_gaps
+        .is_empty()
+    {
+        out.push_str("### Co-occurrence Gaps\n\n- No co-occurrence gaps emitted.\n\n");
+    } else {
+        out.push_str("### Co-occurrence Gaps\n\n");
+        for gap in &snapshot.missing_route_priority.co_occurrence_gaps {
+            let support = decimal_prior(gap.support_x1000);
+            let present_routes = routes_or_none(&gap.present_routes);
+            let missing_routes = routes_or_none(&gap.missing_routes);
+            let present_signals = list_or_none(&gap.present_signals);
+            let missing_signals = list_or_none(&gap.missing_signals);
+            out.push_str(&format!(
+                "- `{}` {:?} support `{}` repos `{}` gate `{:?}`: {}\n",
+                gap.id, gap.priority, support, gap.observed_repositories, gap.gate, gap.title
+            ));
+            out.push_str(&format!("  Present routes: {present_routes}\n"));
+            out.push_str(&format!("  Missing routes: {missing_routes}\n"));
+            out.push_str(&format!("  Present signals: {present_signals}\n"));
+            out.push_str(&format!("  Missing signals: {missing_signals}\n"));
+            out.push_str(&format!("  Reason: {}\n", gap.reason));
+        }
+        out.push('\n');
+    }
+
     out.push_str("## Profile\n\n");
     match &snapshot.profile {
         Some(profile) => {
@@ -395,6 +760,35 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                 profile.score.present_rules, profile.score.missing_rules
             ));
             out.push_str(&format!("- Note: {}\n\n", profile.score.note));
+            out.push_str("### Profile Branch Confidence\n\n");
+            out.push_str(&format!(
+                "- Ambiguous: `{}`\n",
+                profile.branch_summary.ambiguous
+            ));
+            out.push_str(&format!(
+                "- Boundary: {}\n\n",
+                profile.branch_summary.boundary
+            ));
+            for branch in &profile.branches {
+                let confidence = decimal_confidence(branch.confidence_x100);
+                let prior = decimal_prior(branch.prior_x1000);
+                let matched = if branch.matched_signals.is_empty() {
+                    "none".to_string()
+                } else {
+                    branch.matched_signals.join("; ")
+                };
+                out.push_str(&format!(
+                    "{}. `{}` confidence `{}` prior `{}` evidence `{}` score `{}`: {}\n",
+                    branch.rank,
+                    branch.profile,
+                    confidence,
+                    prior,
+                    branch.evidence_score_x100,
+                    branch.score_x100,
+                    matched
+                ));
+            }
+            out.push('\n');
             if profile.recommendations.is_empty() {
                 out.push_str("- No profile recommendations.\n\n");
             } else {
@@ -572,10 +966,121 @@ fn route_for_important_file(kind: ImportantFileKind) -> Option<RouteKind> {
         ImportantFileKind::Contributing => Some(RouteKind::Contributing),
         ImportantFileKind::Security => Some(RouteKind::Security),
         ImportantFileKind::Support => Some(RouteKind::Support),
+        ImportantFileKind::IssueTemplate
+        | ImportantFileKind::IssueForm
+        | ImportantFileKind::PullRequestTemplate => Some(RouteKind::Intake),
         ImportantFileKind::Changelog => Some(RouteKind::Release),
         ImportantFileKind::Codeowners => Some(RouteKind::Ownership),
         ImportantFileKind::CargoToml => Some(RouteKind::Identity),
         ImportantFileKind::DocsDirectory => Some(RouteKind::Docs),
         ImportantFileKind::Workflow => Some(RouteKind::Automation),
+        ImportantFileKind::DependencyBot | ImportantFileKind::SecurityAutomation => {
+            Some(RouteKind::Automation)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteStrength {
+    Strong,
+    Weak,
+    Missing,
+}
+
+fn route_strength_counts(snapshot: &RepoSnapshot) -> (usize, usize, usize) {
+    let strong = snapshot
+        .route_states
+        .iter()
+        .filter(|state| route_strength(state.state) == RouteStrength::Strong)
+        .count();
+    let weak = snapshot
+        .route_states
+        .iter()
+        .filter(|state| route_strength(state.state) == RouteStrength::Weak)
+        .count();
+    let missing = snapshot
+        .route_states
+        .iter()
+        .filter(|state| route_strength(state.state) == RouteStrength::Missing)
+        .count();
+    (strong, weak, missing)
+}
+
+fn render_route_strength_group(out: &mut String, snapshot: &RepoSnapshot, strength: RouteStrength) {
+    let mut emitted = 0;
+    for state in &snapshot.route_states {
+        if route_strength(state.state) != strength {
+            continue;
+        }
+        emitted += 1;
+        let priority = snapshot
+            .missing_route_priority
+            .priorities
+            .iter()
+            .find(|priority| priority.route == state.route);
+        let score = priority.map_or_else(
+            || "n/a".to_string(),
+            |priority| priority.priority_score_x100.to_string(),
+        );
+        let gate = priority.map_or_else(
+            || "n/a".to_string(),
+            |priority| format!("{:?}", priority.gate),
+        );
+        out.push_str(&format!(
+            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}`: {}\n",
+            state.route, state.state, state.confidence, score, gate, state.reason
+        ));
+    }
+    if emitted == 0 {
+        out.push_str("- None.\n");
+    }
+    out.push('\n');
+}
+
+fn route_strength(state: RouteState) -> RouteStrength {
+    match state {
+        RouteState::Routed
+        | RouteState::Structured
+        | RouteState::Verified
+        | RouteState::Overridden => RouteStrength::Strong,
+        RouteState::Absent | RouteState::UnsafeToInvent => RouteStrength::Missing,
+        RouteState::Implicit
+        | RouteState::Weak
+        | RouteState::Inherited
+        | RouteState::Conflicting
+        | RouteState::Overloaded
+        | RouteState::Stale => RouteStrength::Weak,
+    }
+}
+
+fn decimal_confidence(value_x100: u8) -> String {
+    if value_x100 >= 100 {
+        "1.00".to_string()
+    } else {
+        format!("0.{value_x100:02}")
+    }
+}
+
+fn decimal_prior(value_x1000: u16) -> String {
+    format!("0.{value_x1000:03}")
+}
+
+fn list_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values.join(", ")
+    }
+}
+
+fn routes_or_none(values: &[RouteKind]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values
+            .iter()
+            .map(|route| format!("{route:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }

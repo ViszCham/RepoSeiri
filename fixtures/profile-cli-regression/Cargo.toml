@@ -1,0 +1,8 @@
+[package]
+name = "profile-cli-regression"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "profile-cli-regression"
+path = "src/main.rs"

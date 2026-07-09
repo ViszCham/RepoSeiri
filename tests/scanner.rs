@@ -40,3 +40,24 @@ fn scanner_keeps_missing_readme_visible() {
         .iter()
         .any(|file| file.kind == ImportantFileKind::License));
 }
+
+#[test]
+fn scanner_detects_block_l_operational_files() {
+    let scan = seiri_fs::scan_repository(fixture("security-support-intake-automation-repo"))
+        .expect("scan fixture");
+
+    for kind in [
+        ImportantFileKind::Security,
+        ImportantFileKind::Support,
+        ImportantFileKind::IssueTemplate,
+        ImportantFileKind::IssueForm,
+        ImportantFileKind::PullRequestTemplate,
+        ImportantFileKind::DependencyBot,
+        ImportantFileKind::SecurityAutomation,
+    ] {
+        assert!(
+            scan.important_files.iter().any(|file| file.kind == kind),
+            "missing {kind:?}"
+        );
+    }
+}

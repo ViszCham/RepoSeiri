@@ -1,0 +1,3 @@
+# Support
+
+Product support route.

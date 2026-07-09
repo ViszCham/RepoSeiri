@@ -1,4 +1,6 @@
-use seiri_core::{BaselineRequirement, BaselineStatus, PatternOutcome};
+use seiri_core::{
+    BaselineRequirement, BaselineStatus, PatternGroup, PatternOutcome, RouteKind, RouteState,
+};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -20,6 +22,62 @@ fn common_registry_exposes_stable_pattern_definitions() {
     assert!(ids.contains(&"common.docs.route_present"));
     assert!(ids.contains(&"common.quickstart.route_present"));
     assert!(ids.contains(&"common.license.file_present"));
+    assert!(ids.contains(&"SEC-001"));
+    assert!(ids.contains(&"SEC-004"));
+    assert!(ids.contains(&"SEC-007"));
+    assert!(ids.contains(&"SUP-001"));
+    assert!(ids.contains(&"INT-001"));
+    assert!(ids.contains(&"INT-002"));
+    assert!(ids.contains(&"INT-003"));
+    assert!(ids.contains(&"INT-010"));
+    assert!(ids.contains(&"AUT-001"));
+    assert!(ids.contains(&"AUT-009"));
+    assert!(ids.contains(&"REL-002"));
+    assert!(ids.contains(&"OWN-001"));
+
+    assert!(registry.definitions().iter().any(|definition| {
+        definition.id == "common.docs.route_present" && definition.group == PatternGroup::Doc
+    }));
+    assert!(registry
+        .definitions()
+        .iter()
+        .any(|definition| { definition.id == "SEC-001" && definition.group == PatternGroup::Sec }));
+    assert_eq!(registry.evaluation_definitions().len(), 9);
+    assert!(registry.evaluation_definitions().iter().all(|definition| {
+        definition.adoption_stage == seiri_patterns::PatternAdoptionStage::CommonBaseline
+    }));
+}
+
+#[test]
+fn pattern_registry_v2_renders_grouped_json_and_markdown() {
+    let registry = seiri_patterns::common_registry();
+    let document = seiri_patterns::registry_document(&registry);
+
+    assert_eq!(document.schema_version, seiri_core::SCHEMA_VERSION);
+    assert_eq!(document.registry_version, "pattern_registry.v2");
+    assert_eq!(document.groups.len(), 13);
+    assert!(document
+        .groups
+        .iter()
+        .any(|group| group.code == "SEC" && group.pattern_count >= 2));
+    assert!(document
+        .patterns
+        .iter()
+        .any(|pattern| pattern.id == "SEC-001" && !pattern.active_in_common_baseline));
+    assert!(document
+        .patterns
+        .iter()
+        .any(|pattern| pattern.id == "INT-003" && pattern.route == Some(RouteKind::Intake)));
+
+    let json = seiri_patterns::registry_to_json(&registry).expect("registry json");
+    assert!(json.contains("\"registry_version\": \"pattern_registry.v2\""));
+    assert!(json.contains("\"group\": \"SEC\""));
+    assert!(json.contains("\"id\": \"OWN-001\""));
+
+    let markdown = seiri_patterns::render_registry_markdown(&registry);
+    assert!(markdown.contains("## SEC - Security"));
+    assert!(markdown.contains("`SEC-001` `candidate`"));
+    assert!(markdown.contains("## HYG - Hygiene"));
 }
 
 #[test]
@@ -63,4 +121,22 @@ fn common_baseline_generates_findings_from_missing_patterns() {
         .rules
         .iter()
         .any(|rule| rule.status == BaselineStatus::Missing && rule.finding_id.is_some()));
+}
+
+#[test]
+fn common_baseline_does_not_credit_nested_license_as_root_license() {
+    let snapshot =
+        seiri_report::audit_repository(fixture("nested-license-only-repo")).expect("audit fixture");
+    let baseline = snapshot.baseline.expect("baseline report");
+
+    assert!(baseline.rules.iter().any(|rule| {
+        rule.pattern_id == "common.license.file_present" && rule.status == BaselineStatus::Missing
+    }));
+    assert!(snapshot.pattern_matches.iter().any(|pattern_match| {
+        pattern_match.pattern_id == "common.license.file_present"
+            && pattern_match.outcome == PatternOutcome::Missing
+    }));
+    assert!(snapshot.route_states.iter().any(|state| {
+        state.route == RouteKind::License && state.state == RouteState::Inherited
+    }));
 }

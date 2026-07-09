@@ -7,6 +7,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod route_map;
+
+use route_map::build_route_map;
+
 #[derive(Debug)]
 pub enum MarkdownError {
     Io { path: PathBuf, source: io::Error },
@@ -39,17 +43,27 @@ pub fn analyze_readme(repo_root: impl AsRef<Path>) -> Result<Option<ReadmeSummar
         path: readme_path.clone(),
         source,
     })?;
-    Ok(Some(parse_readme(
+    Ok(Some(parse_readme_with_context(
         normalize_relative_path(repo_root, &readme_path),
         &text,
+        Some(repo_root),
     )))
 }
 
 pub fn parse_readme(path: impl Into<String>, text: &str) -> ReadmeSummary {
+    parse_readme_with_context(path, text, None)
+}
+
+fn parse_readme_with_context(
+    path: impl Into<String>,
+    text: &str,
+    repo_root: Option<&Path>,
+) -> ReadmeSummary {
     let mut headings = Vec::new();
     let mut links = Vec::new();
     let mut badges = Vec::new();
     let mut route_candidates = Vec::new();
+    let path = path.into();
 
     for (zero_index, line) in text.lines().enumerate() {
         let line_number = zero_index + 1;
@@ -110,7 +124,8 @@ pub fn parse_readme(path: impl Into<String>, text: &str) -> ReadmeSummary {
     });
 
     ReadmeSummary {
-        path: path.into(),
+        route_map: build_route_map(&route_candidates, repo_root),
+        path,
         headings,
         links,
         badges,
@@ -119,6 +134,12 @@ pub fn parse_readme(path: impl Into<String>, text: &str) -> ReadmeSummary {
 }
 
 pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
+    let text_only = text.to_ascii_lowercase();
+    let text_route = classify_route_text(&text_only);
+    if text_route != RouteKind::Unknown {
+        return text_route;
+    }
+
     let combined = match target {
         Some(target) => format!("{text} {target}").to_ascii_lowercase(),
         None => text.to_ascii_lowercase(),
@@ -138,6 +159,8 @@ pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
         ],
     ) {
         RouteKind::Quickstart
+    } else if is_intake_route_text(&combined) {
+        RouteKind::Intake
     } else if contains_any(
         &combined,
         &[
@@ -181,6 +204,82 @@ pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
     } else {
         RouteKind::Unknown
     }
+}
+
+fn classify_route_text(value: &str) -> RouteKind {
+    if contains_any(
+        value,
+        &[
+            "quickstart",
+            "quick start",
+            "getting started",
+            "install",
+            "usage",
+            "example",
+        ],
+    ) {
+        RouteKind::Quickstart
+    } else if contains_any(value, &["docs", "documentation", "guide", "manual"]) {
+        RouteKind::Docs
+    } else if is_intake_route_text(value) {
+        RouteKind::Intake
+    } else if contains_any(
+        value,
+        &[
+            "support",
+            "discussion",
+            "help",
+            "contact",
+            "question",
+            "issue",
+        ],
+    ) {
+        RouteKind::Support
+    } else if contains_any(value, &["contributing", "contribute", "development"]) {
+        RouteKind::Contributing
+    } else if contains_any(value, &["security", "vulnerability", "disclosure"]) {
+        RouteKind::Security
+    } else if contains_any(
+        value,
+        &[
+            "release",
+            "changelog",
+            "changes",
+            "version",
+            "compatibility",
+        ],
+    ) {
+        RouteKind::Release
+    } else if contains_any(value, &["governance", "roadmap", "rfc", "proposal"]) {
+        RouteKind::Governance
+    } else if contains_any(value, &["license", "copying"]) {
+        RouteKind::License
+    } else if contains_any(value, &["codeowners", "maintainer", "ownership", "owner"]) {
+        RouteKind::Ownership
+    } else if contains_any(value, &["workflow", "actions", "ci", "build", "badge"]) {
+        RouteKind::Automation
+    } else if value.starts_with('#') || value.contains("readme") {
+        RouteKind::Identity
+    } else {
+        RouteKind::Unknown
+    }
+}
+
+fn is_intake_route_text(value: &str) -> bool {
+    contains_any(
+        value,
+        &[
+            "issue template",
+            "issue form",
+            "bug report",
+            "feature request",
+            "pull request template",
+            "pr template",
+            "triage",
+            "intake",
+        ],
+    ) || (contains_any(value, &["issues", "issue"])
+        && contains_any(value, &["bug", "feature", "template", "form"]))
 }
 
 fn parse_heading(line: &str, line_number: usize) -> Option<MarkdownHeading> {

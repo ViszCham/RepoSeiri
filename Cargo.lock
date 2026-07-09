@@ -214,6 +214,8 @@ name = "seiri-patterns"
 version = "0.1.0"
 dependencies = [
  "seiri-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
