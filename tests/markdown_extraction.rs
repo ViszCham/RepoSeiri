@@ -1,4 +1,4 @@
-use seiri_core::RouteKind;
+use seiri_core::{ReadmeRouteMapEntry, RouteKind, RouteState};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -38,4 +38,69 @@ fn markdown_extracts_headings_links_badges_and_routes() {
     assert!(routes.contains(&RouteKind::License));
     assert!(routes.contains(&RouteKind::Release));
     assert!(routes.contains(&RouteKind::Automation));
+
+    assert!(summary
+        .route_map
+        .entries
+        .iter()
+        .any(|entry| entry.route == RouteKind::Docs && entry.state == RouteState::Verified));
+    assert!(summary
+        .route_map
+        .entries
+        .iter()
+        .any(|entry| entry.route == RouteKind::Quickstart && entry.state == RouteState::Routed));
+}
+
+#[test]
+fn readme_route_map_detects_weak_conflicting_overloaded_and_stale_routes() {
+    let summary = seiri_markdown::analyze_readme(fixture("readme-route-map-v2-repo"))
+        .expect("read README")
+        .expect("README exists");
+
+    assert_eq!(
+        route_entry(&summary, RouteKind::Docs).state,
+        RouteState::Conflicting
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Quickstart).state,
+        RouteState::Conflicting
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Support).state,
+        RouteState::Weak
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Security).state,
+        RouteState::Stale
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Release).state,
+        RouteState::Overloaded
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Governance).state,
+        RouteState::Verified
+    );
+
+    assert_eq!(
+        route_entry(&summary, RouteKind::Docs).observed_gap_count,
+        Some(186_000)
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Quickstart).observed_gap_count,
+        Some(438_000)
+    );
+    assert_eq!(
+        route_entry(&summary, RouteKind::Release).observed_gap_count,
+        Some(454_000)
+    );
+}
+
+fn route_entry(summary: &seiri_core::ReadmeSummary, route: RouteKind) -> &ReadmeRouteMapEntry {
+    summary
+        .route_map
+        .entries
+        .iter()
+        .find(|entry| entry.route == route)
+        .expect("route map entry")
 }

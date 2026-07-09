@@ -1,7 +1,8 @@
 use seiri_core::{
-    BaselineReport, BaselineRuleResult, BaselineStatus, Finding, GateKind, ProfileKind,
-    ProfilePriority, ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView,
-    RepoSnapshot, Severity,
+    BaselineReport, BaselineRuleResult, BaselineStatus, FileKind, Finding, GateKind,
+    ImportantFileKind, ProfileBranch, ProfileBranchSummary, ProfileKind, ProfilePriority,
+    ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, RepoSnapshot,
+    RouteKind, Severity,
 };
 use std::collections::BTreeMap;
 
@@ -16,11 +17,11 @@ pub struct ProfileRuleDefinition {
 #[must_use]
 pub fn evaluate_profile(snapshot: &RepoSnapshot, profile: ProfileKind) -> Option<ProfileReport> {
     let baseline = snapshot.baseline.as_ref()?;
-    Some(evaluate_profile_from_parts(
-        baseline,
-        &snapshot.findings,
-        profile,
-    ))
+    let mut report = evaluate_profile_from_parts(baseline, &snapshot.findings, profile);
+    let branches = profile_branches(Some(snapshot), baseline, profile);
+    report.branch_summary = profile_branch_summary(profile, &branches);
+    report.branches = branches;
+    Some(report)
 }
 
 #[must_use]
@@ -53,9 +54,13 @@ pub fn evaluate_profile_from_parts(
     let score = score_view(&rules);
     let recommendations = ordered_recommendations(&rules, &findings_by_id);
 
+    let branches = profile_branches(None, baseline, profile);
+
     ProfileReport {
         profile,
         score,
+        branch_summary: profile_branch_summary(profile, &branches),
+        branches,
         rules,
         recommendations,
     }
@@ -288,6 +293,118 @@ pub fn profile_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
                 "Contribution guidance is secondary to safety and operations.",
             ),
         ],
+        ProfileKind::Product => vec![
+            rule(
+                "common.identity.readme_present",
+                15,
+                ProfilePriority::Critical,
+                "A product repository needs immediate product identity and audience.",
+            ),
+            rule(
+                "common.support.route_present",
+                22,
+                ProfilePriority::Critical,
+                "Product users need a clear support and triage route.",
+            ),
+            rule(
+                "common.docs.route_present",
+                20,
+                ProfilePriority::High,
+                "Product repositories need user-facing documentation.",
+            ),
+            rule(
+                "common.quickstart.route_present",
+                14,
+                ProfilePriority::High,
+                "A first-run route helps users evaluate the product quickly.",
+            ),
+            rule(
+                "common.release.route_present",
+                12,
+                ProfilePriority::High,
+                "Release notes help product users understand change risk.",
+            ),
+            rule(
+                "common.security.route_present",
+                7,
+                ProfilePriority::Normal,
+                "Security disclosure matters when users run or depend on the product.",
+            ),
+            rule(
+                "common.license.file_present",
+                5,
+                ProfilePriority::Normal,
+                "License clarity still matters for distribution and reuse.",
+            ),
+            rule(
+                "common.automation.route_present",
+                3,
+                ProfilePriority::Low,
+                "Automation is useful but secondary to user-facing routes.",
+            ),
+            rule(
+                "common.contributing.route_present",
+                2,
+                ProfilePriority::Low,
+                "Contribution guidance is useful after support and docs routes are clear.",
+            ),
+        ],
+        ProfileKind::Runtime => vec![
+            rule(
+                "common.identity.readme_present",
+                15,
+                ProfilePriority::Critical,
+                "A runtime or compiler repository needs clear toolchain identity.",
+            ),
+            rule(
+                "common.security.route_present",
+                20,
+                ProfilePriority::Critical,
+                "Runtime and compiler users need a visible security route.",
+            ),
+            rule(
+                "common.release.route_present",
+                18,
+                ProfilePriority::Critical,
+                "Release trains and compatibility notes are central for runtimes.",
+            ),
+            rule(
+                "common.docs.route_present",
+                15,
+                ProfilePriority::High,
+                "Runtime users need build, language, and operational documentation.",
+            ),
+            rule(
+                "common.automation.route_present",
+                12,
+                ProfilePriority::High,
+                "A visible build or test signal matters for runtime reliability review.",
+            ),
+            rule(
+                "common.contributing.route_present",
+                8,
+                ProfilePriority::Normal,
+                "Runtime projects often need contribution and build guidance.",
+            ),
+            rule(
+                "common.quickstart.route_present",
+                6,
+                ProfilePriority::Normal,
+                "A quickstart helps users verify the toolchain locally.",
+            ),
+            rule(
+                "common.license.file_present",
+                4,
+                ProfilePriority::Normal,
+                "License clarity matters for redistribution.",
+            ),
+            rule(
+                "common.support.route_present",
+                2,
+                ProfilePriority::Low,
+                "Support routing is useful but secondary to release and security routes.",
+            ),
+        ],
         ProfileKind::Docs => vec![
             rule(
                 "common.identity.readme_present",
@@ -400,24 +517,24 @@ pub fn profile_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
                 "Security routing is useful when tutorial content touches risky setup.",
             ),
         ],
-        ProfileKind::Research => vec![
+        ProfileKind::Ml | ProfileKind::Research => vec![
             rule(
                 "common.identity.readme_present",
                 18,
                 ProfilePriority::Critical,
-                "A research repository needs clear artifact identity.",
+                "An ML, data, or research repository needs clear artifact identity.",
             ),
             rule(
                 "common.docs.route_present",
                 22,
                 ProfilePriority::Critical,
-                "Research users need method and reproduction documentation.",
+                "Users need method, data, and reproduction documentation.",
             ),
             rule(
                 "common.license.file_present",
                 16,
                 ProfilePriority::High,
-                "Research reuse and citation need licensing clarity.",
+                "Research, model, and data reuse need licensing clarity.",
             ),
             rule(
                 "common.quickstart.route_present",
@@ -513,6 +630,514 @@ pub fn profile_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
             ),
         ],
     }
+}
+
+#[must_use]
+pub fn branch_profiles() -> &'static [(ProfileKind, u16)] {
+    &[
+        (ProfileKind::Library, 280),
+        (ProfileKind::Infra, 170),
+        (ProfileKind::Cli, 110),
+        (ProfileKind::Product, 90),
+        (ProfileKind::Runtime, 45),
+        (ProfileKind::Docs, 95),
+        (ProfileKind::Tutorial, 100),
+        (ProfileKind::Ml, 75),
+        (ProfileKind::Template, 35),
+    ]
+}
+
+fn profile_branches(
+    snapshot: Option<&RepoSnapshot>,
+    baseline: &BaselineReport,
+    selected_profile: ProfileKind,
+) -> Vec<ProfileBranch> {
+    let baseline_by_pattern = baseline
+        .rules
+        .iter()
+        .map(|rule| (rule.pattern_id.as_str(), rule))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut branches = branch_profiles()
+        .iter()
+        .map(|(profile, prior_x1000)| {
+            let rules = profile_rules(*profile)
+                .iter()
+                .enumerate()
+                .map(|(index, definition)| {
+                    to_profile_rule_result(
+                        index + 1,
+                        *profile,
+                        definition,
+                        baseline_by_pattern.get(definition.pattern_id).copied(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let score = score_view(&rules);
+            let (evidence_score_x100, matched_signals, missing_signals) =
+                profile_signal_score(snapshot, baseline, *profile);
+            let confidence_x100 =
+                confidence_score(*prior_x1000, evidence_score_x100, score.score_x100);
+            let selected_note = if *profile == selected_profile {
+                " Selected CLI/API profile; confidence remains evidence-weighted."
+            } else {
+                ""
+            };
+
+            ProfileBranch {
+                rank: 0,
+                profile: *profile,
+                prior_x1000: *prior_x1000,
+                confidence_x100,
+                evidence_score_x100,
+                score_x100: score.score_x100,
+                matched_signals,
+                missing_signals,
+                rationale: format!(
+                    "Combines Block J prior, observed route/file/path signals, and current profile score. This is a branch hint, not a repository type assertion.{selected_note}"
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    branches.sort_by(|left, right| {
+        right
+            .confidence_x100
+            .cmp(&left.confidence_x100)
+            .then_with(|| right.evidence_score_x100.cmp(&left.evidence_score_x100))
+            .then_with(|| right.prior_x1000.cmp(&left.prior_x1000))
+            .then_with(|| left.profile.cmp(&right.profile))
+    });
+
+    for (index, branch) in branches.iter_mut().enumerate() {
+        branch.rank = index + 1;
+    }
+
+    branches
+}
+
+fn profile_branch_summary(
+    selected_profile: ProfileKind,
+    branches: &[ProfileBranch],
+) -> ProfileBranchSummary {
+    let top = branches.first();
+    let second = branches.get(1);
+    let ambiguous = match (top, second) {
+        (Some(top), Some(second)) => {
+            top.confidence_x100 < 60
+                || top.confidence_x100.saturating_sub(second.confidence_x100) < 15
+        }
+        (Some(top), None) => top.confidence_x100 < 60,
+        _ => true,
+    };
+
+    ProfileBranchSummary {
+        selected_profile,
+        top_profile: top.map(|branch| branch.profile),
+        top_confidence_x100: top.map(|branch| branch.confidence_x100),
+        emitted_profiles: branches.len(),
+        ambiguous,
+        boundary: "Profile branch confidence is a deterministic routing hint from observed evidence and fixed priors; it is not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
+    }
+}
+
+fn profile_signal_score(
+    snapshot: Option<&RepoSnapshot>,
+    baseline: &BaselineReport,
+    profile: ProfileKind,
+) -> (u8, Vec<String>, Vec<String>) {
+    let mut score = 0u32;
+    let mut total = 0u32;
+    let mut matched = Vec::new();
+    let mut missing = Vec::new();
+
+    macro_rules! signal {
+        ($label:expr, $weight:expr, $condition:expr) => {{
+            total += $weight;
+            if $condition {
+                score += $weight;
+                matched.push($label.to_string());
+            } else {
+                missing.push($label.to_string());
+            }
+        }};
+    }
+
+    match profile {
+        ProfileKind::Library => {
+            signal!(
+                "package manifest",
+                12,
+                has_important_file(snapshot, ImportantFileKind::CargoToml)
+            );
+            signal!(
+                "docs route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "quickstart route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "release route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+            signal!(
+                "license boundary",
+                12,
+                has_route(snapshot, baseline, RouteKind::License)
+            );
+            signal!(
+                "examples or API wording",
+                8,
+                path_or_readme_contains(snapshot, &["examples", "api", "sdk", "client"])
+            );
+        }
+        ProfileKind::Cli => {
+            signal!(
+                "first command or quickstart",
+                18,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "release route",
+                12,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+            signal!(
+                "support route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Support)
+            );
+            signal!(
+                "automation signal",
+                8,
+                has_route(snapshot, baseline, RouteKind::Automation)
+            );
+            signal!(
+                "binary or command path",
+                12,
+                path_or_readme_contains(
+                    snapshot,
+                    &["src/main.rs", "bin/", "cmd/", "cli", "command"]
+                )
+            );
+        }
+        ProfileKind::Infra => {
+            signal!(
+                "workflow automation",
+                16,
+                has_route(snapshot, baseline, RouteKind::Automation)
+            );
+            signal!(
+                "security route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Security)
+            );
+            signal!(
+                "ops docs route",
+                12,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "ownership route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Ownership)
+            );
+            signal!(
+                "deployment or infra path",
+                14,
+                path_or_readme_contains(
+                    snapshot,
+                    &[
+                        "helm",
+                        "k8s",
+                        "kubernetes",
+                        "terraform",
+                        "deploy",
+                        "operator"
+                    ]
+                )
+            );
+        }
+        ProfileKind::Product => {
+            signal!(
+                "support route",
+                18,
+                has_route(snapshot, baseline, RouteKind::Support)
+            );
+            signal!(
+                "docs route",
+                14,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "release route",
+                12,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+            signal!(
+                "quickstart route",
+                8,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "app or product wording",
+                12,
+                path_or_readme_contains(snapshot, &["app", "web", "ui", "product", "screenshot"])
+            );
+        }
+        ProfileKind::Runtime => {
+            signal!(
+                "security route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Security)
+            );
+            signal!(
+                "release route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+            signal!(
+                "governance route",
+                12,
+                has_route(snapshot, baseline, RouteKind::Governance)
+            );
+            signal!(
+                "build automation",
+                10,
+                has_route(snapshot, baseline, RouteKind::Automation)
+            );
+            signal!(
+                "runtime or compiler path",
+                12,
+                path_or_readme_contains(
+                    snapshot,
+                    &["runtime", "compiler", "toolchain", "fuzz", "tests"]
+                )
+            );
+        }
+        ProfileKind::Docs => {
+            signal!(
+                "docs route",
+                20,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "docs directory",
+                14,
+                has_important_file(snapshot, ImportantFileKind::DocsDirectory)
+            );
+            signal!(
+                "contribution route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Contributing)
+            );
+            signal!(
+                "governance route",
+                8,
+                has_route(snapshot, baseline, RouteKind::Governance)
+            );
+            signal!(
+                "spec or guide wording",
+                10,
+                path_or_readme_contains(snapshot, &["spec", "guide", "manual", "proposal"])
+            );
+        }
+        ProfileKind::Tutorial => {
+            signal!(
+                "quickstart route",
+                20,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "docs route",
+                12,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "support route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Support)
+            );
+            signal!(
+                "examples or tutorial path",
+                14,
+                path_or_readme_contains(
+                    snapshot,
+                    &["examples", "tutorial", "lesson", "notebook", "sample"]
+                )
+            );
+        }
+        ProfileKind::Ml | ProfileKind::Research => {
+            signal!(
+                "docs route",
+                14,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "license boundary",
+                12,
+                has_route(snapshot, baseline, RouteKind::License)
+            );
+            signal!(
+                "quickstart route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "model data or paper path",
+                18,
+                path_or_readme_contains(
+                    snapshot,
+                    &[
+                        "model",
+                        "dataset",
+                        "data",
+                        "notebook",
+                        "paper",
+                        "experiment"
+                    ]
+                )
+            );
+            signal!(
+                "release or artifact route",
+                8,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+        }
+        ProfileKind::Template => {
+            signal!(
+                "quickstart route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Quickstart)
+            );
+            signal!(
+                "automation signal",
+                12,
+                has_route(snapshot, baseline, RouteKind::Automation)
+            );
+            signal!(
+                "release route",
+                10,
+                has_route(snapshot, baseline, RouteKind::Release)
+            );
+            signal!(
+                "template or action path",
+                18,
+                path_or_readme_contains(
+                    snapshot,
+                    &[
+                        "template",
+                        "action.yml",
+                        "cookiecutter",
+                        "scaffold",
+                        "generator"
+                    ]
+                )
+            );
+        }
+        ProfileKind::Common => {
+            signal!(
+                "identity route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Identity)
+            );
+            signal!(
+                "docs route",
+                16,
+                has_route(snapshot, baseline, RouteKind::Docs)
+            );
+            signal!(
+                "license boundary",
+                16,
+                has_route(snapshot, baseline, RouteKind::License)
+            );
+        }
+    }
+
+    let evidence_score = if total == 0 {
+        0
+    } else {
+        score.saturating_mul(100).checked_div(total).unwrap_or(0) as u8
+    };
+    (evidence_score.min(100), matched, missing)
+}
+
+fn confidence_score(prior_x1000: u16, evidence_score_x100: u8, score_x100: u8) -> u8 {
+    let prior_component = u32::from(prior_x1000) / 20;
+    let evidence_component = u32::from(evidence_score_x100) * 55 / 100;
+    let score_component = u32::from(score_x100) * 30 / 100;
+    prior_component
+        .saturating_add(evidence_component)
+        .saturating_add(score_component)
+        .min(100) as u8
+}
+
+fn has_route(snapshot: Option<&RepoSnapshot>, baseline: &BaselineReport, route: RouteKind) -> bool {
+    if baseline
+        .rules
+        .iter()
+        .any(|rule| rule.route == Some(route) && rule.status == BaselineStatus::Present)
+    {
+        return true;
+    }
+
+    snapshot.is_some_and(|snapshot| {
+        snapshot.route_states.iter().any(|state| {
+            state.route == route
+                && !matches!(
+                    state.state,
+                    seiri_core::RouteState::Absent | seiri_core::RouteState::UnsafeToInvent
+                )
+        }) || snapshot
+            .evidence_ledger
+            .iter()
+            .any(|record| record.route == Some(route))
+    })
+}
+
+fn has_important_file(snapshot: Option<&RepoSnapshot>, kind: ImportantFileKind) -> bool {
+    snapshot.is_some_and(|snapshot| {
+        snapshot
+            .important_files
+            .iter()
+            .any(|important| important.kind == kind)
+    })
+}
+
+fn path_or_readme_contains(snapshot: Option<&RepoSnapshot>, needles: &[&str]) -> bool {
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    snapshot.files.iter().any(|record| {
+        let path = record.path.to_ascii_lowercase();
+        let kind_match = matches!(record.kind, FileKind::Directory | FileKind::File);
+        kind_match && needles.iter().any(|needle| path.contains(needle))
+    }) || snapshot.readme.as_ref().is_some_and(|readme| {
+        readme
+            .headings
+            .iter()
+            .any(|heading| contains_signal(&heading.text, needles))
+            || readme.links.iter().any(|link| {
+                contains_signal(&link.text, needles) || contains_signal(&link.target, needles)
+            })
+            || readme.route_candidates.iter().any(|candidate| {
+                contains_signal(&candidate.text, needles)
+                    || candidate
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| contains_signal(target, needles))
+            })
+    })
+}
+
+fn contains_signal(value: &str, needles: &[&str]) -> bool {
+    let value = value.to_ascii_lowercase();
+    needles.iter().any(|needle| value.contains(needle))
 }
 
 fn rule(

@@ -55,6 +55,10 @@ fn profile_score_view_is_deterministic_and_bounded() {
         .iter()
         .any(|rule| rule.status == BaselineStatus::Missing));
     assert!(profile.score.note.contains("not a popularity"));
+    assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Docs);
+    assert_eq!(profile.branches.len(), 9);
+    assert!(profile.branch_summary.top_profile.is_some());
+    assert!(profile.branch_summary.top_confidence_x100.is_some());
 }
 
 #[test]
@@ -71,4 +75,61 @@ fn profile_report_keeps_missing_recommendations_ranked() {
         assert_eq!(recommendation.rank, index + 1);
         assert!(recommendation.weight > 0);
     }
+}
+
+#[test]
+fn profile_branch_confidence_emits_multiple_candidates_with_priors() {
+    let snapshot = seiri_report::audit_repository_with_profile(
+        fixture("readme-route-repo"),
+        ProfileKind::Common,
+    )
+    .expect("audit common profile");
+    let profile = snapshot.profile.expect("profile report");
+
+    assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Common);
+    assert_eq!(profile.branch_summary.emitted_profiles, 9);
+    assert_eq!(profile.branches.len(), 9);
+    assert!(profile
+        .branch_summary
+        .boundary
+        .contains("not a repository type assertion"));
+    assert!(profile
+        .branches
+        .windows(2)
+        .all(|window| { window[0].confidence_x100 >= window[1].confidence_x100 }));
+
+    let library = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Library)
+        .expect("library branch");
+    let cli = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Cli)
+        .expect("cli branch");
+    let product = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Product)
+        .expect("product branch");
+    let runtime = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Runtime)
+        .expect("runtime branch");
+    let ml = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Ml)
+        .expect("ml branch");
+
+    assert_eq!(library.prior_x1000, 280);
+    assert_eq!(cli.prior_x1000, 110);
+    assert_eq!(product.prior_x1000, 90);
+    assert_eq!(runtime.prior_x1000, 45);
+    assert_eq!(ml.prior_x1000, 75);
+    assert!(library.confidence_x100 > 0);
+    assert!(cli.confidence_x100 > 0);
+    assert!(!library.matched_signals.is_empty());
 }

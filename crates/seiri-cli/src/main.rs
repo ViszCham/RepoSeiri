@@ -35,6 +35,10 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    Patterns {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        format: OutputFormat,
+    },
     Codex {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -104,6 +108,10 @@ fn run() -> Result<String, seiri_report::AuditError> {
                 OutputFormat::Markdown => Ok(seiri_report::calibration_to_markdown(&run)),
             }
         }
+        Command::Patterns { format } => match format {
+            OutputFormat::Json => seiri_report::pattern_registry_to_json(),
+            OutputFormat::Markdown => Ok(seiri_report::pattern_registry_to_markdown()),
+        },
         Command::Codex {
             path,
             profile,
@@ -130,7 +138,7 @@ fn run() -> Result<String, seiri_report::AuditError> {
 fn parse_profile(value: &str) -> Result<ProfileKind, String> {
     value.parse::<ProfileKind>().map_err(|error| {
         format!(
-            "{error}; expected one of: common, library, cli, infra, docs, tutorial, research, template"
+            "{error}; expected one of: common, library, cli, infra, product, runtime, docs, tutorial, ml, research, template"
         )
     })
 }

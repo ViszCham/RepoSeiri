@@ -7,3 +7,5 @@ publish.workspace = true
 
 [dependencies]
 seiri-core = { path = "../seiri-core" }
+serde.workspace = true
+serde_json.workspace = true

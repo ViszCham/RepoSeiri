@@ -1,0 +1,7 @@
+name: infra-ci
+on: [push]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: terraform fmt -check

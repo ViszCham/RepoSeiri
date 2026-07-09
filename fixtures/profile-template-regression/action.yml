@@ -1,0 +1,6 @@
+name: profile-template-regression
+runs:
+  using: composite
+  steps:
+    - run: echo scaffold
+      shell: bash
