@@ -1,0 +1,15 @@
+[package]
+name = "seiri-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+seiri-core = { path = "../seiri-core" }
+seiri-report = { path = "../seiri-report" }
+
+[[bin]]
+name = "seiri"
+path = "src/main.rs"

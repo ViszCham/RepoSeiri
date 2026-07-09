@@ -1,0 +1,12 @@
+[package]
+name = "seiri-calibration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+seiri-core = { path = "../seiri-core" }
+seiri-patterns = { path = "../seiri-patterns" }
+seiri-profiles = { path = "../seiri-profiles" }
+serde_json.workspace = true

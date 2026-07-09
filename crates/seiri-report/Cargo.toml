@@ -1,0 +1,17 @@
+[package]
+name = "seiri-report"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+seiri-core = { path = "../seiri-core" }
+seiri-fs = { path = "../seiri-fs" }
+seiri-markdown = { path = "../seiri-markdown" }
+seiri-patterns = { path = "../seiri-patterns" }
+seiri-profiles = { path = "../seiri-profiles" }
+seiri-planner = { path = "../seiri-planner" }
+seiri-calibration = { path = "../seiri-calibration" }
+seiri-codex = { path = "../seiri-codex" }
+serde_json.workspace = true

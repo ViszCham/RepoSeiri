@@ -1,0 +1,231 @@
+{
+  "schema_version": "seiri.block_f.v1",
+  "dataset_id": "fixture-calibration-0001",
+  "name": "Fixture Calibration Dataset",
+  "collected_at": "2026-07-09",
+  "extraction_conditions": [
+    "Small deterministic fixture for Block E calibration plumbing."
+  ],
+  "limitations": [
+    "This fixture is not statistical evidence and must not be used to adopt runtime rules."
+  ],
+  "evidence_schema": {
+    "schema_version": "seiri.block_f.v1",
+    "compatible_from": "seiri.block_a.v1",
+    "note": "Fixture data exercises calibration schema compatibility only."
+  },
+  "records": [
+    {
+      "repo_id": "fixture/library-alpha",
+      "owner": "fixture",
+      "name": "library-alpha",
+      "url": "https://example.invalid/fixture/library-alpha",
+      "stars": 12000,
+      "age_days": 2200,
+      "primary_language": "Rust",
+      "topics": ["library", "api"],
+      "activity": {
+        "pushed_within_days": 12,
+        "default_branch_commits": 850,
+        "open_issues": 42
+      },
+      "metadata_source": "fixture",
+      "profile_hint": "library",
+      "observed_patterns": [
+        {
+          "pattern_id": "common.identity.readme_present",
+          "raw_label": "root_readme",
+          "evidence_kind": "readme_present",
+          "route": "identity",
+          "location": "README.md:1"
+        },
+        {
+          "pattern_id": "common.docs.route_present",
+          "raw_label": "readme_docs_link",
+          "evidence_kind": "markdown_link",
+          "route": "docs",
+          "location": "README.md:8"
+        },
+        {
+          "pattern_id": "common.quickstart.route_present",
+          "raw_label": "readme_quickstart_heading",
+          "evidence_kind": "markdown_heading",
+          "route": "quickstart",
+          "location": "README.md:14"
+        },
+        {
+          "pattern_id": "common.license.file_present",
+          "raw_label": "license_file",
+          "evidence_kind": "important_file",
+          "route": "license",
+          "location": "LICENSE"
+        },
+        {
+          "pattern_id": "community.health.code_of_conduct",
+          "raw_label": "code_of_conduct_file",
+          "evidence_kind": "important_file",
+          "location": "CODE_OF_CONDUCT.md"
+        }
+      ]
+    },
+    {
+      "repo_id": "fixture/cli-bravo",
+      "owner": "fixture",
+      "name": "cli-bravo",
+      "stars": 8400,
+      "age_days": 1500,
+      "primary_language": "Rust",
+      "topics": ["cli", "tool"],
+      "activity": {
+        "pushed_within_days": 4,
+        "default_branch_commits": 500,
+        "open_issues": 18
+      },
+      "metadata_source": "fixture",
+      "profile_hint": "cli",
+      "observed_patterns": [
+        {
+          "pattern_id": "common.identity.readme_present",
+          "raw_label": "root_readme",
+          "evidence_kind": "readme_present",
+          "route": "identity",
+          "location": "README.md:1"
+        },
+        {
+          "pattern_id": "common.docs.route_present",
+          "raw_label": "readme_docs_link",
+          "evidence_kind": "markdown_link",
+          "route": "docs",
+          "location": "README.md:10"
+        },
+        {
+          "pattern_id": "common.quickstart.route_present",
+          "raw_label": "first_command_example",
+          "evidence_kind": "markdown_heading",
+          "route": "quickstart",
+          "location": "README.md:16"
+        },
+        {
+          "pattern_id": "common.license.file_present",
+          "raw_label": "license_file",
+          "evidence_kind": "important_file",
+          "route": "license",
+          "location": "LICENSE"
+        },
+        {
+          "pattern_id": "common.automation.route_present",
+          "raw_label": "ci_badge",
+          "evidence_kind": "markdown_badge",
+          "route": "automation",
+          "location": "README.md:3"
+        }
+      ]
+    },
+    {
+      "repo_id": "fixture/infra-charlie",
+      "owner": "fixture",
+      "name": "infra-charlie",
+      "stars": 6400,
+      "age_days": 1800,
+      "primary_language": "HCL",
+      "topics": ["infra", "ops"],
+      "activity": {
+        "pushed_within_days": 2,
+        "default_branch_commits": 1100,
+        "open_issues": 11
+      },
+      "metadata_source": "fixture",
+      "profile_hint": "infra",
+      "observed_patterns": [
+        {
+          "pattern_id": "common.identity.readme_present",
+          "raw_label": "root_readme",
+          "evidence_kind": "readme_present",
+          "route": "identity",
+          "location": "README.md:1"
+        },
+        {
+          "pattern_id": "common.docs.route_present",
+          "raw_label": "runbook_docs_link",
+          "evidence_kind": "markdown_link",
+          "route": "docs",
+          "location": "README.md:12"
+        },
+        {
+          "pattern_id": "common.security.route_present",
+          "raw_label": "security_policy_link",
+          "evidence_kind": "markdown_link",
+          "route": "security",
+          "location": "README.md:20"
+        },
+        {
+          "pattern_id": "common.automation.route_present",
+          "raw_label": "workflow_badge",
+          "evidence_kind": "markdown_badge",
+          "route": "automation",
+          "location": "README.md:4"
+        },
+        {
+          "pattern_id": "common.license.file_present",
+          "raw_label": "license_file",
+          "evidence_kind": "important_file",
+          "route": "license",
+          "location": "LICENSE"
+        }
+      ]
+    },
+    {
+      "repo_id": "fixture/docs-delta",
+      "owner": "fixture",
+      "name": "docs-delta",
+      "stars": 4200,
+      "age_days": 900,
+      "primary_language": "Markdown",
+      "topics": ["docs", "guide"],
+      "activity": {
+        "pushed_within_days": 7,
+        "default_branch_commits": 260,
+        "open_issues": 9
+      },
+      "metadata_source": "fixture",
+      "profile_hint": "docs",
+      "observed_patterns": [
+        {
+          "pattern_id": "common.identity.readme_present",
+          "raw_label": "root_readme",
+          "evidence_kind": "readme_present",
+          "route": "identity",
+          "location": "README.md:1"
+        },
+        {
+          "pattern_id": "common.docs.route_present",
+          "raw_label": "docs_index_link",
+          "evidence_kind": "markdown_link",
+          "route": "docs",
+          "location": "README.md:9"
+        },
+        {
+          "pattern_id": "common.support.route_present",
+          "raw_label": "support_link",
+          "evidence_kind": "markdown_link",
+          "route": "support",
+          "location": "README.md:18"
+        },
+        {
+          "pattern_id": "common.contributing.route_present",
+          "raw_label": "contributing_link",
+          "evidence_kind": "markdown_link",
+          "route": "contributing",
+          "location": "README.md:19"
+        },
+        {
+          "pattern_id": "common.license.file_present",
+          "raw_label": "license_file",
+          "evidence_kind": "important_file",
+          "route": "license",
+          "location": "LICENSE"
+        }
+      ]
+    }
+  ]
+}
