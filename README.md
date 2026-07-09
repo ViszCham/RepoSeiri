@@ -11,10 +11,17 @@ RepoSeiri は、GitHub リポジトリを監査し、整理し、改善提案へ
 - 人間が読む主要ドキュメントは、前半を日本語、後半を英語にします。
 - 日本語部分と英語部分には、同じ内容、同じ判断、同じ注意事項を書くものとします。
 - 片方の言語だけに仕様、制約、手順、警告を追加しません。
+- 実装可能な部分は、なるべく低レイヤで実装します。
 
 ### 初期スコープ
 
 このリポジトリは、GitHub リポジトリ品質分析のための評価器、レポート生成、改善提案、Codex 連携を段階的に実装する作業場所です。初期段階では、README ルーティング、docs トポロジー、community health、security posture、CI、release、repository hygiene を repo type ごとに評価する設計を前提にします。
+
+### 実装方針
+
+低レイヤ優先の対象は、ファイル走査、Git オブジェクトや tree 情報の読み取り、Markdown / YAML / workflow 解析、スコアリング中間表現、差分生成、レポート生成の核となるデータ構造です。Rust の所有権、型、明示的なエラー処理、ストリーム処理、ゼロコピーまたは低コピー設計が効く部分を優先します。
+
+GitHub API 認証、Codex ホスト連携、ユーザー環境に依存する操作、外部サービス境界は、安全性、保守性、互換性を優先して適切な高レイヤ API を使います。低レイヤ化は目的ではなく、性能、検証性、移植性、依存削減、失敗境界の明確化に効く場合に採用します。
 
 ### 検証境界
 
@@ -33,10 +40,17 @@ RepoSeiri is designed as a Rust-based Codex plugin / app that audits GitHub repo
 - Major human-facing documents use Japanese in the first half and English in the second half.
 - The Japanese half and the English half must contain the same content, decisions, and cautions.
 - Do not add specifications, constraints, steps, or warnings to only one language.
+- Implement feasible parts at as low a layer as practical.
 
 ### Initial Scope
 
 This repository is the working place for gradually implementing evaluators, report generation, improvement proposals, and Codex integration for GitHub repository quality analysis. The initial design assumes repo-type-aware evaluation of README routing, docs topology, community health, security posture, CI, release, and repository hygiene.
+
+### Implementation Policy
+
+The low-level-first scope includes file traversal, reading Git objects and tree information, Markdown / YAML / workflow parsing, scoring intermediate representations, diff generation, and the core data structures for report generation. Prioritize areas where Rust ownership, types, explicit error handling, streaming, zero-copy, or low-copy design provide practical benefit.
+
+For GitHub API authentication, Codex host integration, user-environment-dependent operations, and external service boundaries, use appropriate high-level APIs when they improve safety, maintainability, and compatibility. Low-level implementation is not an end in itself; use it when it improves performance, verifiability, portability, dependency reduction, or clarity of failure boundaries.
 
 ### Verification Boundary
 
