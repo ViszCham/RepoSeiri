@@ -24,6 +24,8 @@ RepoSeiri は、GitHub リポジトリを監査し、整理し、改善提案へ
 
 RepoSeiri の詳細設計は [Repository Trust Graph Design](docs/design/repository-trust-graph.md) に置きます。README は設計本文を抱え込まず、詳細設計への導線だけを持ちます。
 
+実装ロードマップと一括実装ブロックは [Roadmap And Implementation Blocks](docs/design/roadmap-and-implementation-blocks.md) に置きます。
+
 ### 実装方針
 
 低レイヤ優先の対象は、ファイル走査、Git オブジェクトや tree 情報の読み取り、Markdown / YAML / workflow 解析、スコアリング中間表現、差分生成、レポート生成の核となるデータ構造です。Rust の所有権、型、明示的なエラー処理、ストリーム処理、ゼロコピーまたは低コピー設計が効く部分を優先します。
@@ -59,6 +61,8 @@ This repository is the working place for gradually implementing evaluators, repo
 ### Design Document
 
 The detailed RepoSeiri design lives in [Repository Trust Graph Design](docs/design/repository-trust-graph.md). README keeps the route to the detailed design instead of carrying the full design body.
+
+The implementation roadmap and batch implementation blocks live in [Roadmap And Implementation Blocks](docs/design/roadmap-and-implementation-blocks.md).
 
 ### Implementation Policy
 
