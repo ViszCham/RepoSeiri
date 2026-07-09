@@ -61,3 +61,16 @@ fn scanner_detects_block_l_operational_files() {
         );
     }
 }
+
+#[test]
+fn scanner_detects_repository_hygiene_files() {
+    let scan = seiri_fs::scan_repository(fixture("hygiene-self-audit-repo")).expect("scan fixture");
+
+    assert!(scan
+        .important_files
+        .iter()
+        .any(|file| { file.kind == ImportantFileKind::Gitignore && file.path == ".gitignore" }));
+    assert!(scan.important_files.iter().any(|file| {
+        file.kind == ImportantFileKind::Gitattributes && file.path == ".gitattributes"
+    }));
+}

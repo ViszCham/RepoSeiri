@@ -1,0 +1,21 @@
+RepoSeiri License
+
+## 日本語
+
+RepoSeiri は、利用者の選択により MIT License または Apache License, Version 2.0 のいずれか一方の条件で利用できます。
+
+- MIT License の標準本文は [LICENSE-MIT](LICENSE-MIT) に置きます。
+- Apache License, Version 2.0 の標準本文は [LICENSE-APACHE](LICENSE-APACHE) に置きます。
+- `Cargo.toml` の license metadata は `MIT OR Apache-2.0` とします。
+- 個別ファイルに別のライセンス表示がある場合は、その個別表示を優先します。
+- このファイルは RepoSeiri の root license route です。ライセンス本文の解釈や適用範囲について不明点がある場合は、専門家に確認してください。
+
+## English
+
+RepoSeiri is licensed under either the MIT License or the Apache License, Version 2.0, at your option.
+
+- The standard MIT License text lives in [LICENSE-MIT](LICENSE-MIT).
+- The standard Apache License, Version 2.0 text lives in [LICENSE-APACHE](LICENSE-APACHE).
+- The `Cargo.toml` license metadata is `MIT OR Apache-2.0`.
+- If an individual file carries a different license notice, that file-specific notice takes precedence.
+- This file is the root license route for RepoSeiri. If you need interpretation of license text or scope, consult a qualified professional.

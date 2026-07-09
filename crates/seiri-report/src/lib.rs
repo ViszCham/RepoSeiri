@@ -977,6 +977,9 @@ fn route_for_important_file(kind: ImportantFileKind) -> Option<RouteKind> {
         ImportantFileKind::DependencyBot | ImportantFileKind::SecurityAutomation => {
             Some(RouteKind::Automation)
         }
+        ImportantFileKind::Gitignore
+        | ImportantFileKind::Gitattributes
+        | ImportantFileKind::EditorConfig => Some(RouteKind::Hygiene),
     }
 }
 

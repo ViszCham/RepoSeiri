@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+      - name: Select Rust toolchain
+        run: rustup default stable
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Prepare RepoSeiri self-audit artifacts
+        run: mkdir -p target/reposeiri-self-audit
+
+      - name: Run RepoSeiri audit
+        run: cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown | tee target/reposeiri-self-audit/audit.md
+
+      - name: Render RepoSeiri dry-run plan
+        run: cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markdown | tee target/reposeiri-self-audit/plan.md
+
+      - name: Build Codex review context
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown | tee target/reposeiri-self-audit/codex.md
+
+      - name: Upload RepoSeiri self-audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reposeiri-self-audit
+          path: target/reposeiri-self-audit/*.md
+          if-no-files-found: error

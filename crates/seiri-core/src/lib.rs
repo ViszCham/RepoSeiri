@@ -84,6 +84,9 @@ pub enum ImportantFileKind {
     Workflow,
     DependencyBot,
     SecurityAutomation,
+    Gitignore,
+    Gitattributes,
+    EditorConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

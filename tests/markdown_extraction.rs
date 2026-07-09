@@ -96,6 +96,18 @@ fn readme_route_map_detects_weak_conflicting_overloaded_and_stale_routes() {
     );
 }
 
+#[test]
+fn readme_route_map_detects_hygiene_self_audit_route() {
+    let summary = seiri_markdown::analyze_readme(fixture("hygiene-self-audit-repo"))
+        .expect("read README")
+        .expect("README exists");
+
+    let hygiene = route_entry(&summary, RouteKind::Hygiene);
+    assert_eq!(hygiene.state, RouteState::Verified);
+    assert_eq!(hygiene.candidate_count, 1);
+    assert_eq!(hygiene.target_count, 1);
+}
+
 fn route_entry(summary: &seiri_core::ReadmeSummary, route: RouteKind) -> &ReadmeRouteMapEntry {
     summary
         .route_map

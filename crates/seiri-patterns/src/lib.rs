@@ -492,7 +492,7 @@ pub fn common_registry() -> PatternRegistry {
         candidate_pattern(
             PatternGroup::Hyg,
             "HYG-001",
-            "Repository hygiene route is visible",
+            "Repository hygiene route or root hygiene evidence is visible",
             Some(RouteKind::Hygiene),
             PatternDetector::Route(RouteKind::Hygiene),
             GateKind::Guarded,
