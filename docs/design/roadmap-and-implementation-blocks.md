@@ -165,7 +165,28 @@ Block A の acceptance criteria:
 6. 100,000 件データ受領後、Block E で calibration pipeline を足す。
 7. 最後に Block F で Codex adapter と PR workflow を足す。
 
-### 9. Claim boundary
+### 9. Roadmap v2 固定
+
+Block A-F の実装後は、100,000 件 / 1,000,000 件級の分析データを calibration input として扱い、次の Roadmap v2 を固定する。
+
+この roadmap は、人気リポジトリの形をコピーするものではない。RepoSeiri は、目的別の trust route、route state、co-occurrence、Safe / Guarded / Manual gate を観測 evidence から組み立てる。
+
+| Block | Scope | 1,000,000 件級データの使い方 | Exit condition |
+|---|---|---|---|
+| Block G: Evidence Ledger / RouteState v2 | `EvidenceRecord`, `EvidenceId`, `EvidenceSpan`, `EvidenceConfidence`, `RouteState` | README 98.6%、LICENSE 92.0%、docs route 81.4% を critical baseline の初期重みに使う | route が `absent`, `implicit`, `weak`, `routed`, `structured`, `verified`, `inherited`, `overridden`, `conflicting`, `overloaded`, `stale`, `unsafe_to_invent` で表現される |
+| Block H: README Route Analyzer v2 | README を routing hub として解析し、docs / quickstart / support / security / release / governance への到達 map を作る | docs route 欠落 186,000、quickstart 欠落 438,000、release route 欠落 454,000 を優先度に反映する | README route map が weak / conflicting / overloaded / stale を検出できる |
+| Block I: Pattern Registry v2 | `IDN`, `DOC`, `QST`, `SUP`, `SEC`, `CTR`, `INT`, `AUT`, `REL`, `OWN`, `GOV`, `HYG`, `LIF` の registry に分割する | SEC-001、INT-001、AUT-001、REL-002、OWN-001 などを高 impact 候補として登録する | registry が JSON と Markdown に render でき、pattern 追加が小さい差分で済む |
+| Block J: Profile Branch Confidence | repo type を単一断定せず、複数 profile と confidence を出す | Library 28%、Infra 17%、CLI 11%、Product 9%、Runtime 4.5%、Docs 9.5%、Tutorial 10%、ML 7.5%、Template 3.5% を初期 prior に使う | `Library 0.72 / CLI 0.31` のような複数候補が出る |
+| Block K: Missing Route Priority + Co-occurrence Engine | missing route の優先度と co-occurrence を評価する | SECURITY 欠落 558,000、SUPPORT 欠落 503,000、Issue forms 欠落 822,000、CODEOWNERS 欠落 605,000 を高 leverage gap として扱う | `README + Security + CI + Dependency bot` などの組み合わせ gap が説明される |
+| Block L: Security / Support / Intake / Automation | SECURITY、SUPPORT、issue forms、PR template、dependency bot、security automation を重点実装する | SECURITY 44.2%、Issue templates 41.6%、Dependency bot 34.8%、Security automation 31.2% を「未普及だが高価値」の領域として扱う | route 可視化は Safe、雛形は Guarded、contact / SLA / CODEOWNERS は Manual になる |
+| Block M: Safe Patch Planner v2 | safe patch、guarded draft、manual decision を厳密に分ける | Safe / Guarded / Manual の表を patch planner の分類基準にする | `unsafe_to_invent` は必ず blocked item に落ちる |
+| Block N: Report / Codex Adapter v2 | score 中心ではなく route 中心の report と Codex context を出す | strong routes、weak routes、missing routes、co-occurrence gaps、safe fixes、guarded drafts、manual decisions を report に出す | Codex に渡るのは safe patch と reviewable guarded draft に限定される |
+| Block O: Calibration Ingest v2 | `CalibrationSource`, `PatternStats`, `RouteRequirement`, `ProfileBranch`, `WeightSuggestion`, `ClaimBoundary` を強化する | 1,000,000 件級データを runtime rule ではなく reviewable calibration として保存する | 新しい 100,000 / 1,000,000 件データを差し替えても core が壊れない |
+| Block P: Fixture / Regression Suite | profile、route state、gate、co-occurrence の fixture と snapshot test を増やす | 9 profile と route state の代表ケースを作る | confidence、route state、gate 分類が regression test で固定される |
+
+Roadmap v2 の実装順序は `G -> H -> I -> J -> K -> L -> M -> N -> O -> P` とする。特に G/H/I は次期実装の土台であり、ここを飛ばして security や issue forms を増やすと、単純な「ファイルがある / ない」判定に戻る。
+
+### 10. Claim boundary
 
 RepoSeiri は、人気、信頼、セキュリティ、保守性を保証しません。RepoSeiri が出すのは、観測した evidence、そこから導いた finding、目的別の recommendation、そして安全 gate を通した patch plan です。信頼されやすいリポジトリに多い導線を整えることはできますが、外部評価、利用者数、star 数、security outcome を保証するものではありません。
 
@@ -336,6 +357,27 @@ Proceed in this order:
 6. After receiving the 100,000-repository data, add the calibration pipeline in Block E.
 7. Add the Codex adapter and PR workflow last in Block F.
 
-### 9. Claim Boundary
+### 9. Roadmap v2 Lock
+
+After Blocks A-F, fix Roadmap v2 around the 100,000 / 1,000,000-repository analysis data as calibration input.
+
+This roadmap does not copy the shape of popular repositories. RepoSeiri builds purpose-specific trust routes, route states, co-occurrence, and Safe / Guarded / Manual gates from observed evidence.
+
+| Block | Scope | Use of 1,000,000-level data | Exit condition |
+|---|---|---|---|
+| Block G: Evidence Ledger / RouteState v2 | Add `EvidenceRecord`, `EvidenceId`, `EvidenceSpan`, `EvidenceConfidence`, and `RouteState` | Use README 98.6%, LICENSE 92.0%, and docs route 81.4% as initial weights for critical baseline routes | Routes are represented as `absent`, `implicit`, `weak`, `routed`, `structured`, `verified`, `inherited`, `overridden`, `conflicting`, `overloaded`, `stale`, or `unsafe_to_invent` |
+| Block H: README Route Analyzer v2 | Analyze README as a routing hub and build reachability maps to docs / quickstart / support / security / release / governance | Reflect docs route gaps 186,000, quickstart gaps 438,000, and release route gaps 454,000 in priority | README route maps detect weak, conflicting, overloaded, and stale routes |
+| Block I: Pattern Registry v2 | Split the registry into `IDN`, `DOC`, `QST`, `SUP`, `SEC`, `CTR`, `INT`, `AUT`, `REL`, `OWN`, `GOV`, `HYG`, and `LIF` groups | Register SEC-001, INT-001, AUT-001, REL-002, OWN-001, and similar high-impact candidates | The registry renders as JSON and Markdown, and adding a pattern stays a small diff |
+| Block J: Profile Branch Confidence | Emit multiple profiles with confidence instead of asserting one repo type | Use Library 28%, Infra 17%, CLI 11%, Product 9%, Runtime 4.5%, Docs 9.5%, Tutorial 10%, ML 7.5%, and Template 3.5% as initial priors | The report can emit candidates such as `Library 0.72 / CLI 0.31` |
+| Block K: Missing Route Priority + Co-occurrence Engine | Evaluate missing-route priority and co-occurrence | Treat SECURITY gaps 558,000, SUPPORT gaps 503,000, Issue forms gaps 822,000, and CODEOWNERS gaps 605,000 as high-leverage gaps | Combination gaps such as `README + Security + CI + Dependency bot` are explained |
+| Block L: Security / Support / Intake / Automation | Focus on SECURITY, SUPPORT, issue forms, PR templates, dependency bots, and security automation | Treat SECURITY 44.2%, Issue templates 41.6%, Dependency bot 34.8%, and Security automation 31.2% as lower-adoption but high-value areas | Route visualization is Safe, skeleton drafts are Guarded, and contact / SLA / CODEOWNERS remain Manual |
+| Block M: Safe Patch Planner v2 | Strictly separate safe patches, guarded drafts, and manual decisions | Use the Safe / Guarded / Manual table as patch planner classification input | `unsafe_to_invent` always becomes a blocked item |
+| Block N: Report / Codex Adapter v2 | Emit route-centered reports and Codex context instead of score-centered output | Show strong routes, weak routes, missing routes, co-occurrence gaps, safe fixes, guarded drafts, and manual decisions | Codex receives only safe patches and reviewable guarded drafts |
+| Block O: Calibration Ingest v2 | Strengthen `CalibrationSource`, `PatternStats`, `RouteRequirement`, `ProfileBranch`, `WeightSuggestion`, and `ClaimBoundary` | Store 1,000,000-level data as reviewable calibration, not as runtime rules | New 100,000 / 1,000,000-repository data can be swapped in without breaking the core |
+| Block P: Fixture / Regression Suite | Add fixture and snapshot coverage for profiles, route states, gates, and co-occurrence | Create representative cases for the 9 profiles and route states | Confidence, route state, and gate classification are fixed by regression tests |
+
+The Roadmap v2 implementation order is `G -> H -> I -> J -> K -> L -> M -> N -> O -> P`. G/H/I are the next foundation. If security or issue form work is added before them, the system risks falling back to simple file-present / file-missing checks.
+
+### 10. Claim Boundary
 
 RepoSeiri does not guarantee popularity, trust, security, or maintainability. RepoSeiri produces observed evidence, findings derived from that evidence, purpose-specific recommendations, and patch plans passed through safety gates. It can organize routes commonly found in trusted repositories, but it does not guarantee external evaluation, user count, stars, or security outcomes.
