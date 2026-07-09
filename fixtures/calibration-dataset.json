@@ -7,6 +7,7 @@
     {
       "id": "calibration-source-fixture-0001",
       "kind": "fixture",
+      "visibility": "public",
       "label": "Fixture Calibration Dataset",
       "collected_at": "2026-07-09",
       "records": 4,

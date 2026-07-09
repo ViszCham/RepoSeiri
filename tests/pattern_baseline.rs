@@ -22,6 +22,7 @@ fn common_registry_exposes_stable_pattern_definitions() {
     assert!(ids.contains(&"common.docs.route_present"));
     assert!(ids.contains(&"common.quickstart.route_present"));
     assert!(ids.contains(&"common.license.file_present"));
+    assert!(ids.contains(&"common.lifecycle.route_present"));
     assert!(ids.contains(&"SEC-001"));
     assert!(ids.contains(&"SEC-004"));
     assert!(ids.contains(&"SEC-007"));
@@ -33,6 +34,7 @@ fn common_registry_exposes_stable_pattern_definitions() {
     assert!(ids.contains(&"AUT-001"));
     assert!(ids.contains(&"AUT-009"));
     assert!(ids.contains(&"REL-002"));
+    assert!(ids.contains(&"LIF-001"));
     assert!(ids.contains(&"OWN-001"));
 
     assert!(registry.definitions().iter().any(|definition| {
@@ -42,7 +44,7 @@ fn common_registry_exposes_stable_pattern_definitions() {
         .definitions()
         .iter()
         .any(|definition| { definition.id == "SEC-001" && definition.group == PatternGroup::Sec }));
-    assert_eq!(registry.evaluation_definitions().len(), 9);
+    assert_eq!(registry.evaluation_definitions().len(), 10);
     assert!(registry.evaluation_definitions().iter().all(|definition| {
         definition.adoption_stage == seiri_patterns::PatternAdoptionStage::CommonBaseline
     }));

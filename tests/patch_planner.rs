@@ -156,9 +156,150 @@ fn patch_plan_v2_always_blocks_unsafe_to_invent_routes() {
         .find(|item| item.pattern_id == "common.security.route_present")
         .expect("unsafe route blocked item");
     assert_eq!(blocked.source, PatchPlanSource::MissingRoutePriority);
+    assert_eq!(
+        blocked.suggested_kind,
+        Some(PatchOperationKind::AddSecuritySkeletonDraft)
+    );
     assert!(blocked.reason.contains("unsafe_to_invent"));
     assert!(blocked.preflight.iter().any(|check| {
         check.kind == PatchPreflightCheckKind::RouteSafeToInvent
             && check.status == PatchPreflightStatus::Blocked
+    }));
+}
+
+#[test]
+fn q8_expanded_operation_kinds_have_stable_json_names() {
+    let kinds = [
+        PatchOperationKind::AddReadmeRoute,
+        PatchOperationKind::AddClaimBoundaryNote,
+        PatchOperationKind::AddLifecycleRoute,
+        PatchOperationKind::AddSupportSkeletonDraft,
+        PatchOperationKind::AddSecuritySkeletonDraft,
+        PatchOperationKind::MoveReadmeDetailToDocsDraft,
+    ];
+
+    let json = serde_json::to_string(&kinds).expect("operation kind JSON");
+
+    assert_eq!(
+        json,
+        "[\"add_readme_route\",\"add_claim_boundary_note\",\"add_lifecycle_route\",\"add_support_skeleton_draft\",\"add_security_skeleton_draft\",\"move_readme_detail_to_docs_draft\"]"
+    );
+}
+
+#[test]
+fn q8_blocked_items_carry_review_required_operation_kinds() {
+    let mut snapshot = RepoSnapshot::new("q8-boundary-fixture");
+    push_priority(
+        &mut snapshot,
+        RouteKind::Support,
+        GateKind::Guarded,
+        "common.support.route_present",
+    );
+    push_priority(
+        &mut snapshot,
+        RouteKind::Security,
+        GateKind::Manual,
+        "common.security.route_present",
+    );
+    push_priority(
+        &mut snapshot,
+        RouteKind::Lifecycle,
+        GateKind::Manual,
+        "common.lifecycle.route_present",
+    );
+    push_priority(
+        &mut snapshot,
+        RouteKind::Release,
+        GateKind::Guarded,
+        "common.release.route_present",
+    );
+    push_priority(
+        &mut snapshot,
+        RouteKind::License,
+        GateKind::Manual,
+        "common.license.file_present",
+    );
+
+    let plan = seiri_planner::plan_safe_patches(&snapshot);
+
+    assert!(plan.operations.is_empty());
+    assert_blocked_kind(
+        &plan,
+        "common.support.route_present",
+        PatchOperationKind::AddSupportSkeletonDraft,
+        PatchSafetyLevel::ReviewRequired,
+    );
+    assert_blocked_kind(
+        &plan,
+        "common.security.route_present",
+        PatchOperationKind::AddSecuritySkeletonDraft,
+        PatchSafetyLevel::ManualOnly,
+    );
+    assert_blocked_kind(
+        &plan,
+        "common.lifecycle.route_present",
+        PatchOperationKind::AddLifecycleRoute,
+        PatchSafetyLevel::ManualOnly,
+    );
+    assert_blocked_kind(
+        &plan,
+        "common.release.route_present",
+        PatchOperationKind::MoveReadmeDetailToDocsDraft,
+        PatchSafetyLevel::ReviewRequired,
+    );
+    assert_blocked_kind(
+        &plan,
+        "common.license.file_present",
+        PatchOperationKind::AddClaimBoundaryNote,
+        PatchSafetyLevel::ManualOnly,
+    );
+
+    let markdown = seiri_report::plan_to_markdown(&plan);
+    assert!(markdown.contains("Suggested kind: `AddSupportSkeletonDraft`"));
+    assert!(markdown.contains("Suggested kind: `AddClaimBoundaryNote`"));
+    assert!(markdown.contains("human policy"));
+}
+
+fn push_priority(snapshot: &mut RepoSnapshot, route: RouteKind, gate: GateKind, pattern_id: &str) {
+    let index = snapshot.missing_route_priority.priorities.len() + 1;
+    snapshot
+        .missing_route_priority
+        .priorities
+        .push(seiri_core::MissingRoutePriority {
+            rank: index,
+            route,
+            state: RouteState::Absent,
+            gate,
+            severity: Severity::Info,
+            priority: ProfilePriority::Normal,
+            priority_score_x100: 50,
+            observed_missing_repositories: None,
+            observed_missing_x1000: None,
+            baseline_pattern_ids: vec![pattern_id.to_string()],
+            candidate_pattern_ids: Vec::new(),
+            co_occurrence_gap_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+            reason: format!("{route:?} route needs review"),
+        });
+}
+
+fn assert_blocked_kind(
+    plan: &seiri_core::PatchPlan,
+    pattern_id: &str,
+    kind: PatchOperationKind,
+    safety: PatchSafetyLevel,
+) {
+    let blocked = plan
+        .blocked
+        .iter()
+        .find(|item| item.pattern_id == pattern_id)
+        .expect("blocked item");
+
+    assert_eq!(blocked.suggested_kind, Some(kind));
+    assert_eq!(blocked.safety, safety);
+    assert!(blocked.preflight.iter().any(|check| {
+        check.kind == PatchPreflightCheckKind::SafeGate
+            && check.status == PatchPreflightStatus::Blocked
+            && check.detail.contains(&format!("{kind:?}"))
     }));
 }

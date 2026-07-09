@@ -1,0 +1,95 @@
+{
+  "schema_version": "seiri.block_p.v1",
+  "dataset_id": "SYNTHETIC_LOCAL_ONLY_DATASET_ID_SHOULD_NOT_RENDER",
+  "name": "Synthetic Local-only Calibration Fixture",
+  "collected_at": "2026-07-10",
+  "calibration_sources": [
+    {
+      "id": "public-fixture-source-0001",
+      "kind": "fixture",
+      "visibility": "public",
+      "label": "Synthetic public fixture source",
+      "collected_at": "2026-07-10",
+      "records": 1,
+      "scale": "tiny",
+      "metadata_sources": ["fixture"],
+      "extraction_conditions": [
+        "Synthetic public source for local-only redaction tests."
+      ],
+      "limitations": [
+        "Fixture data exercises redaction behavior only."
+      ],
+      "evidence_schema": {
+        "schema_version": "seiri.block_p.v1",
+        "compatible_from": "seiri.block_a.v1",
+        "note": "Synthetic public source."
+      },
+      "review_status": "pending_review"
+    },
+    {
+      "id": "SYNTHETIC_LOCAL_ONLY_PATH_SHOULD_NOT_RENDER",
+      "kind": "aggregate_analysis",
+      "visibility": "local_only",
+      "label": "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER",
+      "collected_at": "2026-07-10",
+      "records": 1,
+      "scale": "custom",
+      "metadata_sources": ["SYNTHETIC_LOCAL_ONLY_PATH_SHOULD_NOT_RENDER"],
+      "extraction_conditions": [
+        "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"
+      ],
+      "limitations": [
+        "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"
+      ],
+      "evidence_schema": {
+        "schema_version": "seiri.block_p.v1",
+        "compatible_from": "seiri.block_a.v1",
+        "note": "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"
+      },
+      "review_status": "pending_review"
+    }
+  ],
+  "extraction_conditions": [
+    "Synthetic fixture for public-output local-only source redaction."
+  ],
+  "limitations": [
+    "Uses synthetic tokens only; no private analysis content is stored here."
+  ],
+  "evidence_schema": {
+    "schema_version": "seiri.block_p.v1",
+    "compatible_from": "seiri.block_a.v1",
+    "note": "Synthetic fixture schema."
+  },
+  "records": [
+    {
+      "repo_id": "fixture/local-only-alpha",
+      "owner": "fixture",
+      "name": "local-only-alpha",
+      "stars": 10,
+      "age_days": 100,
+      "primary_language": "Rust",
+      "topics": ["fixture"],
+      "activity": {
+        "pushed_within_days": 5,
+        "default_branch_commits": 20,
+        "open_issues": 1
+      },
+      "metadata_source": "fixture",
+      "profile_hint": "library",
+      "observed_patterns": [
+        {
+          "pattern_id": "common.docs.route_present",
+          "raw_label": "public_docs_marker",
+          "evidence_kind": "markdown_link",
+          "route": "docs",
+          "location": "README.md:8"
+        },
+        {
+          "raw_label": "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER",
+          "evidence_kind": "markdown_heading",
+          "location": "SYNTHETIC_LOCAL_ONLY_PATH_SHOULD_NOT_RENDER:42"
+        }
+      ]
+    }
+  ]
+}

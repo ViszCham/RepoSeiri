@@ -1,5 +1,6 @@
-use seiri_core::{ReadmeRouteMapEntry, RouteKind, RouteState};
+use seiri_core::{ReadmeRouteMapEntry, RouteKind, RouteSource, RouteState, SourceSpan};
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -108,6 +109,107 @@ fn readme_route_map_detects_hygiene_self_audit_route() {
     assert_eq!(hygiene.target_count, 1);
 }
 
+#[test]
+fn q7_markdown_spans_survive_utf8_multibyte_text() {
+    let root = fixture("markdown-span-repo");
+    let readme_text = fs::read_to_string(root.join("README.md")).expect("read fixture README");
+    let summary = seiri_markdown::analyze_readme(&root)
+        .expect("read README")
+        .expect("README exists");
+
+    let heading = summary
+        .headings
+        .iter()
+        .find(|heading| heading.text == "RepoSeiri 概要")
+        .expect("multibyte heading");
+    let heading_span = heading.span.expect("heading span");
+    assert_eq!(heading.line, 1);
+    assert_eq!(heading_span.line, heading.line);
+    assert_eq!(heading_span.column, 1);
+    assert_span_slice(&readme_text, heading_span, "# RepoSeiri 概要");
+
+    let quickstart = summary
+        .headings
+        .iter()
+        .find(|heading| heading.text == "Quickstart 手順")
+        .expect("route heading");
+    let quickstart_span = quickstart.span.expect("quickstart heading span");
+    assert_span_slice(&readme_text, quickstart_span, "## Quickstart 手順");
+
+    let link = summary
+        .links
+        .iter()
+        .find(|link| link.target == "docs/guide.md")
+        .expect("docs link");
+    let link_span = link.span.expect("link span");
+    assert_eq!(link_span.line, link.line);
+    assert_eq!(link_span.column, expected_column(&readme_text, link_span));
+    assert_span_slice(&readme_text, link_span, "[ドキュメント](docs/guide.md)");
+    assert!(
+        link_span.byte_end - link_span.byte_start > "[ドキュメント](docs/guide.md)".chars().count()
+    );
+
+    let badge = summary
+        .badges
+        .iter()
+        .find(|badge| badge.alt == "CI状態")
+        .expect("CI badge");
+    let badge_span = badge.span.expect("badge span");
+    assert_eq!(badge_span.line, badge.line);
+    assert_span_slice(
+        &readme_text,
+        badge_span,
+        "![CI状態](https://example.com/badge.svg)",
+    );
+
+    assert!(summary
+        .route_candidates
+        .iter()
+        .all(|candidate| candidate.span.is_some()));
+    assert_eq!(
+        summary
+            .route_candidates
+            .iter()
+            .find(|candidate| {
+                candidate.route == RouteKind::Quickstart
+                    && candidate.source == RouteSource::Heading
+                    && candidate.text == "Quickstart 手順"
+            })
+            .expect("quickstart candidate")
+            .span,
+        Some(quickstart_span)
+    );
+    assert_eq!(
+        summary
+            .route_candidates
+            .iter()
+            .find(|candidate| {
+                candidate.route == RouteKind::Docs
+                    && candidate.source == RouteSource::Link
+                    && candidate.target.as_deref() == Some("docs/guide.md")
+            })
+            .expect("docs candidate")
+            .span,
+        Some(link_span)
+    );
+    assert_eq!(
+        summary
+            .route_candidates
+            .iter()
+            .find(|candidate| {
+                candidate.route == RouteKind::Automation
+                    && candidate.source == RouteSource::Badge
+                    && candidate.text == "CI状態"
+            })
+            .expect("badge candidate")
+            .span,
+        Some(badge_span)
+    );
+
+    let json = serde_json::to_value(&summary).expect("summary JSON");
+    assert!(json["headings"][0].get("span").is_some());
+}
+
 fn route_entry(summary: &seiri_core::ReadmeSummary, route: RouteKind) -> &ReadmeRouteMapEntry {
     summary
         .route_map
@@ -115,4 +217,15 @@ fn route_entry(summary: &seiri_core::ReadmeSummary, route: RouteKind) -> &Readme
         .iter()
         .find(|entry| entry.route == route)
         .expect("route map entry")
+}
+
+fn assert_span_slice(source: &str, span: SourceSpan, expected: &str) {
+    assert_eq!(&source[span.byte_start..span.byte_end], expected);
+}
+
+fn expected_column(source: &str, span: SourceSpan) -> usize {
+    let line_start = source[..span.byte_start]
+        .rfind('\n')
+        .map_or(0, |offset| offset + 1);
+    source[line_start..span.byte_start].chars().count() + 1
 }

@@ -12,6 +12,7 @@
 | 2 | [Baseline And Profiles](baseline-and-profiles.md) | 分析データ、common baseline、目的別 profile の扱いを読むとき。 |
 | 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Rust module 境界、safe/guarded/manual gate、verification を読むとき。 |
 | 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | 実装block、将来拡張、calibration ingest 準備を読むとき。 |
+| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | claim boundary、route meaning、wording lint、local-only calibration guard の実装条件を読むとき。 |
 
 ### Boundaries
 
@@ -21,6 +22,7 @@
 | Analysis data and profiles | `baseline-and-profiles.md` | 分析データは calibration input であり、統計的証明ではない。 |
 | Repair and gates | `repair-implementation-and-verification.md` | policy、license、security SLA、ownership は自動決定しない。 |
 | Roadmap | `roadmap-and-implementation-blocks.md` | 実装順序を示すが、完成や性能を保証しない。 |
+| Claim boundary roadmap | `low-level-claim-boundary-roadmap.md` | 実装順序と完了条件を示すが、GitHub 操作や private analysis data の公開を許可しない。 |
 
 ### Update rules
 
@@ -43,6 +45,7 @@ This subindex defines the reading order and responsibility boundaries for RepoSe
 | 2 | [Baseline And Profiles](baseline-and-profiles.md) | Reading analysis data handling, common baseline, and purpose-specific profiles. |
 | 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Reading Rust module boundaries, safe/guarded/manual gates, and verification. |
 | 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | Reading implementation blocks, future extension, and calibration ingest preparation. |
+| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Reading implementation criteria for claim boundaries, route meanings, wording linting, and local-only calibration guards. |
 
 ### Boundaries
 
@@ -52,6 +55,7 @@ This subindex defines the reading order and responsibility boundaries for RepoSe
 | Analysis data and profiles | `baseline-and-profiles.md` | Analysis data is calibration input, not statistical proof. |
 | Repair and gates | `repair-implementation-and-verification.md` | Policy, license, security SLA, and ownership are not decided automatically. |
 | Roadmap | `roadmap-and-implementation-blocks.md` | Shows implementation order but does not guarantee completion or performance. |
+| Claim boundary roadmap | `low-level-claim-boundary-roadmap.md` | Shows implementation order and completion criteria, but does not authorize GitHub actions or publication of private analysis data. |
 
 ### Update rules
 
