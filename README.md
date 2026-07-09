@@ -4,9 +4,15 @@
 
 ## 日本語
 
-RepoSeiri は、個人使用と Rust コーディング練習を目的に作っている個人リポジトリです。題材として、GitHub リポジトリの README、docs、license、security、support、CI などの導線を読み取り、Codex で使いやすい整理案を出す CLI / Codex plugin の試作を実装しています。
+RepoSeiri は、個人使用と Rust コーディング練習を目的に作っている公開リポジトリです。題材として、GitHub リポジトリの README、docs、license、security、support、CI などの導線を読み取り、Codex で使いやすい整理案を出す CLI / Codex plugin の試作を実装しています。
 
-このリポジトリは公開前提で読まれても困りにくい形へ整えていますが、外部利用を前提にした製品ではありません。RepoSeiri の出力は個人利用のためのレビュー補助であり、人気、信頼、安全性、品質、法務適合、公開可否を保証しません。
+このリポジトリは公開されても読み手が目的を誤解しにくい形へ整えていますが、外部利用を前提にした製品ではありません。RepoSeiri の出力は個人利用のためのレビュー補助であり、人気、信頼、安全性、品質、法務適合、公開可否を保証しません。
+
+### 3行要約
+
+- RepoSeiri は、個人使用と Rust コーディング練習のための公開リポジトリです。
+- GitHub リポジトリの README、docs、license、security、CI などを読み、整理案を出す CLI / Codex plugin prototype です。
+- 出力は review aid であり、品質、安全性、信頼性、公開可否を保証しません。
 
 ### 何をするものか
 
@@ -31,6 +37,18 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 ```
 
 まずこの2つを実行します。1行目で workspace の基本動作を確認し、2行目で RepoSeiri 自身を対象にした Codex 向け整理案を確認します。
+
+**Example Output**
+
+RepoSeiri 自身を対象にした Codex review context の例です。数値はその時点のリポジトリ状態に対する補助情報であり、外部評価や安全性を保証しません。
+
+```text
+Repository: RepoSeiri
+Profile score view: 100 / 100
+Top profile branch: library confidence 99 / 100
+Route review: strong 13 / weak 0 / missing 0
+Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
+```
 
 ### 主要コマンド
 
@@ -66,7 +84,7 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 | ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
 | hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
 
-公開直前の checklist、設計docs、release手順などの詳細は docs topology から辿ります。
+公開状態の checklist、設計docs、release手順などの詳細は docs topology から辿ります。
 
 ### Codex plugin route
 
@@ -75,9 +93,9 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 - Codex 側では `seiri codex` の出力を優先して使います。
 - plugin は repository policy を推測で作らず、Rust CLI が出した gate と safe patch plan を作業文脈へ渡します。
 
-### 公開前の境界
+### 公開リポジトリとしての境界
 
-- このリポジトリは private のまま公開前整理を行います。visibility の変更は別の明示操作として扱います。
+- このリポジトリは公開リポジトリとして読めるように整理します。公開後も、個人使用・コーディング練習目的であることを維持します。
 - README は「何のリポジトリか」「どう動かすか」「どこを読むか」だけを持ち、詳細設計は docs に逃がします。
 - `SECURITY.md`、`SUPPORT.md`、`CONTRIBUTING.md` は案内用です。固定 SLA、外部 contribution 採用、security outcome を約束しません。
 - `fixtures/` はテスト入力です。実際の policy、license、support route として扱いません。
@@ -101,9 +119,15 @@ RepoSeiri のスコアや route state は、現在のリポジトリ状態に対
 
 ## English
 
-RepoSeiri is a personal-use repository for practicing Rust coding. Its subject is a CLI / Codex plugin prototype that reads GitHub repository routes such as README, docs, license, security, support, and CI, then produces organization suggestions that are useful in Codex.
+RepoSeiri is a public repository for personal use and Rust coding practice. Its subject is a CLI / Codex plugin prototype that reads GitHub repository routes such as README, docs, license, security, support, and CI, then produces organization suggestions that are useful in Codex.
 
-This repository is being organized so it can be read publicly with fewer regrets, but it is not a product intended for external use. RepoSeiri output is a review aid for personal use. It does not guarantee popularity, trust, safety, quality, legal fitness, or publication readiness.
+This repository is organized so public readers can understand its purpose with less ambiguity, but it is not a product intended for external use. RepoSeiri output is a review aid for personal use. It does not guarantee popularity, trust, safety, quality, legal fitness, or publication readiness.
+
+### Three-Line Summary
+
+- RepoSeiri is a public repository for personal use and Rust coding practice.
+- It is a CLI / Codex plugin prototype that reads GitHub repository routes such as README, docs, license, security, and CI, then produces organization suggestions.
+- Its output is a review aid, not a guarantee of quality, safety, trust, or publication readiness.
 
 ### What It Does
 
@@ -128,6 +152,18 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 ```
 
 Run these two commands first. The first checks the workspace baseline, and the second inspects RepoSeiri itself through the Codex-oriented organization context.
+
+**Example Output**
+
+This is an example Codex review context for RepoSeiri itself. The numbers are review aids for the repository state at that moment, not guarantees of external evaluation or safety.
+
+```text
+Repository: RepoSeiri
+Profile score view: 100 / 100
+Top profile branch: library confidence 99 / 100
+Route review: strong 13 / weak 0 / missing 0
+Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
+```
 
 ### Main Commands
 
@@ -163,7 +199,7 @@ Run these two commands first. The first checks the workspace baseline, and the s
 | Ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
 | Hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
 
-Detailed pre-publication checks, design docs, and release procedures are routed through the docs topology.
+Detailed publication-state checks, design docs, and release procedures are routed through the docs topology.
 
 ### Codex Plugin Route
 
@@ -172,9 +208,9 @@ Detailed pre-publication checks, design docs, and release procedures are routed 
 - In Codex, prefer the output from `seiri codex`.
 - The plugin should not invent repository policy. It passes the Rust CLI gates and safe patch plan into the working context.
 
-### Publication Boundary
+### Public Repository Boundary
 
-- This repository stays private while pre-publication organization is performed. Changing visibility is treated as a separate explicit action.
+- This repository is organized to be readable as a public repository. After publication, it remains scoped as personal-use coding practice work.
 - The README owns only what the repository is, how to run it, and where to read next. Detailed design moves to docs.
 - `SECURITY.md`, `SUPPORT.md`, and `CONTRIBUTING.md` are routing documents. They do not promise a fixed SLA, external contribution acceptance, or security outcomes.
 - `fixtures/` contains test inputs. They are not treated as the real project policy, license, or support route.
