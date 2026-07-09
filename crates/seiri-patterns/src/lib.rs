@@ -221,7 +221,8 @@ const PATTERN_GROUPS: [PatternGroupDefinition; 13] = [
     PatternGroupDefinition {
         group: PatternGroup::Lif,
         title: "Lifecycle",
-        description: "License and lifecycle boundaries needed for reuse.",
+        description:
+            "License, maintenance, deprecation, and supported-version boundaries needed for reuse.",
     },
 ];
 
@@ -346,6 +347,20 @@ pub fn common_registry() -> PatternRegistry {
             "Add release or changelog routing when users need update-risk context.",
         ),
         baseline_pattern(
+            PatternGroup::Lif,
+            "common.lifecycle.route_present",
+            "Lifecycle route is visible",
+            Some(RouteKind::Lifecycle),
+            PatternDetector::ReadmeRoute(RouteKind::Lifecycle),
+            BaselineRequirement::Optional,
+            Severity::Info,
+            GateKind::Manual,
+            "Lifecycle route is not visible",
+            "The common baseline did not detect maintenance, deprecation, supported-version, archival, or end-of-life routing.",
+            "Expose lifecycle route",
+            "Route existing lifecycle guidance only after confirming the project's real maintenance, deprecation, or version-support policy.",
+        ),
+        baseline_pattern(
             PatternGroup::Aut,
             "common.automation.route_present",
             "Automation signal is visible",
@@ -468,6 +483,16 @@ pub fn common_registry() -> PatternRegistry {
             GateKind::Guarded,
             "Expose changelog file",
             "Route users to release notes when they exist, especially for update-risk review.",
+        ),
+        candidate_pattern(
+            PatternGroup::Lif,
+            "LIF-001",
+            "Lifecycle route is visible",
+            Some(RouteKind::Lifecycle),
+            PatternDetector::ReadmeRoute(RouteKind::Lifecycle),
+            GateKind::Manual,
+            "Expose lifecycle route",
+            "Route existing maintenance, deprecation, supported-version, archival, or end-of-life guidance without inventing lifecycle policy.",
         ),
         candidate_pattern(
             PatternGroup::Own,

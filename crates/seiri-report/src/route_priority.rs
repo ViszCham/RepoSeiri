@@ -147,7 +147,7 @@ fn route_gap_prior(route: RouteKind) -> Option<RouteGapPrior> {
         RouteKind::License => (80_000, 80, 50),
         RouteKind::Automation => (229_000, 229, 28),
         RouteKind::Ownership => (605_000, 605, 40),
-        RouteKind::Hygiene | RouteKind::Unknown => return None,
+        RouteKind::Lifecycle | RouteKind::Hygiene | RouteKind::Unknown => return None,
     };
     Some(RouteGapPrior {
         observed_missing_repositories,
@@ -629,6 +629,7 @@ fn default_route_gate(route: RouteKind) -> GateKind {
         RouteKind::Identity
         | RouteKind::License
         | RouteKind::Security
+        | RouteKind::Lifecycle
         | RouteKind::Governance
         | RouteKind::Ownership => GateKind::Manual,
         RouteKind::Quickstart
@@ -658,6 +659,7 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
             RouteKind::Docs
                 | RouteKind::Quickstart
                 | RouteKind::Release
+                | RouteKind::Lifecycle
                 | RouteKind::Security
                 | RouteKind::License
         ),
@@ -678,6 +680,7 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
                 | RouteKind::Security
                 | RouteKind::Automation
                 | RouteKind::Ownership
+                | RouteKind::Lifecycle
                 | RouteKind::Release
         ),
         ProfileKind::Product => matches!(
@@ -685,6 +688,7 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
             RouteKind::Support
                 | RouteKind::Docs
                 | RouteKind::Release
+                | RouteKind::Lifecycle
                 | RouteKind::Quickstart
                 | RouteKind::Intake
         ),
@@ -692,6 +696,7 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
             route,
             RouteKind::Security
                 | RouteKind::Release
+                | RouteKind::Lifecycle
                 | RouteKind::Governance
                 | RouteKind::Automation
                 | RouteKind::Ownership
@@ -717,7 +722,10 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
         ProfileKind::Template => {
             matches!(
                 route,
-                RouteKind::Quickstart | RouteKind::Automation | RouteKind::Release
+                RouteKind::Quickstart
+                    | RouteKind::Automation
+                    | RouteKind::Release
+                    | RouteKind::Lifecycle
             )
         }
         ProfileKind::Common => false,

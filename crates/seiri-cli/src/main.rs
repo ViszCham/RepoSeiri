@@ -29,6 +29,14 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    LintWording {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long, default_value = "common", value_parser = parse_profile)]
+        profile: ProfileKind,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        format: OutputFormat,
+    },
     Calibrate {
         #[arg(long)]
         input: PathBuf,
@@ -99,6 +107,17 @@ fn run() -> Result<String, seiri_report::AuditError> {
             match format {
                 OutputFormat::Json => seiri_report::plan_to_json(&plan),
                 OutputFormat::Markdown => Ok(seiri_report::plan_to_markdown(&plan)),
+            }
+        }
+        Command::LintWording {
+            path,
+            profile,
+            format,
+        } => {
+            let report = seiri_report::lint_wording_repository_with_profile(path, profile)?;
+            match format {
+                OutputFormat::Json => seiri_report::wording_lint_to_json(&report),
+                OutputFormat::Markdown => Ok(seiri_report::wording_lint_to_markdown(&report)),
             }
         }
         Command::Calibrate { input, format } => {

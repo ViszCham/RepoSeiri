@@ -21,6 +21,7 @@ struct PlanCandidate {
     priority: ProfilePriority,
     route: Option<RouteKind>,
     route_state: Option<RouteState>,
+    suggested_kind: Option<PatchOperationKind>,
     weight: u32,
     reason: String,
 }
@@ -117,6 +118,7 @@ fn plan_candidates(snapshot: &RepoSnapshot) -> Vec<PlanCandidate> {
                 priority: recommendation.priority,
                 route: route_for_pattern_id(&recommendation.pattern_id),
                 route_state: None,
+                suggested_kind: operation_kind_for_pattern(&recommendation.pattern_id),
                 weight: recommendation.weight,
                 reason: recommendation.reason.clone(),
             };
@@ -141,6 +143,7 @@ fn plan_candidates(snapshot: &RepoSnapshot) -> Vec<PlanCandidate> {
                 priority: priority_for_severity(finding.severity),
                 route: None,
                 route_state: None,
+                suggested_kind: None,
                 weight: 1,
                 reason: recommendation.message.clone(),
             };
@@ -163,6 +166,7 @@ fn plan_candidates(snapshot: &RepoSnapshot) -> Vec<PlanCandidate> {
             priority: priority.priority,
             route: Some(priority.route),
             route_state: Some(priority.state),
+            suggested_kind: operation_kind_for_route(priority.route),
             weight: u32::from(priority.priority_score_x100),
             reason: format!(
                 "{} Missing route priority score {} / 100.",
@@ -203,7 +207,7 @@ fn safe_operation(
                 check(
                     PatchPreflightCheckKind::SupportedOperation,
                     PatchPreflightStatus::Blocked,
-                    "This pattern has no deterministic preview-only operation.",
+                    unsupported_operation_detail(candidate),
                 ),
             ],
         },
@@ -229,7 +233,7 @@ fn plan_docs_route(
         check(
             PatchPreflightCheckKind::SupportedOperation,
             PatchPreflightStatus::Pass,
-            "README docs route insertion is the supported safe operation.",
+            "README docs route insertion is the supported Safe preview-only operation.",
         ),
     ];
 
@@ -353,6 +357,7 @@ fn blocked_item(
         route: candidate.route,
         finding_id: candidate.finding_id.clone(),
         pattern_id: candidate.pattern_id.clone(),
+        suggested_kind: candidate.suggested_kind,
         reason,
         preflight,
     }
@@ -411,10 +416,7 @@ fn gate_block_preflight(candidate: &PlanCandidate) -> Vec<PatchPreflightCheck> {
         check(
             PatchPreflightCheckKind::SafeGate,
             PatchPreflightStatus::Blocked,
-            format!(
-                "Candidate is {:?}-gated and is not eligible for automatic patch preview.",
-                candidate.gate
-            ),
+            gate_block_detail(candidate),
         ),
     ]
 }
@@ -448,6 +450,62 @@ fn route_priority_pattern_id(priority: &MissingRoutePriority) -> String {
         .unwrap_or_else(|| format!("route_priority.{}", route_slug(priority.route)))
 }
 
+fn operation_kind_for_pattern(pattern_id: &str) -> Option<PatchOperationKind> {
+    match pattern_id {
+        "common.docs.route_present" => Some(PatchOperationKind::AddReadmeRoute),
+        "common.support.route_present" => Some(PatchOperationKind::AddSupportSkeletonDraft),
+        "common.security.route_present" => Some(PatchOperationKind::AddSecuritySkeletonDraft),
+        "common.release.route_present" => Some(PatchOperationKind::MoveReadmeDetailToDocsDraft),
+        "common.lifecycle.route_present" | "LIF-001" => Some(PatchOperationKind::AddLifecycleRoute),
+        "common.license.file_present" => Some(PatchOperationKind::AddClaimBoundaryNote),
+        _ => route_for_pattern_id(pattern_id).and_then(operation_kind_for_route),
+    }
+}
+
+fn operation_kind_for_route(route: RouteKind) -> Option<PatchOperationKind> {
+    match route {
+        RouteKind::Docs | RouteKind::Quickstart | RouteKind::Contributing => {
+            Some(PatchOperationKind::AddReadmeRoute)
+        }
+        RouteKind::Support | RouteKind::Intake => Some(PatchOperationKind::AddSupportSkeletonDraft),
+        RouteKind::Security => Some(PatchOperationKind::AddSecuritySkeletonDraft),
+        RouteKind::Release => Some(PatchOperationKind::MoveReadmeDetailToDocsDraft),
+        RouteKind::Lifecycle => Some(PatchOperationKind::AddLifecycleRoute),
+        RouteKind::License | RouteKind::Governance | RouteKind::Ownership => {
+            Some(PatchOperationKind::AddClaimBoundaryNote)
+        }
+        RouteKind::Identity | RouteKind::Automation | RouteKind::Hygiene | RouteKind::Unknown => {
+            None
+        }
+    }
+}
+
+fn unsupported_operation_detail(candidate: &PlanCandidate) -> String {
+    candidate.suggested_kind.map_or_else(
+        || "This pattern has no deterministic preview-only operation.".to_string(),
+        |kind| {
+            format!(
+                "`{kind:?}` exists as a typed Q8 operation candidate, but it is not eligible for Safe preview generation from this evidence."
+            )
+        },
+    )
+}
+
+fn gate_block_detail(candidate: &PlanCandidate) -> String {
+    match (candidate.gate, candidate.suggested_kind) {
+        (GateKind::Guarded, Some(kind)) => format!(
+            "`{kind:?}` is a review-required Q8 operation candidate. RepoSeiri records it but does not generate or apply it without maintainer confirmation."
+        ),
+        (GateKind::Manual, Some(kind)) => format!(
+            "`{kind:?}` is blocked behind human policy, legal, security, ownership, contact, or publication judgment."
+        ),
+        _ => format!(
+            "Candidate is {:?}-gated and is not eligible for automatic patch preview.",
+            candidate.gate
+        ),
+    }
+}
+
 fn route_for_pattern_id(pattern_id: &str) -> Option<RouteKind> {
     match pattern_id {
         "common.identity.readme_present" => Some(RouteKind::Identity),
@@ -457,8 +515,10 @@ fn route_for_pattern_id(pattern_id: &str) -> Option<RouteKind> {
         "common.contributing.route_present" => Some(RouteKind::Contributing),
         "common.security.route_present" => Some(RouteKind::Security),
         "common.release.route_present" => Some(RouteKind::Release),
+        "common.lifecycle.route_present" => Some(RouteKind::Lifecycle),
         "common.automation.route_present" => Some(RouteKind::Automation),
         "common.license.file_present" => Some(RouteKind::License),
+        "LIF-001" => Some(RouteKind::Lifecycle),
         _ => None,
     }
 }
@@ -473,6 +533,7 @@ fn route_slug(route: RouteKind) -> &'static str {
         RouteKind::Contributing => "contributing",
         RouteKind::Security => "security",
         RouteKind::Release => "release",
+        RouteKind::Lifecycle => "lifecycle",
         RouteKind::Governance => "governance",
         RouteKind::License => "license",
         RouteKind::Automation => "automation",

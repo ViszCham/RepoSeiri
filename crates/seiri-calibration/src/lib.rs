@@ -1,10 +1,10 @@
 use seiri_core::{
     stable_id, BaselineRequirement, BenchmarkDataset, BenchmarkRepoRecord, CalibrationConfidence,
     CalibrationReviewStatus, CalibrationRun, CalibrationScale, CalibrationSource,
-    CalibrationSourceKind, CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion,
-    ObservedPattern, PatternCoOccurrence, PatternStats, PendingPatternCandidate, ProfileBranch,
-    ProfileKind, ProfilePatternCorrelation, ProfilePriority, RouteKind, RouteRequirement,
-    WeightSuggestion, SCHEMA_VERSION,
+    CalibrationSourceKind, CalibrationSourceVisibility, CalibrationSummary, ClaimBoundary,
+    EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence, PatternStats,
+    PendingPatternCandidate, ProfileBranch, ProfileKind, ProfilePatternCorrelation,
+    ProfilePriority, RouteKind, RouteRequirement, WeightSuggestion, SCHEMA_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -231,6 +231,7 @@ fn dataset_from_records(path: &Path, records: Vec<BenchmarkRepoRecord>) -> Bench
         calibration_sources: vec![CalibrationSource {
             id: stable_id("calibration-source", 1),
             kind: CalibrationSourceKind::JsonlRecords,
+            visibility: CalibrationSourceVisibility::Public,
             label: dataset_id.clone(),
             collected_at: "unknown".to_string(),
             records: records.len(),
@@ -308,6 +309,7 @@ fn calibration_sources(dataset: &BenchmarkDataset) -> Vec<CalibrationSource> {
     vec![CalibrationSource {
         id: stable_id("calibration-source", 1),
         kind: inferred_source_kind(dataset),
+        visibility: CalibrationSourceVisibility::Public,
         label: dataset.name.clone(),
         collected_at: dataset.collected_at.clone(),
         records: dataset.records.len(),

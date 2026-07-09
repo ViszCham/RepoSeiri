@@ -156,6 +156,7 @@ fn readme_hub_routes() -> &'static [RouteKind] {
         RouteKind::Intake,
         RouteKind::Security,
         RouteKind::Release,
+        RouteKind::Lifecycle,
         RouteKind::Governance,
         RouteKind::Contributing,
         RouteKind::License,
@@ -216,6 +217,9 @@ fn readme_route_reason(route: RouteKind, state: RouteState) -> &'static str {
         RouteState::Stale => "README links to a local target that was not found in the repository.",
         RouteState::Verified if route == RouteKind::Quickstart => {
             "README exposes a reachable first-run path."
+        }
+        RouteState::Verified if route == RouteKind::Lifecycle => {
+            "README exposes a reachable lifecycle, maintenance, deprecation, or supported-version route."
         }
         RouteState::Verified => "README exposes a reachable route target.",
         RouteState::Routed => "README exposes this route inside the README.",

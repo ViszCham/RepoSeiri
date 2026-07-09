@@ -1,14 +1,19 @@
 use seiri_core::{
-    stable_id, BaselineStatus, CalibrationRun, CodexReviewContext, Evidence, EvidenceKind,
-    EvidenceSource, ImportantFileKind, PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState,
+    stable_id, BaselineStatus, CalibrationRun, ClaimBoundaryKind, ClaimId, ClaimRefIndex,
+    ClaimStrength, CodexReviewContext, Evidence, EvidenceKind, EvidenceSource, ImportantFileKind,
+    PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState, WordingLintReport,
 };
 use seiri_fs::RepoFsScan;
 use std::fmt::{Display, Formatter};
+use std::io;
 use std::path::Path;
 
+mod claims;
 mod evidence;
 mod route_priority;
+mod wording;
 
+use claims::build_content_claims;
 use evidence::{build_evidence_ledger, build_route_states};
 use route_priority::build_missing_route_priority_report;
 
@@ -18,6 +23,10 @@ pub enum AuditError {
     Markdown(seiri_markdown::MarkdownError),
     Calibration(seiri_calibration::CalibrationError),
     Json(serde_json::Error),
+    Io {
+        path: std::path::PathBuf,
+        source: io::Error,
+    },
 }
 
 impl Display for AuditError {
@@ -27,6 +36,7 @@ impl Display for AuditError {
             Self::Markdown(error) => write!(f, "{error}"),
             Self::Calibration(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
+            Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
         }
     }
 }
@@ -38,6 +48,7 @@ impl std::error::Error for AuditError {
             Self::Markdown(error) => Some(error),
             Self::Calibration(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::Io { source, .. } => Some(source),
         }
     }
 }
@@ -95,6 +106,7 @@ pub fn audit_repository_with_profile(
     );
     snapshot.profile = seiri_profiles::evaluate_profile(&snapshot, profile);
     snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot);
+    snapshot.claims = build_content_claims(&snapshot);
     Ok(snapshot)
 }
 
@@ -127,22 +139,50 @@ pub fn plan_to_json(plan: &PatchPlan) -> Result<String, AuditError> {
     Ok(serde_json::to_string_pretty(plan)?)
 }
 
+pub fn lint_wording_repository(path: impl AsRef<Path>) -> Result<WordingLintReport, AuditError> {
+    lint_wording_repository_with_profile(path, ProfileKind::Common)
+}
+
+pub fn lint_wording_repository_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<WordingLintReport, AuditError> {
+    wording::lint_repository_with_profile(path, profile)
+}
+
+pub fn wording_lint_to_json(report: &WordingLintReport) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+#[must_use]
+pub fn wording_lint_to_markdown(report: &WordingLintReport) -> String {
+    wording::render_markdown(report)
+}
+
 pub fn calibrate_dataset_path(path: impl AsRef<Path>) -> Result<CalibrationRun, AuditError> {
     let dataset = seiri_calibration::load_dataset(path)?;
     Ok(seiri_calibration::calibrate_dataset(&dataset))
 }
 
 pub fn calibration_to_json(run: &CalibrationRun) -> Result<String, AuditError> {
-    Ok(serde_json::to_string_pretty(run)?)
+    Ok(serde_json::to_string_pretty(
+        &run.redacted_for_public_output(),
+    )?)
 }
 
 pub fn codex_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<CodexReviewContext, AuditError> {
+    let path = path.as_ref();
     let snapshot = audit_repository_with_profile(path, profile)?;
     let plan = seiri_planner::plan_safe_patches(&snapshot);
-    Ok(seiri_codex::build_review_context(&snapshot, &plan))
+    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
+    Ok(seiri_codex::build_review_context_with_wording(
+        &snapshot,
+        &plan,
+        Some(&wording_lint),
+    ))
 }
 
 pub fn codex_to_json(context: &CodexReviewContext) -> Result<String, AuditError> {
@@ -165,12 +205,27 @@ pub fn codex_pr_body_to_markdown(context: &CodexReviewContext) -> String {
 
 #[must_use]
 pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
+    let source_visibility = run.source_visibility_summary();
+    let run = run.redacted_for_public_output();
     let mut out = String::new();
     out.push_str("# RepoSeiri Calibration Report\n\n");
     out.push_str(&format!("- Schema: `{}`\n", run.schema_version));
     out.push_str(&format!("- Dataset: `{}`\n", run.dataset_id));
     out.push_str(&format!("- Records: `{}`\n", run.summary.records));
     out.push_str(&format!("- Sources: `{}`\n", run.summary.sources));
+    out.push_str(&format!(
+        "- Source visibility: public `{}` / local_only `{}` / redacted `{}`\n",
+        source_visibility.public_sources,
+        source_visibility.local_only_sources,
+        source_visibility.redacted_sources
+    ));
+    out.push_str(&format!(
+        "- Source review status: pending_review `{}` / adopted `{}` / deferred `{}` / rejected `{}`\n",
+        source_visibility.pending_review,
+        source_visibility.adopted,
+        source_visibility.deferred,
+        source_visibility.rejected
+    ));
     out.push_str(&format!(
         "- Known pattern stats: `{}`\n",
         run.summary.known_pattern_stats
@@ -206,9 +261,10 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     } else {
         for source in &run.sources {
             out.push_str(&format!(
-                "- `{}` kind `{:?}` label `{}` records `{}` scale `{:?}` status `{:?}`\n",
+                "- `{}` kind `{:?}` visibility `{:?}` label `{}` records `{}` scale `{:?}` status `{:?}`\n",
                 source.id,
                 source.kind,
+                source.visibility,
                 source.label,
                 source.records,
                 source.scale,
@@ -428,6 +484,9 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
                 "- `{}` `{:?}` `{:?}` `{:?}` `{}`: {}\n",
                 item.id, item.gate, item.source, item.safety, item.pattern_id, item.reason
             ));
+            if let Some(kind) = item.suggested_kind {
+                out.push_str(&format!("  Suggested kind: `{:?}`\n", kind));
+            }
             if let Some(route) = item.route {
                 out.push_str(&format!("  Route: `{:?}`\n", route));
             }
@@ -455,6 +514,9 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
                 "- `{}` `{:?}` `{:?}` `{}`: {}\n",
                 item.id, item.source, item.safety, item.pattern_id, item.reason
             ));
+            if let Some(kind) = item.suggested_kind {
+                out.push_str(&format!("  Suggested kind: `{:?}`\n", kind));
+            }
             if let Some(route) = item.route {
                 out.push_str(&format!("  Route: `{:?}`\n", route));
             }
@@ -508,6 +570,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         "- Evidence ledger records: `{}`\n",
         snapshot.evidence_ledger.len()
     ));
+    out.push_str(&format!("- Content claims: `{}`\n", snapshot.claims.len()));
     out.push_str(&format!(
         "- Route states: `{}`\n",
         snapshot.route_states.len()
@@ -548,6 +611,8 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         snapshot.missing_route_priority.summary.guarded_gated,
         snapshot.missing_route_priority.summary.manual_gated
     ));
+
+    render_content_claims(&mut out, snapshot);
 
     out.push_str("## README\n\n");
     match &snapshot.readme {
@@ -662,15 +727,22 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     if snapshot.route_states.is_empty() {
         out.push_str("- No route states emitted.\n\n");
     } else {
+        let claim_index = ClaimRefIndex::new(&snapshot.claims);
         for state in &snapshot.route_states {
             let evidence = if state.evidence_ids.is_empty() {
                 "none".to_string()
             } else {
                 state.evidence_ids.join("`, `")
             };
+            let claim_ids = claim_index.claim_ids_for_route_state(state.route, state.state);
             out.push_str(&format!(
-                "- `{:?}` `{:?}` confidence `{:?}` evidence `{}`: {}\n",
-                state.route, state.state, state.confidence, evidence, state.reason
+                "- `{:?}` `{:?}` confidence `{:?}` evidence `{}` claims {}: {}\n",
+                state.route,
+                state.state,
+                state.confidence,
+                evidence,
+                claim_ids_or_none(&claim_ids),
+                state.reason
             ));
         }
         out.push('\n');
@@ -691,6 +763,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         out.push_str("- No missing or degraded route priorities emitted.\n\n");
     } else {
         out.push_str("### Route Priorities\n\n");
+        let claim_index = ClaimRefIndex::new(&snapshot.claims);
         for priority in &snapshot.missing_route_priority.priorities {
             let score = decimal_confidence(priority.priority_score_x100);
             let observed = priority.observed_missing_repositories.map_or_else(
@@ -700,6 +773,8 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             let baseline = list_or_none(&priority.baseline_pattern_ids);
             let candidate = list_or_none(&priority.candidate_pattern_ids);
             let gaps = list_or_none(&priority.co_occurrence_gap_ids);
+            let claim_ids = claim_index.claim_ids_for_route(priority.route);
+            let boundary_kinds = claim_index.boundary_kinds_for_route(priority.route);
             out.push_str(&format!(
                 "{}. `{:?}` `{:?}` priority `{}` gate `{:?}` observed_missing `{}`: {}\n",
                 priority.rank,
@@ -713,6 +788,14 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             out.push_str(&format!("   Baseline: {baseline}\n"));
             out.push_str(&format!("   Candidates: {candidate}\n"));
             out.push_str(&format!("   Co-occurrence: {gaps}\n"));
+            out.push_str(&format!(
+                "   Claim IDs: {}\n",
+                claim_ids_or_none(&claim_ids)
+            ));
+            out.push_str(&format!(
+                "   Boundary kinds: {}\n",
+                boundary_kinds_or_none(&boundary_kinds)
+            ));
         }
         out.push('\n');
     }
@@ -1011,6 +1094,7 @@ fn route_strength_counts(snapshot: &RepoSnapshot) -> (usize, usize, usize) {
 
 fn render_route_strength_group(out: &mut String, snapshot: &RepoSnapshot, strength: RouteStrength) {
     let mut emitted = 0;
+    let claim_index = ClaimRefIndex::new(&snapshot.claims);
     for state in &snapshot.route_states {
         if route_strength(state.state) != strength {
             continue;
@@ -1029,15 +1113,93 @@ fn render_route_strength_group(out: &mut String, snapshot: &RepoSnapshot, streng
             || "n/a".to_string(),
             |priority| format!("{:?}", priority.gate),
         );
+        let claim_ids = claim_index.claim_ids_for_route_state(state.route, state.state);
+        let boundary_kinds = claim_index.boundary_kinds_for_claim_ids(&claim_ids);
         out.push_str(&format!(
-            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}`: {}\n",
-            state.route, state.state, state.confidence, score, gate, state.reason
+            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}` claims {}: {}\n",
+            state.route,
+            state.state,
+            state.confidence,
+            score,
+            gate,
+            claim_ids_or_none(&claim_ids),
+            state.reason
+        ));
+        out.push_str(&format!(
+            "  Boundary kinds: {}\n",
+            boundary_kinds_or_none(&boundary_kinds)
         ));
     }
     if emitted == 0 {
         out.push_str("- None.\n");
     }
     out.push('\n');
+}
+
+fn render_content_claims(out: &mut String, snapshot: &RepoSnapshot) {
+    out.push_str("## Content Claims\n\n");
+    if snapshot.claims.is_empty() {
+        out.push_str("- No evidence-linked content claims were generated.\n\n");
+        return;
+    }
+
+    let claim_index = ClaimRefIndex::new(&snapshot.claims);
+    let observed = claim_index.strength_count(ClaimStrength::Observed);
+    let inferred = claim_index.strength_count(ClaimStrength::Inferred);
+    let suggested = claim_index.strength_count(ClaimStrength::Suggested);
+    let blocked = claim_index.strength_count(ClaimStrength::Blocked);
+    let boundary_kinds = claim_index.boundary_kinds();
+    out.push_str(&format!(
+        "- Summary: total `{}` / observed `{observed}` / inferred `{inferred}` / suggested `{suggested}` / blocked `{blocked}`\n",
+        snapshot.claims.len()
+    ));
+    out.push_str(&format!(
+        "- Boundary kinds: {}\n\n",
+        boundary_kinds_or_none(&boundary_kinds)
+    ));
+
+    for claim in &snapshot.claims {
+        out.push_str(&format!(
+            "- `{}` `{:?}` route `{:?}` state `{:?}` evidence `{}`\n",
+            claim.id,
+            claim.strength,
+            claim.route,
+            claim.state,
+            claim.evidence_ids.join("`, `")
+        ));
+        out.push_str(&format!(
+            "  Allows: {}\n",
+            debug_values_or_none(&claim.allowed_meanings)
+        ));
+        out.push_str(&format!(
+            "  Boundaries: {}\n",
+            debug_values_or_none(&claim.boundaries)
+        ));
+    }
+    out.push('\n');
+}
+
+fn claim_ids_or_none(ids: &[ClaimId]) -> String {
+    if ids.is_empty() {
+        "none".to_string()
+    } else {
+        ids.iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn boundary_kinds_or_none(boundaries: &[ClaimBoundaryKind]) -> String {
+    if boundaries.is_empty() {
+        "none".to_string()
+    } else {
+        boundaries
+            .iter()
+            .map(|boundary| format!("`{boundary:?}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn route_strength(state: RouteState) -> RouteStrength {
@@ -1083,6 +1245,18 @@ fn routes_or_none(values: &[RouteKind]) -> String {
         values
             .iter()
             .map(|route| format!("{route:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn debug_values_or_none<T: std::fmt::Debug>(values: &[T]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| format!("{value:?}"))
             .collect::<Vec<_>>()
             .join(", ")
     }

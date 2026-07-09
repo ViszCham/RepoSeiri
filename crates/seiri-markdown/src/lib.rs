@@ -1,6 +1,6 @@
 use seiri_core::{
     MarkdownBadge, MarkdownHeading, MarkdownLink, ReadmeSummary, RouteCandidate, RouteKind,
-    RouteSource,
+    RouteSource, SourceSpan,
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -65,9 +65,8 @@ fn parse_readme_with_context(
     let mut route_candidates = Vec::new();
     let path = path.into();
 
-    for (zero_index, line) in text.lines().enumerate() {
-        let line_number = zero_index + 1;
-        if let Some(heading) = parse_heading(line, line_number) {
+    for line in markdown_lines(text) {
+        if let Some(heading) = parse_heading(line) {
             let route = classify_route(&heading.text, None);
             if route != RouteKind::Unknown {
                 route_candidates.push(RouteCandidate {
@@ -75,30 +74,33 @@ fn parse_readme_with_context(
                     source: RouteSource::Heading,
                     text: heading.text.clone(),
                     target: None,
-                    line: line_number,
+                    line: line.number,
+                    span: heading.span,
                 });
             }
             headings.push(heading);
         }
 
-        for image in parse_markdown_links(line, line_number, true) {
+        for image in parse_markdown_links(line, true) {
             if looks_like_badge(&image.text, &image.target) {
                 route_candidates.push(RouteCandidate {
                     route: RouteKind::Automation,
                     source: RouteSource::Badge,
                     text: image.text.clone(),
                     target: Some(image.target.clone()),
-                    line: line_number,
+                    line: line.number,
+                    span: image.span,
                 });
                 badges.push(MarkdownBadge {
                     alt: image.text,
                     target: image.target,
-                    line: line_number,
+                    line: line.number,
+                    span: image.span,
                 });
             }
         }
 
-        for link in parse_markdown_links(line, line_number, false) {
+        for link in parse_markdown_links(line, false) {
             let route = classify_route(&link.text, Some(&link.target));
             if route != RouteKind::Unknown {
                 route_candidates.push(RouteCandidate {
@@ -106,7 +108,8 @@ fn parse_readme_with_context(
                     source: RouteSource::Link,
                     text: link.text.clone(),
                     target: Some(link.target.clone()),
-                    line: line_number,
+                    line: line.number,
+                    span: link.span,
                 });
             }
             links.push(MarkdownLink {
@@ -121,6 +124,7 @@ fn parse_readme_with_context(
             .cmp(&right.route)
             .then_with(|| left.line.cmp(&right.line))
             .then_with(|| left.text.cmp(&right.text))
+            .then_with(|| span_start(left.span).cmp(&span_start(right.span)))
     });
 
     ReadmeSummary {
@@ -163,6 +167,8 @@ pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
         RouteKind::Quickstart
     } else if is_intake_route_text(&combined) {
         RouteKind::Intake
+    } else if is_lifecycle_route_text(&combined) {
+        RouteKind::Lifecycle
     } else if contains_any(
         &combined,
         &[
@@ -227,6 +233,8 @@ fn classify_route_text(value: &str) -> RouteKind {
         RouteKind::Docs
     } else if is_intake_route_text(value) {
         RouteKind::Intake
+    } else if is_lifecycle_route_text(value) {
+        RouteKind::Lifecycle
     } else if contains_any(
         value,
         &[
@@ -286,6 +294,32 @@ fn is_intake_route_text(value: &str) -> bool {
         && contains_any(value, &["bug", "feature", "template", "form"]))
 }
 
+fn is_lifecycle_route_text(value: &str) -> bool {
+    contains_any(
+        value,
+        &[
+            "lifecycle",
+            "life cycle",
+            "maintenance",
+            "maintained",
+            "deprecation",
+            "deprecated",
+            "end of life",
+            "end-of-life",
+            "eol",
+            "lts",
+            "long term support",
+            "supported versions",
+            "version support",
+            "support matrix",
+            "compatibility policy",
+            "archive policy",
+            "archival",
+            "sunset",
+        ],
+    )
+}
+
 fn is_hygiene_route_text(value: &str) -> bool {
     contains_any(
         value,
@@ -300,8 +334,36 @@ fn is_hygiene_route_text(value: &str) -> bool {
     )
 }
 
-fn parse_heading(line: &str, line_number: usize) -> Option<MarkdownHeading> {
-    let trimmed = line.trim_start();
+#[derive(Debug, Clone, Copy)]
+struct MarkdownLine<'a> {
+    number: usize,
+    byte_start: usize,
+    text: &'a str,
+}
+
+fn markdown_lines(text: &str) -> impl Iterator<Item = MarkdownLine<'_>> {
+    let mut number = 0;
+    let mut byte_start = 0;
+    text.split_inclusive('\n').map(move |segment| {
+        number += 1;
+        let current_start = byte_start;
+        byte_start += segment.len();
+        let line = if let Some(line) = segment.strip_suffix('\n') {
+            line.strip_suffix('\r').unwrap_or(line)
+        } else {
+            segment
+        };
+        MarkdownLine {
+            number,
+            byte_start: current_start,
+            text: line,
+        }
+    })
+}
+
+fn parse_heading(line: MarkdownLine<'_>) -> Option<MarkdownHeading> {
+    let marker_start = first_non_whitespace_byte(line.text)?;
+    let trimmed = &line.text[marker_start..];
     let level = trimmed.chars().take_while(|value| *value == '#').count();
     if !(1..=6).contains(&level) {
         return None;
@@ -317,12 +379,13 @@ fn parse_heading(line: &str, line_number: usize) -> Option<MarkdownHeading> {
     Some(MarkdownHeading {
         level: level as u8,
         text: text.to_string(),
-        line: line_number,
+        line: line.number,
+        span: Some(source_span(line, marker_start, line.text.len())),
     })
 }
 
-fn parse_markdown_links(line: &str, line_number: usize, images_only: bool) -> Vec<MarkdownLink> {
-    let bytes = line.as_bytes();
+fn parse_markdown_links(line: MarkdownLine<'_>, images_only: bool) -> Vec<MarkdownLink> {
+    let bytes = line.text.as_bytes();
     let mut cursor = 0;
     let mut out = Vec::new();
 
@@ -340,7 +403,7 @@ fn parse_markdown_links(line: &str, line_number: usize, images_only: bool) -> Ve
         }
 
         let label_start = cursor + usize::from(is_image) + 1;
-        let Some(label_end_offset) = line[label_start..].find(']') else {
+        let Some(label_end_offset) = line.text[label_start..].find(']') else {
             cursor += 1;
             continue;
         };
@@ -351,18 +414,19 @@ fn parse_markdown_links(line: &str, line_number: usize, images_only: bool) -> Ve
             continue;
         }
         let target_start = open_paren + 1;
-        let Some(target_end_offset) = line[target_start..].find(')') else {
+        let Some(target_end_offset) = line.text[target_start..].find(')') else {
             cursor = target_start;
             continue;
         };
         let target_end = target_start + target_end_offset;
-        let text = line[label_start..label_end].trim();
-        let target = line[target_start..target_end].trim();
+        let text = line.text[label_start..label_end].trim();
+        let target = line.text[target_start..target_end].trim();
         if !text.is_empty() && !target.is_empty() {
             out.push(MarkdownLink {
                 text: text.to_string(),
                 target: target.to_string(),
-                line: line_number,
+                line: line.number,
+                span: Some(source_span(line, cursor, target_end + 1)),
                 route: None,
             });
         }
@@ -370,6 +434,29 @@ fn parse_markdown_links(line: &str, line_number: usize, images_only: bool) -> Ve
     }
 
     out
+}
+
+fn first_non_whitespace_byte(line: &str) -> Option<usize> {
+    line.char_indices()
+        .find(|(_, character)| !character.is_whitespace())
+        .map(|(index, _)| index)
+}
+
+fn source_span(line: MarkdownLine<'_>, start_in_line: usize, end_in_line: usize) -> SourceSpan {
+    SourceSpan::new(
+        line.number,
+        column_for_byte(line.text, start_in_line),
+        line.byte_start + start_in_line,
+        line.byte_start + end_in_line,
+    )
+}
+
+fn column_for_byte(line: &str, byte_index: usize) -> usize {
+    line[..byte_index].chars().count() + 1
+}
+
+fn span_start(span: Option<SourceSpan>) -> usize {
+    span.map_or(usize::MAX, |span| span.byte_start)
 }
 
 fn find_readme(repo_root: &Path) -> Option<PathBuf> {
