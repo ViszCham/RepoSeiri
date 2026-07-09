@@ -4,16 +4,24 @@
 
 ## 日本語
 
-RepoSeiri は Rust 実装の Codex plugin / CLI です。GitHub リポジトリを低レイヤの証拠から読み取り、Repository Trust Graph、profile branch confidence、missing route priority、safe patch plan、Codex review context を生成します。
+RepoSeiri は、個人使用と Rust コーディング練習を目的に作っている個人リポジトリです。題材として、GitHub リポジトリの README、docs、license、security、support、CI などの導線を読み取り、Codex で使いやすい整理案を出す CLI / Codex plugin の試作を実装しています。
 
-### 固定前提
+このリポジトリは公開前提で読まれても困りにくい形へ整えていますが、外部利用を前提にした製品ではありません。RepoSeiri の出力は個人利用のためのレビュー補助であり、人気、信頼、安全性、品質、法務適合、公開可否を保証しません。
 
-- プロダクト名とリポジトリ名は `RepoSeiri` です。
-- 実装言語は Rust です。監査、profile、pattern registry、calibration、patch planning の主要ロジックは Rust crate 側で持ちます。
-- Codex plugin は薄い adapter として扱い、Rust CLI の結果を Codex の作業文脈へ渡します。
+### 何をするものか
+
+- リポジトリ内の root files、README links、docs、GitHub workflow、issue templates などを観測します。
+- 観測した evidence から repository route state、profile confidence、missing route priority を出します。
+- 自動適用ではなく、`Safe`、`Guarded`、`Manual` の境界を分けた dry-run patch plan を出します。
+- Codex で使うための review context や PR body draft を生成します。
+
+### 現在の位置づけ
+
+- 個人使用目的の Rust coding practice repository です。
+- 実装対象は repository organization を支援する CLI / Codex plugin prototype です。
+- Rust crate 側に監査、profile、pattern registry、calibration、patch planning の主要ロジックを置きます。
+- Codex plugin は薄い adapter とし、Rust CLI の結果を Codex の作業文脈へ渡します。
 - 人間向けの主要ドキュメントは、日本語を前半、英語を後半に置き、同じ内容、同じ判断、同じ注意点を保ちます。
-- README は詳細説明を抱え込まず、最初に読むための route hub として維持します。
-- RepoSeiri の出力はレビュー用の決定論的な整理案です。人気、信頼、安全性、品質、法務適合を保証するものではありません。
 
 ### Quickstart
 
@@ -22,7 +30,7 @@ cargo test --workspace
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
 ```
 
-この2行を、RepoSeiri 自身を確認する最初の route とします。詳細を読む前に、test が通るか、Codex 向けの route review がどう出るかを確認します。
+まずこの2つを実行します。1行目で workspace の基本動作を確認し、2行目で RepoSeiri 自身を対象にした Codex 向け整理案を確認します。
 
 ### 主要コマンド
 
@@ -35,10 +43,6 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 | pattern registry | `cargo run --quiet -p seiri-cli -- patterns --format markdown` |
 | calibration ingest | `cargo run --quiet -p seiri-cli -- calibrate --input fixtures/calibration-dataset.json --format markdown` |
 
-### Profile
-
-`--profile` は `common`、`library`、`cli`、`infra`、`product`、`runtime`、`docs`、`tutorial`、`ml`、`research`、`template` を受け付けます。RepoSeiri 自身には、Rust library workspace と Codex plugin の両方を持つため、まず `library` を使います。
-
 ### 結果の読み方
 
 - `Verified` は、root file などの構造的証拠と README route が揃っている状態です。
@@ -47,6 +51,23 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 - `Weak`、`Overloaded`、`Stale`、`Conflicting` は、入口が薄い、多すぎる、古い、または意図が曖昧な状態です。
 - `Absent` と `UnsafeToInvent` は、RepoSeiri が自動生成すべきではない、または人間の方針決定が先に必要な状態です。
 
+### リポジトリの入口
+
+| 読みたいもの | 入口 |
+| --- | --- |
+| docs 全体の地図 | [Documentation Topology](docs/README.md) |
+| license | [LICENSE](LICENSE) |
+| security report | [SECURITY.md](SECURITY.md) |
+| support route | [SUPPORT.md](SUPPORT.md) |
+| contribution route | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| governance boundary | [GOVERNANCE.md](GOVERNANCE.md) |
+| release history | [CHANGELOG.md](CHANGELOG.md) |
+| issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
+| ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
+| hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
+
+公開直前の checklist、設計docs、release手順などの詳細は docs topology から辿ります。
+
 ### Codex plugin route
 
 - Plugin root: `plugins/reposeiri`
@@ -54,30 +75,12 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --format mark
 - Codex 側では `seiri codex` の出力を優先して使います。
 - plugin は repository policy を推測で作らず、Rust CLI が出した gate と safe patch plan を作業文脈へ渡します。
 
-### Repository routes
+### 公開前の境界
 
-| Route | 現在の入口 |
-| --- | --- |
-| Documentation topology | [Documentation Topology](docs/README.md) |
-| Roadmap and implementation blocks | [Roadmap and Implementation Blocks](docs/design/roadmap-and-implementation-blocks.md) |
-| License | [LICENSE](LICENSE) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Release | [CHANGELOG.md](CHANGELOG.md) |
-| Support | [SUPPORT.md](SUPPORT.md) |
-| Contribution | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
-| Hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
-
-詳細設計は docs topology から design docs へ分岐します。Automation は CI workflow と Dependabot config を置きます。Release root route は `CHANGELOG.md` とし、手順は `docs/release.md` に分けます。Hygiene は `docs/hygiene.md` を入口とし、self-audit loop は `docs/self-audit.md` に分けます。未作成ファイルへのリンクは置きません。
-
-### README route 方針
-
-- Quickstart は、最初に実行する route として1箇所に集約します。
-- README では全コマンドを長く説明せず、主要コマンド表と docs topology への入口だけを置きます。
-- root policy は `LICENSE` と `SECURITY.md` を正とし、README はそこへ送ります。
-- Release は `CHANGELOG.md` を正とし、詳細手順は release docs に逃がします。
-- Automation は badge と CI workflow への入口に留め、Dependabot config は root evidence として扱います。
-- 未決定の運用 route は README で作ったことにせず、後続ブロックで root file と一緒に追加します。
+- このリポジトリは private のまま公開前整理を行います。visibility の変更は別の明示操作として扱います。
+- README は「何のリポジトリか」「どう動かすか」「どこを読むか」だけを持ち、詳細設計は docs に逃がします。
+- `SECURITY.md`、`SUPPORT.md`、`CONTRIBUTING.md` は案内用です。固定 SLA、外部 contribution 採用、security outcome を約束しません。
+- `fixtures/` はテスト入力です。実際の policy、license、support route として扱いません。
 
 ### 検証境界
 
@@ -88,6 +91,7 @@ cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
 git diff --check
 ```
 
@@ -97,16 +101,24 @@ RepoSeiri のスコアや route state は、現在のリポジトリ状態に対
 
 ## English
 
-RepoSeiri is a Rust Codex plugin / CLI. It reads GitHub repositories from low-level evidence and produces a Repository Trust Graph, profile branch confidence, missing route priority, safe patch plan, and Codex review context.
+RepoSeiri is a personal-use repository for practicing Rust coding. Its subject is a CLI / Codex plugin prototype that reads GitHub repository routes such as README, docs, license, security, support, and CI, then produces organization suggestions that are useful in Codex.
 
-### Fixed Premises
+This repository is being organized so it can be read publicly with fewer regrets, but it is not a product intended for external use. RepoSeiri output is a review aid for personal use. It does not guarantee popularity, trust, safety, quality, legal fitness, or publication readiness.
 
-- The product and repository name is `RepoSeiri`.
-- The implementation language is Rust. The core audit, profile, pattern registry, calibration, and patch planning logic belongs in Rust crates.
+### What It Does
+
+- Observes root files, README links, docs, GitHub workflows, issue templates, and similar repository signals.
+- Emits repository route state, profile confidence, and missing route priority from observed evidence.
+- Produces a dry-run patch plan that separates `Safe`, `Guarded`, and `Manual` boundaries instead of applying changes automatically.
+- Generates Codex review context and draft PR body text.
+
+### Current Status
+
+- This is a personal-use Rust coding practice repository.
+- The implementation target is a CLI / Codex plugin prototype for repository organization.
+- The Rust crates own the core audit, profile, pattern registry, calibration, and patch planning logic.
 - The Codex plugin is a thin adapter that passes Rust CLI output into the Codex working context.
 - Major human-facing documents keep Japanese in the first half and English in the second half, with the same content, decisions, and cautions.
-- The README stays as a first-read route hub instead of absorbing detailed design material.
-- RepoSeiri output is a deterministic review aid. It does not guarantee popularity, trust, safety, quality, or legal fitness.
 
 ### Quickstart
 
@@ -115,7 +127,7 @@ cargo test --workspace
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
 ```
 
-These two lines are the first route for checking RepoSeiri itself. Before reading the details, confirm that tests pass and inspect the Codex-oriented route review.
+Run these two commands first. The first checks the workspace baseline, and the second inspects RepoSeiri itself through the Codex-oriented organization context.
 
 ### Main Commands
 
@@ -128,10 +140,6 @@ These two lines are the first route for checking RepoSeiri itself. Before readin
 | Pattern registry | `cargo run --quiet -p seiri-cli -- patterns --format markdown` |
 | Calibration ingest | `cargo run --quiet -p seiri-cli -- calibrate --input fixtures/calibration-dataset.json --format markdown` |
 
-### Profile
-
-`--profile` accepts `common`, `library`, `cli`, `infra`, `product`, `runtime`, `docs`, `tutorial`, `ml`, `research`, and `template`. For RepoSeiri itself, start with `library` because the repository is both a Rust library workspace and a Codex plugin.
-
 ### Reading Results
 
 - `Verified` means structural evidence such as a root file and README routing agree.
@@ -140,37 +148,36 @@ These two lines are the first route for checking RepoSeiri itself. Before readin
 - `Weak`, `Overloaded`, `Stale`, and `Conflicting` mean the entry point is thin, too broad, old, or ambiguous.
 - `Absent` and `UnsafeToInvent` mean RepoSeiri should not create the route automatically, or that a human policy decision must come first.
 
-### Codex plugin route
+### Repository Entry Points
+
+| Topic | Entry |
+| --- | --- |
+| Documentation map | [Documentation Topology](docs/README.md) |
+| License | [LICENSE](LICENSE) |
+| Security reporting | [SECURITY.md](SECURITY.md) |
+| Support route | [SUPPORT.md](SUPPORT.md) |
+| Contribution route | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Governance boundary | [GOVERNANCE.md](GOVERNANCE.md) |
+| Release history | [CHANGELOG.md](CHANGELOG.md) |
+| Issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
+| Ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
+| Hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
+
+Detailed pre-publication checks, design docs, and release procedures are routed through the docs topology.
+
+### Codex Plugin Route
 
 - Plugin root: `plugins/reposeiri`
 - Skill file: [RepoSeiri Skill](plugins/reposeiri/skills/reposeiri/SKILL.md)
 - In Codex, prefer the output from `seiri codex`.
 - The plugin should not invent repository policy. It passes the Rust CLI gates and safe patch plan into the working context.
 
-### Repository routes
+### Publication Boundary
 
-| Route | Current entry |
-| --- | --- |
-| Documentation topology | [Documentation Topology](docs/README.md) |
-| Roadmap and implementation blocks | [Roadmap and Implementation Blocks](docs/design/roadmap-and-implementation-blocks.md) |
-| License | [LICENSE](LICENSE) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Release | [CHANGELOG.md](CHANGELOG.md) |
-| Support | [SUPPORT.md](SUPPORT.md) |
-| Contribution | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
-| Hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
-
-Detailed design branches from docs topology into design docs. Automation has a CI workflow and Dependabot config. The Release root route is `CHANGELOG.md`, and the procedure lives in `docs/release.md`. Hygiene uses `docs/hygiene.md` as the entry, and the self-audit loop lives in `docs/self-audit.md`. The README does not link to files that do not exist.
-
-### README route policy
-
-- Quickstart is consolidated into one first-run route.
-- The README does not explain every command at length. It keeps a main command table and an entry to docs topology.
-- Root policy is owned by `LICENSE` and `SECURITY.md`; the README routes readers there.
-- Release is owned by `CHANGELOG.md`; detailed procedure moves to release docs.
-- Automation stays limited to the badge and CI workflow entry; the Dependabot config is treated as root evidence.
-- Undecided operational routes are not treated as created by the README. They are added later together with root files.
+- This repository stays private while pre-publication organization is performed. Changing visibility is treated as a separate explicit action.
+- The README owns only what the repository is, how to run it, and where to read next. Detailed design moves to docs.
+- `SECURITY.md`, `SUPPORT.md`, and `CONTRIBUTING.md` are routing documents. They do not promise a fixed SLA, external contribution acceptance, or security outcomes.
+- `fixtures/` contains test inputs. They are not treated as the real project policy, license, or support route.
 
 ### Verification Boundary
 
@@ -181,6 +188,7 @@ cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
 git diff --check
 ```
 
