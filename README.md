@@ -46,7 +46,7 @@ RepoSeiri 自身を対象にした Codex review context の例です。数値は
 Repository: RepoSeiri
 Profile score view: 100 / 100
 Top profile branch: library confidence 99 / 100
-Route review: strong 13 / weak 0 / missing 0
+Route review: strong 14 / weak 0 / missing 0
 Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 ```
 
@@ -73,6 +73,7 @@ Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 
 | 読みたいもの | 入口 |
 | --- | --- |
+| project identity / README | [RepoSeiri README](README.md) |
 | docs 全体の地図 | [Documentation Topology](docs/README.md) |
 | license | [LICENSE](LICENSE) |
 | security report | [SECURITY.md](SECURITY.md) |
@@ -80,6 +81,7 @@ Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 | contribution route | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | governance boundary | [GOVERNANCE.md](GOVERNANCE.md) |
 | release history | [CHANGELOG.md](CHANGELOG.md) |
+| lifecycle / maintenance boundary | [Lifecycle / Maintenance Boundary](docs/release.md) |
 | issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
 | ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
 | hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
@@ -161,7 +163,7 @@ This is an example Codex review context for RepoSeiri itself. The numbers are re
 Repository: RepoSeiri
 Profile score view: 100 / 100
 Top profile branch: library confidence 99 / 100
-Route review: strong 13 / weak 0 / missing 0
+Route review: strong 14 / weak 0 / missing 0
 Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 ```
 
@@ -188,6 +190,7 @@ Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 
 | Topic | Entry |
 | --- | --- |
+| Project identity / README | [RepoSeiri README](README.md) |
 | Documentation map | [Documentation Topology](docs/README.md) |
 | License | [LICENSE](LICENSE) |
 | Security reporting | [SECURITY.md](SECURITY.md) |
@@ -195,6 +198,7 @@ Codex actions: safe fixes 0 / guarded drafts 3 / manual decisions withheld 0
 | Contribution route | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Governance boundary | [GOVERNANCE.md](GOVERNANCE.md) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
+| Lifecycle / maintenance boundary | [Lifecycle / Maintenance Boundary](docs/release.md) |
 | Issue / PR intake | [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) |
 | Ownership boundary | [.github/CODEOWNERS](.github/CODEOWNERS) |
 | Hygiene / self-audit | [Repository Hygiene](docs/hygiene.md) |
