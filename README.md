@@ -12,10 +12,17 @@ RepoSeiri は、GitHub リポジトリを監査し、整理し、改善提案へ
 - 日本語部分と英語部分には、同じ内容、同じ判断、同じ注意事項を書くものとします。
 - 片方の言語だけに仕様、制約、手順、警告を追加しません。
 - 実装可能な部分は、なるべく低レイヤで実装します。
+- RepoSeiri の中核設計は、Repository Trust Graph、Trust Path Planner、Safe Repair Engine とします。
+- 全体共通の observable evidence を先に実装し、その上に目的別 profile を重ねます。
+- README は routing hub とし、詳細は docs、support、security、contributing、release、governance へ逃がします。
 
 ### 初期スコープ
 
 このリポジトリは、GitHub リポジトリ品質分析のための評価器、レポート生成、改善提案、Codex 連携を段階的に実装する作業場所です。初期段階では、README ルーティング、docs トポロジー、community health、security posture、CI、release、repository hygiene を repo type ごとに評価する設計を前提にします。
+
+### 設計ドキュメント
+
+RepoSeiri の詳細設計は [Repository Trust Graph Design](docs/design/repository-trust-graph.md) に置きます。README は設計本文を抱え込まず、詳細設計への導線だけを持ちます。
 
 ### 実装方針
 
@@ -41,10 +48,17 @@ RepoSeiri is designed as a Rust-based Codex plugin / app that audits GitHub repo
 - The Japanese half and the English half must contain the same content, decisions, and cautions.
 - Do not add specifications, constraints, steps, or warnings to only one language.
 - Implement feasible parts at as low a layer as practical.
+- The core RepoSeiri design is Repository Trust Graph, Trust Path Planner, and Safe Repair Engine.
+- Implement common observable evidence first, then layer purpose-specific profiles on top.
+- README is a routing hub; details move to docs, support, security, contributing, release, and governance surfaces.
 
 ### Initial Scope
 
 This repository is the working place for gradually implementing evaluators, report generation, improvement proposals, and Codex integration for GitHub repository quality analysis. The initial design assumes repo-type-aware evaluation of README routing, docs topology, community health, security posture, CI, release, and repository hygiene.
+
+### Design Document
+
+The detailed RepoSeiri design lives in [Repository Trust Graph Design](docs/design/repository-trust-graph.md). README keeps the route to the detailed design instead of carrying the full design body.
 
 ### Implementation Policy
 

@@ -12,6 +12,9 @@
 - 日本語部分と英語部分は、同じ意味、同じ判断、同じ制約、同じ警告を持つように更新します。
 - 片方の言語だけに新しい仕様や作業手順を追加しないでください。
 - 実装可能な部分は、なるべく低レイヤで実装します。
+- RepoSeiri の中核設計は、Repository Trust Graph、Trust Path Planner、Safe Repair Engine として扱います。
+- 全体共通の observable evidence を先に実装し、その上に目的別 profile を重ねます。
+- README は routing hub とし、詳細は docs、support、security、contributing、release、governance へ逃がします。
 
 ### 作業方針
 
@@ -37,6 +40,9 @@ Work in this repository while preserving the fixed premises for RepoSeiri.
 - Update the Japanese half and the English half so they carry the same meaning, decisions, constraints, and warnings.
 - Do not add new specifications or work steps to only one language.
 - Implement feasible parts at as low a layer as practical.
+- Treat the core RepoSeiri design as Repository Trust Graph, Trust Path Planner, and Safe Repair Engine.
+- Implement common observable evidence first, then layer purpose-specific profiles on top.
+- README is a routing hub; details move to docs, support, security, contributing, release, and governance surfaces.
 
 ### Work Policy
 
