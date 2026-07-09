@@ -218,6 +218,9 @@ fn important_file(record: &FileRecord) -> Option<ImportantFileKind> {
     }
 
     match (record.kind, basename, lower.as_str()) {
+        (FileKind::File, ".gitignore", _) => Some(ImportantFileKind::Gitignore),
+        (FileKind::File, ".gitattributes", _) => Some(ImportantFileKind::Gitattributes),
+        (FileKind::File, ".editorconfig", _) => Some(ImportantFileKind::EditorConfig),
         (FileKind::File, name, _) if name.starts_with("readme") => Some(ImportantFileKind::Readme),
         (FileKind::File, "license" | "license.md" | "copying", _) => {
             Some(ImportantFileKind::License)

@@ -1,0 +1,42 @@
+name: "質問 / Question"
+description: "RepoSeiri の使い方、出力、設計判断について質問します。 / Ask about RepoSeiri usage, output, or design decisions."
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 日本語
+        質問は、目的、試したこと、読んだ出力を分けると扱いやすくなります。バグとして再現できる場合は bug report を使ってください。
+
+        ## English
+        Questions are easier to handle when goal, attempted steps, and observed output are separated. If the issue is reproducible as a defect, use the bug report form.
+  - type: textarea
+    id: question
+    attributes:
+      label: "質問 / Question"
+      description: "知りたいことを具体的に書いてください。 / Describe what you want to know."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: "文脈 / Context"
+      description: "対象 repository、profile、command、route state、関連 docs を書いてください。 / Add the target repository, profile, command, route state, and related docs."
+      placeholder: "profile=library; command=seiri codex; route=Support..."
+    validations:
+      required: false
+  - type: textarea
+    id: tried
+    attributes:
+      label: "試したこと / What you tried"
+      description: "すでに実行した command や読んだ文書を書いてください。 / List commands already run and documents already read."
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "確認 / Checks"
+      options:
+        - label: "公開 issue に未修正のセキュリティ脆弱性の詳細を書いていません。 / I did not include details of an unfixed security vulnerability in this public issue."
+          required: true

@@ -1,3 +1,15 @@
-target/
+/target/
+/dist/
+/build/
+/coverage/
+/tmp/
+/.tmp/
+/reposeiri-audit/
+/SEIRI_REPORT.md
+*.profraw
+*.rs.bk
+*.pdb
 *.tmp
 *.bak
+.DS_Store
+Thumbs.db

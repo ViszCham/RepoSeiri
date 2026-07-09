@@ -145,7 +145,9 @@ pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
         None => text.to_ascii_lowercase(),
     };
 
-    if contains_any(&combined, &["docs", "documentation", "guide", "manual"]) {
+    if is_hygiene_route_text(&combined) {
+        RouteKind::Hygiene
+    } else if contains_any(&combined, &["docs", "documentation", "guide", "manual"]) {
         RouteKind::Docs
     } else if contains_any(
         &combined,
@@ -207,7 +209,9 @@ pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
 }
 
 fn classify_route_text(value: &str) -> RouteKind {
-    if contains_any(
+    if is_hygiene_route_text(value) {
+        RouteKind::Hygiene
+    } else if contains_any(
         value,
         &[
             "quickstart",
@@ -280,6 +284,20 @@ fn is_intake_route_text(value: &str) -> bool {
         ],
     ) || (contains_any(value, &["issues", "issue"])
         && contains_any(value, &["bug", "feature", "template", "form"]))
+}
+
+fn is_hygiene_route_text(value: &str) -> bool {
+    contains_any(
+        value,
+        &[
+            "hygiene",
+            "repository hygiene",
+            "cleanup",
+            "clean-up",
+            "self-audit",
+            "self audit",
+        ],
+    )
 }
 
 fn parse_heading(line: &str, line_number: usize) -> Option<MarkdownHeading> {

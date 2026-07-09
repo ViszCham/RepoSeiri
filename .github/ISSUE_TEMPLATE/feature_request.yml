@@ -1,0 +1,73 @@
+name: "機能提案 / Feature request"
+description: "RepoSeiri の機能、route、profile、pattern、calibration の改善を提案します。 / Propose an improvement to a RepoSeiri feature, route, profile, pattern, or calibration surface."
+title: "feature: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 日本語
+        提案は目的、対象 route、観測できる証拠、検証方法に分けて書いてください。人気、信頼、安全性、品質の保証として表現しないでください。
+
+        ## English
+        Separate the proposal into goal, affected route, observable evidence, and verification method. Do not frame it as a guarantee of popularity, trust, safety, or quality.
+  - type: textarea
+    id: problem
+    attributes:
+      label: "解きたい問題 / Problem"
+      description: "どの repository route、profile、または workflow が足りないかを書いてください。 / Describe which repository route, profile, or workflow is missing."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "提案 / Proposal"
+      description: "追加したい behavior、document、pattern、または command surface を書いてください。 / Describe the behavior, document, pattern, or command surface you want to add."
+    validations:
+      required: true
+  - type: dropdown
+    id: route
+    attributes:
+      label: "主な route / Primary route"
+      description: "もっとも近い route を選んでください。 / Pick the closest route."
+      options:
+        - README
+        - Docs
+        - Quickstart
+        - Support
+        - Intake
+        - Contributing
+        - Security
+        - Release
+        - Governance
+        - License
+        - Automation
+        - Ownership
+        - Hygiene
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "根拠 / Evidence"
+      description: "分析データ、RepoSeiri audit 出力、fixture、実 repository 観測などを書いてください。 / Add analysis data, RepoSeiri audit output, fixtures, or real repository observations."
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: "検証方法 / Verification method"
+      description: "期待する command、fixture、route state、または regression check を書いてください。 / Describe expected commands, fixtures, route states, or regression checks."
+      placeholder: "cargo test --workspace; seiri audit --path ...; expected route state ..."
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "確認 / Checks"
+      options:
+        - label: "この提案は自動 policy 決定ではなく、maintainer review が必要な候補として書いています。 / I am presenting this as a maintainer-reviewed candidate, not as an automatic policy decision."
+          required: true
+        - label: "この提案を人気、信頼、安全性、品質の保証として表現していません。 / I am not presenting this proposal as a guarantee of popularity, trust, safety, or quality."
+          required: true

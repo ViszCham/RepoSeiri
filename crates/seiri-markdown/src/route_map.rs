@@ -160,6 +160,7 @@ fn readme_hub_routes() -> &'static [RouteKind] {
         RouteKind::Contributing,
         RouteKind::License,
         RouteKind::Automation,
+        RouteKind::Hygiene,
     ]
 }
 

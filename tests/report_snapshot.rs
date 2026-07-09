@@ -90,3 +90,26 @@ fn report_distinguishes_readme_routes_from_absent_routes() {
     assert!(markdown.contains("## README"));
     assert!(markdown.contains("## Findings"));
 }
+
+#[test]
+fn report_verifies_hygiene_when_root_files_and_readme_route_agree() {
+    let snapshot =
+        seiri_report::audit_repository(fixture("hygiene-self-audit-repo")).expect("audit fixture");
+
+    let hygiene = snapshot
+        .route_states
+        .iter()
+        .find(|state| state.route == RouteKind::Hygiene)
+        .expect("hygiene route state");
+    assert_eq!(hygiene.state, RouteState::Verified);
+    assert!(hygiene.evidence_ids.len() >= 2);
+
+    let registry = seiri_patterns::common_registry();
+    let definition = registry
+        .definitions()
+        .iter()
+        .find(|definition| definition.id == "HYG-001")
+        .expect("HYG-001");
+    let evidence_ids = seiri_patterns::evidence_ids_for_definition(&snapshot, definition);
+    assert!(!evidence_ids.is_empty());
+}
