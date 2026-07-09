@@ -114,6 +114,7 @@ fn route_state_routes() -> &'static [RouteKind] {
         RouteKind::Contributing,
         RouteKind::Security,
         RouteKind::Release,
+        RouteKind::Lifecycle,
         RouteKind::Governance,
         RouteKind::License,
         RouteKind::Automation,
@@ -248,7 +249,11 @@ fn is_readme_route_evidence(kind: EvidenceKind) -> bool {
 fn unsafe_to_invent_route(route: RouteKind) -> bool {
     matches!(
         route,
-        RouteKind::License | RouteKind::Security | RouteKind::Governance | RouteKind::Ownership
+        RouteKind::License
+            | RouteKind::Security
+            | RouteKind::Lifecycle
+            | RouteKind::Governance
+            | RouteKind::Ownership
     )
 }
 

@@ -1,6 +1,6 @@
 use seiri_core::{
-    CalibrationReviewStatus, CalibrationScale, CalibrationSourceKind, ProfileKind, RouteKind,
-    SCHEMA_VERSION,
+    CalibrationReviewStatus, CalibrationScale, CalibrationSourceKind, CalibrationSourceVisibility,
+    ProfileKind, RouteKind, SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,10 @@ fn calibration_ingests_dataset_and_keeps_unmapped_patterns_pending() {
     assert_eq!(run.summary.records, 4);
     assert_eq!(run.summary.sources, 1);
     assert_eq!(run.sources[0].kind, CalibrationSourceKind::Fixture);
+    assert_eq!(
+        run.sources[0].visibility,
+        CalibrationSourceVisibility::Public
+    );
     assert_eq!(run.sources[0].scale, CalibrationScale::Tiny);
 
     let docs = run
@@ -138,4 +142,65 @@ fn calibration_report_renders_json_and_markdown() {
     assert!(markdown.contains("## Profile Branches"));
     assert!(markdown.contains("## Pending Pattern Candidates"));
     assert!(markdown.contains("## Weight Suggestions"));
+}
+
+#[test]
+fn q9_public_calibration_outputs_redact_local_only_sources() {
+    let dataset = seiri_calibration::load_dataset(fixture("calibration-local-only-dataset.json"))
+        .expect("load local-only fixture");
+    let run = seiri_calibration::calibrate_dataset(&dataset);
+
+    assert_eq!(
+        run.sources[1].visibility,
+        CalibrationSourceVisibility::LocalOnly
+    );
+    assert!(run
+        .pending_patterns
+        .iter()
+        .any(|candidate| candidate.raw_label == "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"));
+
+    let public_run = run.redacted_for_public_output();
+    assert_eq!(public_run.dataset_id, "redacted-calibration-dataset");
+    assert_eq!(
+        public_run.sources[1].visibility,
+        CalibrationSourceVisibility::Redacted
+    );
+    assert!(public_run
+        .pending_patterns
+        .iter()
+        .all(|candidate| candidate.example_locations.is_empty()));
+    assert!(public_run
+        .pending_patterns
+        .iter()
+        .all(|candidate| candidate.raw_label == "redacted local-only pattern candidate"));
+
+    let json = seiri_report::calibration_to_json(&run).expect("render redacted JSON");
+    let markdown = seiri_report::calibration_to_markdown(&run);
+    let codex_summary = seiri_codex::build_calibration_source_summary(&run);
+    let codex_json = serde_json::to_string(&codex_summary).expect("render codex summary");
+
+    assert_eq!(codex_summary.public_sources, 1);
+    assert_eq!(codex_summary.local_only_sources, 1);
+    assert_eq!(codex_summary.redacted_sources, 0);
+    assert!(json.contains("\"visibility\": \"redacted\""));
+    assert!(json.contains("redacted-calibration-source-0002"));
+    assert!(markdown.contains("Source visibility: public `1` / local_only `1` / redacted `0`"));
+    assert!(markdown.contains("visibility `Redacted`"));
+
+    assert_no_synthetic_local_details(&json);
+    assert_no_synthetic_local_details(&markdown);
+    assert_no_synthetic_local_details(&codex_json);
+}
+
+fn assert_no_synthetic_local_details(output: &str) {
+    for token in [
+        "SYNTHETIC_LOCAL_ONLY_DATASET_ID_SHOULD_NOT_RENDER",
+        "SYNTHETIC_LOCAL_ONLY_PATH_SHOULD_NOT_RENDER",
+        "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER",
+    ] {
+        assert!(
+            !output.contains(token),
+            "public output leaked synthetic local-only token `{token}`"
+        );
+    }
 }

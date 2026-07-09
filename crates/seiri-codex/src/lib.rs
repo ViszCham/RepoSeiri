@@ -1,12 +1,32 @@
 use seiri_core::{
-    stable_id, CodexAuditSummary, CodexBlockedDigest, CodexCoOccurrenceDigest, CodexFindingDigest,
-    CodexPatchDigest, CodexPrDraft, CodexReviewContext, CodexRouteDigest, CodexRouteReviewSummary,
-    CodexUserAction, GateKind, PatchPlan, ProfileKind, RepoSnapshot, RouteState, SCHEMA_VERSION,
-    TOOL_NAME,
+    route_meaning_rule, stable_id, CalibrationRun, CalibrationSourceVisibilitySummary,
+    ClaimBoundaryKind, ClaimId, ClaimRefIndex, ClaimStrength, CodexAuditSummary,
+    CodexBlockedDigest, CodexClaimSummary, CodexCoOccurrenceDigest, CodexFindingDigest,
+    CodexPatchDigest, CodexPrDraft, CodexReviewContext, CodexRouteDigest, CodexRouteMeaningDigest,
+    CodexRouteReviewSummary, CodexUserAction, CodexWordingLintDigest, GateKind, MeaningAtom,
+    PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState, WordingLintReport,
+    WordingRuleKind, SCHEMA_VERSION, TOOL_NAME,
 };
+use std::collections::BTreeSet;
+
+#[must_use]
+pub fn build_calibration_source_summary(
+    run: &CalibrationRun,
+) -> CalibrationSourceVisibilitySummary {
+    run.source_visibility_summary()
+}
 
 #[must_use]
 pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexReviewContext {
+    build_review_context_with_wording(snapshot, plan, None)
+}
+
+#[must_use]
+pub fn build_review_context_with_wording(
+    snapshot: &RepoSnapshot,
+    plan: &PatchPlan,
+    wording_lint: Option<&WordingLintReport>,
+) -> CodexReviewContext {
     let audit = audit_summary(snapshot);
     let findings = snapshot
         .findings
@@ -61,10 +81,21 @@ pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexR
         })
         .collect::<Vec<_>>();
     let route_review = route_review_summary(snapshot, plan);
+    let claims = claim_summary(snapshot);
+    let wording_lint = wording_lint_digest(wording_lint);
+    let route_meanings = route_meaning_digests(snapshot);
     let routes = route_digests(snapshot);
     let co_occurrence_gaps = co_occurrence_digests(snapshot);
     let profile = snapshot.profile.as_ref().map(|profile| profile.profile);
-    let pr_draft = build_pr_draft(snapshot, plan, &audit, &route_review);
+    let pr_draft = build_pr_draft(
+        snapshot,
+        plan,
+        &audit,
+        &route_review,
+        &claims,
+        &wording_lint,
+        &route_meanings,
+    );
     let user_actions = build_user_actions(snapshot, profile);
 
     CodexReviewContext {
@@ -74,6 +105,9 @@ pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexR
         profile,
         audit,
         route_review,
+        claims,
+        wording_lint,
+        route_meanings,
         routes,
         co_occurrence_gaps,
         plan: plan.summary,
@@ -82,7 +116,8 @@ pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexR
         blocked_items,
         user_actions,
         pr_draft,
-        claim_boundary: "Codex context is generated from RepoSeiri Rust core outputs. It is a draft review artifact only; it does not create branches, write files, call GitHub, open PRs, adopt policies, or guarantee popularity, trust, security, or quality.".to_string(),
+        calibration_sources: CalibrationSourceVisibilitySummary::default(),
+        claim_boundary: "Codex context is a draft review artifact generated from RepoSeiri Rust core outputs. Detailed claim boundaries are referenced by claim id; this context does not create branches, write files, call GitHub, open PRs, adopt policies, or guarantee popularity, trust, security, or quality.".to_string(),
     }
 }
 
@@ -143,6 +178,27 @@ pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
         context.audit.route_states
     ));
     out.push_str(&format!(
+        "- Content claims: `{}`\n",
+        context.audit.content_claims
+    ));
+    out.push_str(&format!(
+        "- Wording lint findings: `{}`\n",
+        context.wording_lint.findings
+    ));
+    out.push_str(&format!(
+        "- Route meaning digests: `{}`\n",
+        context.route_meanings.len()
+    ));
+    if context.calibration_sources.total > 0 {
+        out.push_str(&format!(
+            "- Calibration sources: public `{}` / local_only `{}` / redacted `{}` / pending_review `{}`\n",
+            context.calibration_sources.public_sources,
+            context.calibration_sources.local_only_sources,
+            context.calibration_sources.redacted_sources,
+            context.calibration_sources.pending_review
+        ));
+    }
+    out.push_str(&format!(
         "- Safe operations: `{}`\n",
         context.plan.safe_operations
     ));
@@ -152,10 +208,65 @@ pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
     ));
     out.push_str(&format!("- Boundary: {}\n\n", context.claim_boundary));
 
+    out.push_str("## Claim Summary\n\n");
+    out.push_str(&format!(
+        "- Total `{}` / observed `{}` / inferred `{}` / suggested `{}` / blocked `{}`\n",
+        context.claims.total,
+        context.claims.observed,
+        context.claims.inferred,
+        context.claims.suggested,
+        context.claims.blocked
+    ));
+    out.push_str(&format!(
+        "- Routes with claims `{}` / evidence-linked claims `{}`\n",
+        context.claims.routes_with_claims, context.claims.evidence_linked_claims
+    ));
+    out.push_str(&format!(
+        "- Boundary kinds: {}\n\n",
+        debug_values_or_none(&context.claims.boundary_kinds)
+    ));
+
+    out.push_str("## Wording Lint\n\n");
+    out.push_str(&format!(
+        "- Available: `{}`\n",
+        context.wording_lint.available
+    ));
+    out.push_str(&format!(
+        "- Files scanned `{}` / generated surfaces `{}` / findings `{}` / suppressed boundary exceptions `{}`\n",
+        context.wording_lint.files_scanned,
+        context.wording_lint.generated_surfaces,
+        context.wording_lint.findings,
+        context.wording_lint.suppressed_boundary_exceptions
+    ));
+    out.push_str(&format!(
+        "- Rules: {}\n",
+        debug_values_or_none(&context.wording_lint.rules)
+    ));
+    out.push_str(&format!(
+        "- Boundary kinds: {}\n\n",
+        debug_values_or_none(&context.wording_lint.boundary_kinds)
+    ));
+
+    out.push_str("## Route Meaning Digest\n\n");
+    if context.route_meanings.is_empty() {
+        out.push_str("- No route meaning digests emitted.\n\n");
+    } else {
+        for digest in &context.route_meanings {
+            out.push_str(&format!(
+                "- `{:?}` `{:?}` indicates {} / does_not_indicate {}\n",
+                digest.route,
+                digest.state,
+                debug_values_or_none(&digest.indicates),
+                debug_values_or_none(&digest.does_not_indicate)
+            ));
+        }
+        out.push('\n');
+    }
+
     out.push_str("## Route Review\n\n");
     for digest in &context.routes {
         out.push_str(&format!(
-            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}`: {}\n",
+            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}` claims {} boundary_kinds `{}`: {}\n",
             digest.route,
             digest.state,
             digest.confidence,
@@ -165,6 +276,8 @@ pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
             digest
                 .gate
                 .map_or_else(|| "n/a".to_string(), |gate| format!("{gate:?}")),
+            claim_ids_or_none(&digest.claim_ids),
+            digest.boundary_kinds.len(),
             digest.reason
         ));
     }
@@ -221,6 +334,75 @@ pub fn render_pr_body(context: &CodexReviewContext) -> String {
     context.pr_draft.body.clone()
 }
 
+fn claim_summary(snapshot: &RepoSnapshot) -> CodexClaimSummary {
+    let claim_index = ClaimRefIndex::new(&snapshot.claims);
+    let routes_with_claims = snapshot
+        .claims
+        .iter()
+        .map(|claim| claim.route)
+        .collect::<BTreeSet<RouteKind>>()
+        .len();
+    let evidence_linked_claims = snapshot
+        .claims
+        .iter()
+        .filter(|claim| !claim.evidence_ids.is_empty())
+        .count();
+
+    CodexClaimSummary {
+        total: snapshot.claims.len(),
+        observed: claim_index.strength_count(ClaimStrength::Observed),
+        inferred: claim_index.strength_count(ClaimStrength::Inferred),
+        suggested: claim_index.strength_count(ClaimStrength::Suggested),
+        blocked: claim_index.strength_count(ClaimStrength::Blocked),
+        routes_with_claims,
+        evidence_linked_claims,
+        boundary_kinds: claim_index.boundary_kinds(),
+    }
+}
+
+fn wording_lint_digest(report: Option<&WordingLintReport>) -> CodexWordingLintDigest {
+    let Some(report) = report else {
+        return CodexWordingLintDigest::default();
+    };
+    CodexWordingLintDigest {
+        available: true,
+        files_scanned: report.summary.files_scanned,
+        generated_surfaces: report.summary.generated_surfaces,
+        findings: report.summary.findings,
+        suppressed_boundary_exceptions: report.summary.suppressed_boundary_exceptions,
+        rules: report
+            .findings
+            .iter()
+            .map(|finding| finding.rule)
+            .collect::<BTreeSet<WordingRuleKind>>()
+            .into_iter()
+            .collect(),
+        boundary_kinds: report
+            .findings
+            .iter()
+            .map(|finding| finding.boundary)
+            .collect::<BTreeSet<ClaimBoundaryKind>>()
+            .into_iter()
+            .collect(),
+    }
+}
+
+fn route_meaning_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteMeaningDigest> {
+    snapshot
+        .route_states
+        .iter()
+        .map(|state| {
+            let rule = route_meaning_rule(state.route, state.state);
+            CodexRouteMeaningDigest {
+                route: state.route,
+                state: state.state,
+                indicates: rule.indicates.to_vec(),
+                does_not_indicate: rule.does_not_indicate.to_vec(),
+            }
+        })
+        .collect()
+}
+
 fn audit_summary(snapshot: &RepoSnapshot) -> CodexAuditSummary {
     let baseline = snapshot.baseline.as_ref();
     let strong_routes = snapshot
@@ -243,6 +425,7 @@ fn audit_summary(snapshot: &RepoSnapshot) -> CodexAuditSummary {
         evidence_items: snapshot.evidence.len(),
         evidence_ledger_records: snapshot.evidence_ledger.len(),
         route_states: snapshot.route_states.len(),
+        content_claims: snapshot.claims.len(),
         strong_routes,
         weak_routes,
         missing_routes,
@@ -285,6 +468,9 @@ fn build_pr_draft(
     plan: &PatchPlan,
     audit: &CodexAuditSummary,
     route_review: &CodexRouteReviewSummary,
+    claims: &CodexClaimSummary,
+    wording_lint: &CodexWordingLintDigest,
+    route_meanings: &[CodexRouteMeaningDigest],
 ) -> CodexPrDraft {
     let mut body = String::new();
     body.push_str("## Summary\n\n");
@@ -296,6 +482,24 @@ fn build_pr_draft(
     body.push_str(&format!(
         "- Route states emitted: `{}`.\n",
         audit.route_states
+    ));
+    body.push_str(&format!(
+        "- Content claims emitted: `{}`; route details reference claim ids where available.\n",
+        audit.content_claims
+    ));
+    body.push_str(&format!(
+        "- Claim digest: observed `{}` / inferred `{}` / suggested `{}` / blocked `{}` across `{}` routes.\n",
+        claims.observed, claims.inferred, claims.suggested, claims.blocked, claims.routes_with_claims
+    ));
+    body.push_str(&format!(
+        "- Wording lint digest: available `{}` / findings `{}` / suppressed boundary exceptions `{}`.\n",
+        wording_lint.available,
+        wording_lint.findings,
+        wording_lint.suppressed_boundary_exceptions
+    ));
+    body.push_str(&format!(
+        "- Route meaning digests emitted: `{}`.\n",
+        route_meanings.len()
     ));
     body.push_str(&format!(
         "- Route review: strong `{}` / weak `{}` / missing `{}`.\n",
@@ -321,6 +525,7 @@ fn build_pr_draft(
     ));
 
     body.push_str("## Route Review\n\n");
+    let claim_index = ClaimRefIndex::new(&snapshot.claims);
     for state in &snapshot.route_states {
         if matches!(
             state.state,
@@ -332,12 +537,33 @@ fn build_pr_draft(
                 | RouteState::UnsafeToInvent
         ) {
             body.push_str(&format!(
-                "- `{:?}` `{:?}` confidence `{:?}`: {}\n",
-                state.route, state.state, state.confidence, state.reason
+                "- `{:?}` `{:?}` confidence `{:?}` claims {}: {}\n",
+                state.route,
+                state.state,
+                state.confidence,
+                claim_ids_or_none(&claim_index.claim_ids_for_route_state(state.route, state.state)),
+                state.reason
             ));
         }
     }
     body.push('\n');
+
+    body.push_str("## Claim / Wording / Meaning Digest\n\n");
+    body.push_str(&format!(
+        "- Claim boundaries: {}\n",
+        debug_values_or_none(&claims.boundary_kinds)
+    ));
+    body.push_str(&format!(
+        "- Wording rules: {}\n",
+        debug_values_or_none(&wording_lint.rules)
+    ));
+    let human_review_routes = route_meanings
+        .iter()
+        .filter(|digest| digest.indicates.contains(&MeaningAtom::HumanReviewRequired))
+        .count();
+    body.push_str(&format!(
+        "- Route meanings requiring human review: `{human_review_routes}`.\n\n"
+    ));
 
     body.push_str("## Safe Fixes\n\n");
     if plan.operations.is_empty() {
@@ -366,9 +592,12 @@ fn build_pr_draft(
         body.push_str("- No reviewable guarded drafts are included in this plan.\n\n");
     } else {
         for item in guarded_items {
+            let kind = item
+                .suggested_kind
+                .map_or_else(|| "none".to_string(), |kind| format!("{kind:?}"));
             body.push_str(&format!(
-                "- `{}` `{:?}` `{}`: {}\n",
-                item.id, item.gate, item.pattern_id, item.reason
+                "- `{}` `{:?}` kind `{}` `{}`: {}\n",
+                item.id, item.gate, kind, item.pattern_id, item.reason
             ));
         }
         body.push('\n');
@@ -391,6 +620,7 @@ fn build_pr_draft(
     body.push_str("- [ ] Run `cargo test --workspace` after any applied changes.\n\n");
 
     body.push_str("## Boundary\n\n");
+    body.push_str("- Claim details and blocked guarantee boundaries are referenced through claim ids in this draft.\n");
     body.push_str("- This PR body is a draft generated by RepoSeiri. It does not claim popularity, trust, security, quality, or external validation outcomes.\n");
     body.push_str("- RepoSeiri did not create this PR, push a branch, call GitHub, or mutate repository files while generating this context.\n");
 
@@ -443,6 +673,7 @@ fn route_review_summary(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexRoute
 }
 
 fn route_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteDigest> {
+    let claim_index = ClaimRefIndex::new(&snapshot.claims);
     snapshot
         .route_states
         .iter()
@@ -457,6 +688,9 @@ fn route_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteDigest> {
                 state: state.state,
                 confidence: state.confidence,
                 evidence_ids: state.evidence_ids.clone(),
+                claim_ids: claim_index.claim_ids_for_route_state(state.route, state.state),
+                boundary_kinds: claim_index
+                    .boundary_kinds_for_route_state(state.route, state.state),
                 priority_score_x100: priority.map(|priority| priority.priority_score_x100),
                 gate: priority.and_then(|priority| {
                     if priority.gate == GateKind::Manual {
@@ -469,6 +703,29 @@ fn route_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteDigest> {
             }
         })
         .collect()
+}
+
+fn claim_ids_or_none(ids: &[ClaimId]) -> String {
+    if ids.is_empty() {
+        "none".to_string()
+    } else {
+        ids.iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn debug_values_or_none<T: std::fmt::Debug>(values: &[T]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| format!("`{value:?}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn co_occurrence_digests(snapshot: &RepoSnapshot) -> Vec<CodexCoOccurrenceDigest> {

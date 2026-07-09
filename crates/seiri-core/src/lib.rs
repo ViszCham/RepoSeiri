@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const SCHEMA_VERSION: &str = "seiri.block_p.v1";
 pub const TOOL_NAME: &str = "RepoSeiri";
+pub const WORDING_LINT_SCHEMA_VERSION: &str = "seiri.wording_lint.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoSnapshot {
@@ -17,6 +19,8 @@ pub struct RepoSnapshot {
     pub pattern_matches: Vec<PatternMatch>,
     pub route_states: Vec<RouteStateReport>,
     pub missing_route_priority: MissingRoutePriorityReport,
+    #[serde(default)]
+    pub claims: Vec<ContentClaim>,
     pub baseline: Option<BaselineReport>,
     pub profile: Option<ProfileReport>,
     pub findings: Vec<Finding>,
@@ -38,6 +42,7 @@ impl RepoSnapshot {
             pattern_matches: Vec::new(),
             route_states: Vec::new(),
             missing_route_priority: MissingRoutePriorityReport::empty(),
+            claims: Vec::new(),
             baseline: None,
             profile: None,
             findings: Vec::new(),
@@ -99,11 +104,34 @@ pub struct ReadmeSummary {
     pub route_map: ReadmeRouteMap,
 }
 
+/// 1-based line/column plus byte offsets into the source document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSpan {
+    pub line: usize,
+    pub column: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+}
+
+impl SourceSpan {
+    #[must_use]
+    pub const fn new(line: usize, column: usize, byte_start: usize, byte_end: usize) -> Self {
+        Self {
+            line,
+            column,
+            byte_start,
+            byte_end,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarkdownHeading {
     pub level: u8,
     pub text: String,
     pub line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +139,8 @@ pub struct MarkdownLink {
     pub text: String,
     pub target: String,
     pub line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
     pub route: Option<RouteKind>,
 }
 
@@ -119,6 +149,8 @@ pub struct MarkdownBadge {
     pub alt: String,
     pub target: String,
     pub line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +160,8 @@ pub struct RouteCandidate {
     pub text: String,
     pub target: Option<String>,
     pub line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +237,7 @@ pub enum RouteKind {
     Contributing,
     Security,
     Release,
+    Lifecycle,
     Governance,
     License,
     Automation,
@@ -279,6 +314,7 @@ pub struct Evidence {
 }
 
 pub type EvidenceId = String;
+pub type ClaimId = String;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceRecord {
@@ -737,6 +773,61 @@ pub struct CalibrationRun {
     pub claim_boundary: ClaimBoundary,
 }
 
+impl CalibrationRun {
+    #[must_use]
+    pub fn source_visibility_summary(&self) -> CalibrationSourceVisibilitySummary {
+        CalibrationSourceVisibilitySummary::from_sources(&self.sources)
+    }
+
+    #[must_use]
+    pub fn redacted_for_public_output(&self) -> Self {
+        let mut public_run = self.clone();
+        let mut source_id_map = BTreeMap::<String, String>::new();
+
+        public_run.sources = self
+            .sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| match source.visibility {
+                CalibrationSourceVisibility::Public => source.clone(),
+                CalibrationSourceVisibility::LocalOnly | CalibrationSourceVisibility::Redacted => {
+                    let public_id = redacted_calibration_source_id(index + 1);
+                    source_id_map.insert(source.id.clone(), public_id.clone());
+                    redacted_calibration_source(source, public_id)
+                }
+            })
+            .collect();
+
+        if !source_id_map.is_empty() {
+            public_run.dataset_id = "redacted-calibration-dataset".to_string();
+        }
+        public_run.redact_source_references(&source_id_map);
+        public_run
+    }
+
+    fn redact_source_references(&mut self, source_id_map: &BTreeMap<String, String>) {
+        if source_id_map.is_empty() {
+            return;
+        }
+
+        for stat in &mut self.stats {
+            redact_source_ids(&mut stat.source_ids, source_id_map);
+        }
+        for requirement in &mut self.route_requirements {
+            redact_source_ids(&mut requirement.source_ids, source_id_map);
+        }
+        for candidate in &mut self.pending_patterns {
+            if redact_source_ids(&mut candidate.source_ids, source_id_map) {
+                candidate.raw_label = "redacted local-only pattern candidate".to_string();
+                candidate.example_locations.clear();
+            }
+        }
+        for suggestion in &mut self.weight_suggestions {
+            redact_source_ids(&mut suggestion.source_ids, source_id_map);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalibrationSummary {
     pub records: usize,
@@ -748,10 +839,48 @@ pub struct CalibrationSummary {
     pub weight_suggestions: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalibrationSourceVisibilitySummary {
+    pub total: usize,
+    pub public_sources: usize,
+    pub local_only_sources: usize,
+    pub redacted_sources: usize,
+    pub pending_review: usize,
+    pub adopted: usize,
+    pub deferred: usize,
+    pub rejected: usize,
+}
+
+impl CalibrationSourceVisibilitySummary {
+    #[must_use]
+    pub fn from_sources(sources: &[CalibrationSource]) -> Self {
+        let mut summary = Self {
+            total: sources.len(),
+            ..Self::default()
+        };
+        for source in sources {
+            match source.visibility {
+                CalibrationSourceVisibility::Public => summary.public_sources += 1,
+                CalibrationSourceVisibility::LocalOnly => summary.local_only_sources += 1,
+                CalibrationSourceVisibility::Redacted => summary.redacted_sources += 1,
+            }
+            match source.review_status {
+                CalibrationReviewStatus::PendingReview => summary.pending_review += 1,
+                CalibrationReviewStatus::Adopted => summary.adopted += 1,
+                CalibrationReviewStatus::Deferred => summary.deferred += 1,
+                CalibrationReviewStatus::Rejected => summary.rejected += 1,
+            }
+        }
+        summary
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalibrationSource {
     pub id: String,
     pub kind: CalibrationSourceKind,
+    #[serde(default)]
+    pub visibility: CalibrationSourceVisibility,
     pub label: String,
     pub collected_at: String,
     pub records: usize,
@@ -765,6 +894,15 @@ pub struct CalibrationSource {
     #[serde(default)]
     pub evidence_schema: Option<EvidenceSchemaVersion>,
     pub review_status: CalibrationReviewStatus,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationSourceVisibility {
+    #[default]
+    Public,
+    LocalOnly,
+    Redacted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -785,6 +923,42 @@ pub enum CalibrationScale {
     HundredK,
     Million,
     Custom,
+}
+
+fn redacted_calibration_source_id(index: usize) -> String {
+    format!("redacted-calibration-source-{index:04}")
+}
+
+fn redacted_calibration_source(source: &CalibrationSource, public_id: String) -> CalibrationSource {
+    CalibrationSource {
+        id: public_id,
+        kind: source.kind,
+        visibility: CalibrationSourceVisibility::Redacted,
+        label: "redacted local-only calibration source".to_string(),
+        collected_at: source.collected_at.clone(),
+        records: source.records,
+        scale: source.scale,
+        metadata_sources: vec!["redacted".to_string()],
+        extraction_conditions: vec![
+            "Local-only source details are withheld from public output.".to_string(),
+        ],
+        limitations: vec![
+            "Source path, body text, and source-specific notes are redacted; only counts and review status remain.".to_string(),
+        ],
+        evidence_schema: None,
+        review_status: source.review_status,
+    }
+}
+
+fn redact_source_ids(source_ids: &mut [String], source_id_map: &BTreeMap<String, String>) -> bool {
+    let mut redacted = false;
+    for source_id in source_ids {
+        if let Some(public_id) = source_id_map.get(source_id) {
+            *source_id = public_id.clone();
+            redacted = true;
+        }
+    }
+    redacted
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -871,6 +1045,383 @@ pub struct ClaimBoundary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentClaim {
+    pub id: ClaimId,
+    pub route: RouteKind,
+    pub state: RouteState,
+    pub strength: ClaimStrength,
+    pub evidence_ids: Vec<EvidenceId>,
+    pub allowed_meanings: Vec<MeaningAtom>,
+    pub boundaries: Vec<ClaimBoundaryKind>,
+}
+
+impl ContentClaim {
+    #[must_use]
+    pub fn new(
+        index: usize,
+        route: RouteKind,
+        state: RouteState,
+        strength: ClaimStrength,
+        evidence_ids: Vec<EvidenceId>,
+        allowed_meanings: Vec<MeaningAtom>,
+        boundaries: Vec<ClaimBoundaryKind>,
+    ) -> Self {
+        Self {
+            id: stable_claim_id(index),
+            route,
+            state,
+            strength,
+            evidence_ids,
+            allowed_meanings,
+            boundaries,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimStrength {
+    Observed,
+    Inferred,
+    Suggested,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeaningAtom {
+    RouteObserved,
+    RouteMissing,
+    RouteTargetPresent,
+    RouteTargetMissing,
+    ReadmeMentionsRoute,
+    StructuredFilePresent,
+    AutomationConfigured,
+    HumanReviewRequired,
+    PatchPreviewOnly,
+    CalibrationCandidate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimBoundaryKind {
+    NotPopularityGuarantee,
+    NotTrustGuarantee,
+    NotSecurityGuarantee,
+    NotQualityGuarantee,
+    NotLegalFitnessGuarantee,
+    NotLegalAdvice,
+    NotMaintenanceGuarantee,
+    NotRuntimeVerification,
+    NotPublicationReadiness,
+    NotOwnerApproval,
+    NotProductionReadiness,
+    NotAutomaticPolicyAdoption,
+    NotAutomaticWeightAdoption,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordingLintReport {
+    pub schema_version: String,
+    pub tool: String,
+    pub repo_root: String,
+    pub summary: WordingLintSummary,
+    pub findings: Vec<WordingLintFinding>,
+    pub boundary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordingLintSummary {
+    pub files_scanned: usize,
+    pub generated_surfaces: usize,
+    pub findings: usize,
+    pub suppressed_boundary_exceptions: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordingLintFinding {
+    pub id: String,
+    pub source: WordingLintSourceKind,
+    pub path: String,
+    pub line: usize,
+    pub column: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub matched: String,
+    pub rule: WordingRuleKind,
+    pub boundary: ClaimBoundaryKind,
+    pub replacement_hint: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WordingLintSourceKind {
+    RepositoryFile,
+    GeneratedReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WordingRuleKind {
+    GenericGuarantee,
+    PopularityGuarantee,
+    TrustGuarantee,
+    SecurityGuarantee,
+    QualityGuarantee,
+    LegalFitnessGuarantee,
+    LegalAdvice,
+    MaintenanceGuarantee,
+    RuntimeVerification,
+    PublicationReadiness,
+    ProductionReadiness,
+    AutomaticPolicyAdoption,
+    AutomaticWeightAdoption,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WordingBoundaryException {
+    NegatedBoundaryStatement,
+    TypedClaimBoundary,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ClaimRefIndex<'a> {
+    claims: &'a [ContentClaim],
+}
+
+impl<'a> ClaimRefIndex<'a> {
+    #[must_use]
+    pub fn new(claims: &'a [ContentClaim]) -> Self {
+        Self { claims }
+    }
+
+    #[must_use]
+    pub fn strength_count(self, strength: ClaimStrength) -> usize {
+        self.claims
+            .iter()
+            .filter(|claim| claim.strength == strength)
+            .count()
+    }
+
+    #[must_use]
+    pub fn claim_ids_for_route_state(self, route: RouteKind, state: RouteState) -> Vec<ClaimId> {
+        self.claims
+            .iter()
+            .filter(|claim| claim.route == route && claim.state == state)
+            .map(|claim| claim.id.clone())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn claim_ids_for_route(self, route: RouteKind) -> Vec<ClaimId> {
+        self.claims
+            .iter()
+            .filter(|claim| claim.route == route)
+            .map(|claim| claim.id.clone())
+            .collect()
+    }
+
+    #[must_use]
+    pub fn boundary_kinds_for_route_state(
+        self,
+        route: RouteKind,
+        state: RouteState,
+    ) -> Vec<ClaimBoundaryKind> {
+        self.claims
+            .iter()
+            .filter(|claim| claim.route == route && claim.state == state)
+            .flat_map(|claim| claim.boundaries.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    #[must_use]
+    pub fn boundary_kinds_for_route(self, route: RouteKind) -> Vec<ClaimBoundaryKind> {
+        self.claims
+            .iter()
+            .filter(|claim| claim.route == route)
+            .flat_map(|claim| claim.boundaries.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    #[must_use]
+    pub fn boundary_kinds_for_claim_ids(self, claim_ids: &[ClaimId]) -> Vec<ClaimBoundaryKind> {
+        self.claims
+            .iter()
+            .filter(|claim| claim_ids.contains(&claim.id))
+            .flat_map(|claim| claim.boundaries.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    #[must_use]
+    pub fn boundary_kinds(self) -> Vec<ClaimBoundaryKind> {
+        self.claims
+            .iter()
+            .flat_map(|claim| claim.boundaries.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RouteMeaningRule {
+    pub route: RouteKind,
+    pub state: RouteState,
+    pub indicates: &'static [MeaningAtom],
+    pub does_not_indicate: &'static [ClaimBoundaryKind],
+}
+
+pub const ROUTE_MEANING_ROUTES: &[RouteKind] = &[
+    RouteKind::Identity,
+    RouteKind::Docs,
+    RouteKind::Quickstart,
+    RouteKind::Support,
+    RouteKind::Intake,
+    RouteKind::Contributing,
+    RouteKind::Security,
+    RouteKind::Release,
+    RouteKind::Lifecycle,
+    RouteKind::Governance,
+    RouteKind::License,
+    RouteKind::Automation,
+    RouteKind::Ownership,
+    RouteKind::Hygiene,
+    RouteKind::Unknown,
+];
+
+pub const ROUTE_MEANING_STATES: &[RouteState] = &[
+    RouteState::Absent,
+    RouteState::Implicit,
+    RouteState::Weak,
+    RouteState::Routed,
+    RouteState::Structured,
+    RouteState::Verified,
+    RouteState::Inherited,
+    RouteState::Overridden,
+    RouteState::Conflicting,
+    RouteState::Overloaded,
+    RouteState::Stale,
+    RouteState::UnsafeToInvent,
+];
+
+const MEANING_ABSENT: &[MeaningAtom] = &[MeaningAtom::RouteMissing];
+const MEANING_IMPLICIT: &[MeaningAtom] = &[MeaningAtom::ReadmeMentionsRoute];
+const MEANING_WEAK: &[MeaningAtom] = &[
+    MeaningAtom::ReadmeMentionsRoute,
+    MeaningAtom::HumanReviewRequired,
+];
+const MEANING_ROUTED: &[MeaningAtom] =
+    &[MeaningAtom::ReadmeMentionsRoute, MeaningAtom::RouteObserved];
+const MEANING_STRUCTURED: &[MeaningAtom] = &[
+    MeaningAtom::StructuredFilePresent,
+    MeaningAtom::RouteObserved,
+];
+const MEANING_VERIFIED: &[MeaningAtom] =
+    &[MeaningAtom::RouteObserved, MeaningAtom::RouteTargetPresent];
+const MEANING_INHERITED: &[MeaningAtom] =
+    &[MeaningAtom::RouteObserved, MeaningAtom::HumanReviewRequired];
+const MEANING_CONFLICTING: &[MeaningAtom] =
+    &[MeaningAtom::RouteObserved, MeaningAtom::HumanReviewRequired];
+const MEANING_OVERLOADED: &[MeaningAtom] = &[
+    MeaningAtom::ReadmeMentionsRoute,
+    MeaningAtom::HumanReviewRequired,
+];
+const MEANING_STALE: &[MeaningAtom] = &[
+    MeaningAtom::ReadmeMentionsRoute,
+    MeaningAtom::RouteTargetMissing,
+    MeaningAtom::HumanReviewRequired,
+];
+const MEANING_UNSAFE_TO_INVENT: &[MeaningAtom] = &[
+    MeaningAtom::RouteMissing,
+    MeaningAtom::HumanReviewRequired,
+    MeaningAtom::PatchPreviewOnly,
+];
+
+const ROUTE_NON_CLAIM_BOUNDARIES: &[ClaimBoundaryKind] = &[
+    ClaimBoundaryKind::NotPopularityGuarantee,
+    ClaimBoundaryKind::NotTrustGuarantee,
+    ClaimBoundaryKind::NotSecurityGuarantee,
+    ClaimBoundaryKind::NotQualityGuarantee,
+    ClaimBoundaryKind::NotLegalFitnessGuarantee,
+    ClaimBoundaryKind::NotLegalAdvice,
+    ClaimBoundaryKind::NotMaintenanceGuarantee,
+    ClaimBoundaryKind::NotRuntimeVerification,
+    ClaimBoundaryKind::NotPublicationReadiness,
+    ClaimBoundaryKind::NotOwnerApproval,
+    ClaimBoundaryKind::NotProductionReadiness,
+    ClaimBoundaryKind::NotAutomaticPolicyAdoption,
+    ClaimBoundaryKind::NotAutomaticWeightAdoption,
+];
+
+#[must_use]
+pub fn route_meaning_rule(route: RouteKind, state: RouteState) -> RouteMeaningRule {
+    RouteMeaningRule {
+        route,
+        state,
+        indicates: route_state_indicates(state),
+        does_not_indicate: route_state_does_not_indicate(route, state),
+    }
+}
+
+pub fn route_meaning_rules() -> impl Iterator<Item = RouteMeaningRule> {
+    ROUTE_MEANING_ROUTES.iter().copied().flat_map(|route| {
+        ROUTE_MEANING_STATES
+            .iter()
+            .copied()
+            .map(move |state| route_meaning_rule(route, state))
+    })
+}
+
+#[must_use]
+pub fn route_state_indicates(state: RouteState) -> &'static [MeaningAtom] {
+    match state {
+        RouteState::Absent => MEANING_ABSENT,
+        RouteState::Implicit => MEANING_IMPLICIT,
+        RouteState::Weak => MEANING_WEAK,
+        RouteState::Routed => MEANING_ROUTED,
+        RouteState::Structured => MEANING_STRUCTURED,
+        RouteState::Verified => MEANING_VERIFIED,
+        RouteState::Inherited | RouteState::Overridden => MEANING_INHERITED,
+        RouteState::Conflicting => MEANING_CONFLICTING,
+        RouteState::Overloaded => MEANING_OVERLOADED,
+        RouteState::Stale => MEANING_STALE,
+        RouteState::UnsafeToInvent => MEANING_UNSAFE_TO_INVENT,
+    }
+}
+
+#[must_use]
+pub fn route_state_does_not_indicate(
+    route: RouteKind,
+    state: RouteState,
+) -> &'static [ClaimBoundaryKind] {
+    let _indicates = route_state_indicates(state);
+    match route {
+        RouteKind::Identity
+        | RouteKind::Docs
+        | RouteKind::Quickstart
+        | RouteKind::Support
+        | RouteKind::Intake
+        | RouteKind::Contributing
+        | RouteKind::Security
+        | RouteKind::Release
+        | RouteKind::Lifecycle
+        | RouteKind::Governance
+        | RouteKind::License
+        | RouteKind::Automation
+        | RouteKind::Ownership
+        | RouteKind::Hygiene
+        | RouteKind::Unknown => ROUTE_NON_CLAIM_BOUNDARIES,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexReviewContext {
     pub schema_version: String,
     pub tool: String,
@@ -878,6 +1429,12 @@ pub struct CodexReviewContext {
     pub profile: Option<ProfileKind>,
     pub audit: CodexAuditSummary,
     pub route_review: CodexRouteReviewSummary,
+    #[serde(default)]
+    pub claims: CodexClaimSummary,
+    #[serde(default)]
+    pub wording_lint: CodexWordingLintDigest,
+    #[serde(default)]
+    pub route_meanings: Vec<CodexRouteMeaningDigest>,
     pub routes: Vec<CodexRouteDigest>,
     pub co_occurrence_gaps: Vec<CodexCoOccurrenceDigest>,
     pub plan: PatchPlanSummary,
@@ -886,7 +1443,40 @@ pub struct CodexReviewContext {
     pub blocked_items: Vec<CodexBlockedDigest>,
     pub user_actions: Vec<CodexUserAction>,
     pub pr_draft: CodexPrDraft,
+    #[serde(default)]
+    pub calibration_sources: CalibrationSourceVisibilitySummary,
     pub claim_boundary: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexClaimSummary {
+    pub total: usize,
+    pub observed: usize,
+    pub inferred: usize,
+    pub suggested: usize,
+    pub blocked: usize,
+    pub routes_with_claims: usize,
+    pub evidence_linked_claims: usize,
+    pub boundary_kinds: Vec<ClaimBoundaryKind>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexWordingLintDigest {
+    pub available: bool,
+    pub files_scanned: usize,
+    pub generated_surfaces: usize,
+    pub findings: usize,
+    pub suppressed_boundary_exceptions: usize,
+    pub rules: Vec<WordingRuleKind>,
+    pub boundary_kinds: Vec<ClaimBoundaryKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexRouteMeaningDigest {
+    pub route: RouteKind,
+    pub state: RouteState,
+    pub indicates: Vec<MeaningAtom>,
+    pub does_not_indicate: Vec<ClaimBoundaryKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -895,6 +1485,8 @@ pub struct CodexAuditSummary {
     pub evidence_items: usize,
     pub evidence_ledger_records: usize,
     pub route_states: usize,
+    #[serde(default)]
+    pub content_claims: usize,
     pub strong_routes: usize,
     pub weak_routes: usize,
     pub missing_routes: usize,
@@ -931,6 +1523,10 @@ pub struct CodexRouteDigest {
     pub state: RouteState,
     pub confidence: EvidenceConfidence,
     pub evidence_ids: Vec<EvidenceId>,
+    #[serde(default)]
+    pub claim_ids: Vec<ClaimId>,
+    #[serde(default)]
+    pub boundary_kinds: Vec<ClaimBoundaryKind>,
     pub priority_score_x100: Option<u8>,
     pub gate: Option<GateKind>,
     pub reason: String,
@@ -1084,6 +1680,11 @@ pub struct PatchPlanOperation {
 #[serde(rename_all = "snake_case")]
 pub enum PatchOperationKind {
     AddReadmeRoute,
+    AddClaimBoundaryNote,
+    AddLifecycleRoute,
+    AddSupportSkeletonDraft,
+    AddSecuritySkeletonDraft,
+    MoveReadmeDetailToDocsDraft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1098,6 +1699,8 @@ pub struct PatchPlanBlockedItem {
     pub route: Option<RouteKind>,
     pub finding_id: Option<String>,
     pub pattern_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_kind: Option<PatchOperationKind>,
     pub reason: String,
     pub preflight: Vec<PatchPreflightCheck>,
 }
@@ -1190,6 +1793,11 @@ pub enum GateKind {
 #[must_use]
 pub fn stable_id(prefix: &str, index: usize) -> String {
     format!("{prefix}-{index:04}")
+}
+
+#[must_use]
+pub fn stable_claim_id(index: usize) -> ClaimId {
+    stable_id("claim", index)
 }
 
 fn default_observation_count() -> u32 {

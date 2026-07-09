@@ -16,3 +16,4 @@ Install the tool and run the first example.
 - [Security](SECURITY.md)
 - [License](LICENSE)
 - [Changelog](CHANGELOG.md)
+- [Supported versions](docs/lifecycle.md)
