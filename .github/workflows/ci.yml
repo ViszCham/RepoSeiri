@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload RepoSeiri self-audit artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: reposeiri-self-audit
           path: target/reposeiri-self-audit/*
