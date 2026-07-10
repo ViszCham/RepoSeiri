@@ -3,6 +3,10 @@ use seiri_core::ProfileKind;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod codex;
+
+use codex::{CodexQuery, CodexSchema, CodexView};
+
 #[derive(Debug, Parser)]
 #[command(name = "seiri")]
 #[command(about = "RepoSeiri repository audit CLI")]
@@ -56,19 +60,17 @@ enum Command {
         format: OutputFormat,
         #[arg(long, value_enum, default_value_t = CodexView::Context)]
         view: CodexView,
+        #[arg(long, value_enum, default_value_t = CodexSchema::CompatibilityV1)]
+        schema: CodexSchema,
+        #[arg(long, value_enum, default_value_t = CodexQuery::Summary)]
+        query: CodexQuery,
     },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum OutputFormat {
+pub(crate) enum OutputFormat {
     Json,
     Markdown,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum CodexView {
-    Context,
-    PrBody,
 }
 
 fn main() -> ExitCode {
@@ -136,21 +138,9 @@ fn run() -> Result<String, seiri_report::AuditError> {
             profile,
             format,
             view,
-        } => {
-            let context = seiri_report::codex_repository_with_profile(path, profile)?;
-            match (view, format) {
-                (CodexView::Context, OutputFormat::Json) => seiri_report::codex_to_json(&context),
-                (CodexView::Context, OutputFormat::Markdown) => {
-                    Ok(seiri_report::codex_to_markdown(&context))
-                }
-                (CodexView::PrBody, OutputFormat::Json) => {
-                    seiri_report::codex_pr_draft_to_json(&context)
-                }
-                (CodexView::PrBody, OutputFormat::Markdown) => {
-                    Ok(seiri_report::codex_pr_body_to_markdown(&context))
-                }
-            }
-        }
+            schema,
+            query,
+        } => codex::render(path, profile, format, view, schema, query),
     }
 }
 
