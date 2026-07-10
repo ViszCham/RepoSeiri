@@ -11,6 +11,7 @@ Use this skill when the user asks for RepoSeiri review context, a RepoSeiri PR d
 
 - Use the Rust core through `cargo run -p seiri-cli`; do not reimplement audit, baseline, profile, planner, calibration, or Codex context logic in the skill.
 - Prefer `seiri codex` for Codex-facing output because it bundles audit, dry-run plan, user actions, and PR draft context.
+- Keep the default compatibility-v1 context for existing consumers. Use native-v2, query, or linter views when typed canonical evidence, route assessments, patch proposals, argv, or full wording findings are needed.
 - Do not create branches, commit, push, call GitHub, open PRs, apply safe operations, or mutate repository files unless the user explicitly requests that separate action.
 - Treat all output as a draft review artifact. Do not claim popularity, trust, security, quality, or external validation guarantees.
 - If the user requests a PR body, provide the generated body and state that it is a draft.
@@ -35,10 +36,30 @@ For PR body only:
 cargo run --quiet -p seiri-cli -- codex --path . --profile common --view pr-body --format markdown
 ```
 
+For the native v2 typed context:
+
+```powershell
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --schema native-v2 --format json
+```
+
+For a bounded query view:
+
+```powershell
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --view query --query routes --format json
+```
+
+For full linter context:
+
+```powershell
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --view linter --format markdown
+```
+
+Query kinds are `summary`, `routes`, `patches`, `linter`, and `actions`. Native actions expose `program` plus `args`; they are review data and are not executed by RepoSeiri.
+
 Available profiles are:
 
 ```text
-common, library, cli, infra, docs, tutorial, research, template
+common, library, cli, infra, product, runtime, docs, tutorial, ml, research, template
 ```
 
 ## Response Shape

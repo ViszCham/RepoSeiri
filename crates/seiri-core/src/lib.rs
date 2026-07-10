@@ -1,6 +1,39 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod codex_view;
+mod document_scan;
+mod evidence_kernel;
+mod patch_proposal;
+mod route_assessment;
+
+pub use codex_view::{
+    CodexCommand, CodexCommandError, CodexLinterContext, CodexNativeAction,
+    CodexNativeAuditSummary, CodexNativeReviewContext, CodexNativeRouteSummary, CodexQueryData,
+    CodexQueryKind, CodexQueryView, CodexRoutesQuery, CodexSummaryQuery,
+    CODEX_KERNEL_SCHEMA_VERSION, CODEX_LINTER_CONTEXT_SCHEMA_VERSION, CODEX_NATIVE_SCHEMA_VERSION,
+    CODEX_QUERY_SCHEMA_VERSION,
+};
+pub use document_scan::{
+    DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan,
+    DocumentScanInvariantError,
+};
+pub use evidence_kernel::{
+    stable_evidence_id, EvidenceDraft, EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel,
+    EvidenceKernelError, EvidenceOrigin, EvidenceScanner, ParseEvidenceIdError,
+};
+pub use patch_proposal::{
+    PatchBaseDigest, PatchEditContent, PatchProposal, PatchProposalApplyError,
+    PatchProposalDecision, PatchProposalIssue, PatchProposalIssueKind, PatchProposalPreflight,
+    PatchTextEdit, PolicySlotKind, TextDocumentBase, TextEditSpan, TextEncoding, TextLineEnding,
+    UnresolvedPolicySlot, PATCH_PROPOSAL_SCHEMA_VERSION,
+};
+pub use route_assessment::{
+    LegacyRouteProjection, ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment,
+    RouteAssessmentError, RouteConflictAssessment, RouteEvidenceGroups, RouteFreshness,
+    RoutePolicyBoundary, RoutePresenceAssessment, TargetReachabilityAssessment,
+};
+
 pub const SCHEMA_VERSION: &str = "seiri.block_p.v1";
 pub const TOOL_NAME: &str = "RepoSeiri";
 pub const WORDING_LINT_SCHEMA_VERSION: &str = "seiri.wording_lint.v1";
@@ -13,10 +46,19 @@ pub struct RepoSnapshot {
     pub entry_count: usize,
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
+    #[serde(default)]
+    pub readme_document: Option<DocumentScan>,
+    // Compatibility document view retained until renderer/schema separation in Q19.
     pub readme: Option<ReadmeSummary>,
+    #[serde(default)]
+    pub evidence_kernel: EvidenceKernel,
+    // Compatibility views retained until renderer/schema separation in Q19.
     pub evidence: Vec<Evidence>,
     pub evidence_ledger: Vec<EvidenceRecord>,
     pub pattern_matches: Vec<PatternMatch>,
+    #[serde(default)]
+    pub route_assessments: Vec<RouteAssessment>,
+    // Compatibility projections retained until renderer/schema separation in Q19.
     pub route_states: Vec<RouteStateReport>,
     pub missing_route_priority: MissingRoutePriorityReport,
     #[serde(default)]
@@ -36,10 +78,13 @@ impl RepoSnapshot {
             entry_count: 0,
             files: Vec::new(),
             important_files: Vec::new(),
+            readme_document: None,
             readme: None,
+            evidence_kernel: EvidenceKernel::default(),
             evidence: Vec::new(),
             evidence_ledger: Vec::new(),
             pattern_matches: Vec::new(),
+            route_assessments: Vec::new(),
             route_states: Vec::new(),
             missing_route_priority: MissingRoutePriorityReport::empty(),
             claims: Vec::new(),
@@ -105,7 +150,7 @@ pub struct ReadmeSummary {
 }
 
 /// 1-based line/column plus byte offsets into the source document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SourceSpan {
     pub line: usize,
     pub column: usize,
@@ -116,12 +161,48 @@ pub struct SourceSpan {
 impl SourceSpan {
     #[must_use]
     pub const fn new(line: usize, column: usize, byte_start: usize, byte_end: usize) -> Self {
+        assert!(line > 0, "source span line must be 1-based");
+        assert!(column > 0, "source span column must be 1-based");
+        assert!(byte_start <= byte_end, "source span byte range is reversed");
         Self {
             line,
             column,
             byte_start,
             byte_end,
         }
+    }
+
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.line > 0 && self.column > 0 && self.byte_start <= self.byte_end
+    }
+}
+
+impl<'de> Deserialize<'de> for SourceSpan {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireSpan {
+            line: usize,
+            column: usize,
+            byte_start: usize,
+            byte_end: usize,
+        }
+
+        let wire = WireSpan::deserialize(deserializer)?;
+        if wire.line == 0 || wire.column == 0 || wire.byte_start > wire.byte_end {
+            return Err(serde::de::Error::custom(
+                "source span requires 1-based line/column and an ordered byte range",
+            ));
+        }
+        Ok(Self::new(
+            wire.line,
+            wire.column,
+            wire.byte_start,
+            wire.byte_end,
+        ))
     }
 }
 
@@ -181,11 +262,131 @@ pub struct ReadmeRouteMapSummary {
     pub absent: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateEstimateBasis {
+    FixedAggregateCalibration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct AggregateRepositoryEstimate {
+    pub estimated_repositories: u32,
+    pub denominator: u32,
+    pub rate_x1000: u16,
+    pub basis: AggregateEstimateBasis,
+}
+
+impl AggregateRepositoryEstimate {
+    #[must_use]
+    pub fn fixed(estimated_repositories: u32, denominator: u32) -> Self {
+        assert!(
+            denominator > 0,
+            "aggregate estimate denominator must be non-zero"
+        );
+        assert!(
+            estimated_repositories <= denominator,
+            "aggregate estimate cannot exceed its denominator"
+        );
+        let rate_x1000 =
+            ((u64::from(estimated_repositories) * 1000) / u64::from(denominator)) as u16;
+        Self {
+            estimated_repositories,
+            denominator,
+            rate_x1000,
+            basis: AggregateEstimateBasis::FixedAggregateCalibration,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AggregateRepositoryEstimate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireEstimate {
+            estimated_repositories: u32,
+            denominator: u32,
+            rate_x1000: u16,
+            basis: AggregateEstimateBasis,
+        }
+
+        let wire = WireEstimate::deserialize(deserializer)?;
+        if wire.denominator == 0 {
+            return Err(serde::de::Error::custom(
+                "aggregate estimate denominator must be non-zero",
+            ));
+        }
+        if wire.estimated_repositories > wire.denominator {
+            return Err(serde::de::Error::custom(
+                "aggregate estimate cannot exceed its denominator",
+            ));
+        }
+        let expected_rate =
+            ((u64::from(wire.estimated_repositories) * 1000) / u64::from(wire.denominator)) as u16;
+        if wire.rate_x1000 != expected_rate {
+            return Err(serde::de::Error::custom(
+                "aggregate estimate rate does not match its count and denominator",
+            ));
+        }
+        Ok(Self {
+            estimated_repositories: wire.estimated_repositories,
+            denominator: wire.denominator,
+            rate_x1000: wire.rate_x1000,
+            basis: wire.basis,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AggregateRepositoryEstimateCompat {
+    Typed(AggregateRepositoryEstimate),
+    LegacyCount(u32),
+}
+
+fn deserialize_optional_aggregate_estimate<'de, D>(
+    deserializer: D,
+) -> Result<Option<AggregateRepositoryEstimate>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<AggregateRepositoryEstimateCompat>::deserialize(deserializer).map(|estimate| {
+        estimate.map(|estimate| match estimate {
+            AggregateRepositoryEstimateCompat::Typed(estimate) => estimate,
+            AggregateRepositoryEstimateCompat::LegacyCount(count) => {
+                AggregateRepositoryEstimate::fixed(count, 1_000_000)
+            }
+        })
+    })
+}
+
+fn deserialize_aggregate_estimate<'de, D>(
+    deserializer: D,
+) -> Result<AggregateRepositoryEstimate, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    AggregateRepositoryEstimateCompat::deserialize(deserializer).map(|estimate| match estimate {
+        AggregateRepositoryEstimateCompat::Typed(estimate) => estimate,
+        AggregateRepositoryEstimateCompat::LegacyCount(count) => {
+            AggregateRepositoryEstimate::fixed(count, 1_000_000)
+        }
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReadmeRouteMapEntry {
     pub route: RouteKind,
+    pub assessment: ReadmeRouteAssessment,
     pub state: RouteState,
-    pub observed_gap_count: Option<u32>,
+    #[serde(
+        default,
+        alias = "observed_gap_count",
+        deserialize_with = "deserialize_optional_aggregate_estimate"
+    )]
+    pub gap_estimate: Option<AggregateRepositoryEstimate>,
     pub candidate_count: usize,
     pub heading_count: usize,
     pub link_count: usize,
@@ -196,6 +397,86 @@ pub struct ReadmeRouteMapEntry {
     pub evidence_lines: Vec<usize>,
     pub targets: Vec<ReadmeRouteTarget>,
     pub reason: String,
+}
+
+impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireEntry {
+            route: RouteKind,
+            #[serde(default)]
+            assessment: Option<ReadmeRouteAssessment>,
+            state: RouteState,
+            #[serde(
+                default,
+                alias = "observed_gap_count",
+                deserialize_with = "deserialize_optional_aggregate_estimate"
+            )]
+            gap_estimate: Option<AggregateRepositoryEstimate>,
+            candidate_count: usize,
+            heading_count: usize,
+            link_count: usize,
+            badge_count: usize,
+            target_count: usize,
+            stale_target_count: usize,
+            conflicting_target_count: usize,
+            evidence_lines: Vec<usize>,
+            targets: Vec<ReadmeRouteTarget>,
+            reason: String,
+        }
+
+        let wire = WireEntry::deserialize(deserializer)?;
+        let derived = ReadmeRouteAssessment::from_observations(
+            wire.candidate_count,
+            wire.heading_count,
+            wire.link_count,
+            wire.badge_count,
+            wire.target_count,
+            &wire.targets,
+        )
+        .map_err(serde::de::Error::custom)?;
+        let projected_state = derived.legacy_state(wire.route);
+        if let Some(assessment) = wire.assessment {
+            if assessment != derived {
+                return Err(serde::de::Error::custom(
+                    "README route assessment does not match compatibility observations",
+                ));
+            }
+            if wire.state != projected_state {
+                return Err(serde::de::Error::custom(
+                    "README route state does not match its deterministic assessment projection",
+                ));
+            }
+            if wire.stale_target_count != derived.target_reachability.repository_local_missing
+                || wire.conflicting_target_count != derived.conflict.shared_target_count
+            {
+                return Err(serde::de::Error::custom(
+                    "README route compatibility counts do not match its assessment",
+                ));
+            }
+        }
+
+        let _legacy_reason = wire.reason;
+        Ok(Self {
+            route: wire.route,
+            assessment: derived,
+            state: projected_state,
+            gap_estimate: wire.gap_estimate,
+            candidate_count: wire.candidate_count,
+            heading_count: wire.heading_count,
+            link_count: wire.link_count,
+            badge_count: wire.badge_count,
+            target_count: wire.target_count,
+            stale_target_count: derived.target_reachability.repository_local_missing,
+            conflicting_target_count: derived.conflict.shared_target_count,
+            evidence_lines: wire.evidence_lines,
+            targets: wire.targets,
+            reason: derived.legacy_reason(wire.route).to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +558,22 @@ pub enum PatternGroup {
 }
 
 impl PatternGroup {
+    pub const ALL: [Self; 13] = [
+        Self::Idn,
+        Self::Doc,
+        Self::Qst,
+        Self::Sup,
+        Self::Sec,
+        Self::Ctr,
+        Self::Int,
+        Self::Aut,
+        Self::Rel,
+        Self::Own,
+        Self::Gov,
+        Self::Hyg,
+        Self::Lif,
+    ];
+
     #[must_use]
     pub fn code(self) -> &'static str {
         match self {
@@ -313,7 +610,6 @@ pub struct Evidence {
     pub source: EvidenceSource,
 }
 
-pub type EvidenceId = String;
 pub type ClaimId = String;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -349,9 +645,19 @@ pub enum EvidenceConfidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Line-only compatibility span for the pre-Q13 evidence ledger view.
 pub struct EvidenceSpan {
     pub start_line: usize,
     pub end_line: usize,
+}
+
+impl From<SourceSpan> for EvidenceSpan {
+    fn from(span: SourceSpan) -> Self {
+        Self {
+            start_line: span.line,
+            end_line: span.line,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -374,7 +680,7 @@ pub struct PatternMatch {
     pub title: String,
     pub route: Option<RouteKind>,
     pub outcome: PatternOutcome,
-    pub evidence_ids: Vec<String>,
+    pub evidence_ids: Vec<EvidenceId>,
     pub basis: String,
 }
 
@@ -417,7 +723,7 @@ impl MissingRoutePriorityReport {
             },
             priorities: Vec::new(),
             co_occurrence_gaps: Vec::new(),
-            boundary: "Missing route priority is a deterministic routing hint from observed evidence, fixed calibration priors, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
+            boundary: "Missing route priority is a deterministic routing hint from repository observations, fixed aggregate calibration estimates, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
         }
     }
 }
@@ -442,8 +748,12 @@ pub struct MissingRoutePriority {
     pub severity: Severity,
     pub priority: ProfilePriority,
     pub priority_score_x100: u8,
-    pub observed_missing_repositories: Option<u32>,
-    pub observed_missing_x1000: Option<u16>,
+    #[serde(
+        default,
+        alias = "observed_missing_repositories",
+        deserialize_with = "deserialize_optional_aggregate_estimate"
+    )]
+    pub calibration_estimate: Option<AggregateRepositoryEstimate>,
     pub baseline_pattern_ids: Vec<String>,
     pub candidate_pattern_ids: Vec<String>,
     pub co_occurrence_gap_ids: Vec<String>,
@@ -455,7 +765,11 @@ pub struct MissingRoutePriority {
 pub struct RouteCoOccurrenceGap {
     pub id: String,
     pub title: String,
-    pub observed_repositories: u32,
+    #[serde(
+        alias = "observed_repositories",
+        deserialize_with = "deserialize_aggregate_estimate"
+    )]
+    pub calibration_estimate: AggregateRepositoryEstimate,
     pub support_x1000: u16,
     pub gate: GateKind,
     pub priority: ProfilePriority,
@@ -513,7 +827,7 @@ pub struct BaselineRuleResult {
     pub requirement: BaselineRequirement,
     pub status: BaselineStatus,
     pub severity: Severity,
-    pub evidence_ids: Vec<String>,
+    pub evidence_ids: Vec<EvidenceId>,
     pub finding_id: Option<String>,
     pub message: String,
 }
@@ -577,6 +891,22 @@ impl std::fmt::Display for ProfileKind {
     }
 }
 
+impl ProfileKind {
+    pub const ALL: [Self; 11] = [
+        Self::Common,
+        Self::Library,
+        Self::Cli,
+        Self::Infra,
+        Self::Product,
+        Self::Runtime,
+        Self::Docs,
+        Self::Tutorial,
+        Self::Ml,
+        Self::Research,
+        Self::Template,
+    ];
+}
+
 impl std::str::FromStr for ProfileKind {
     type Err = ProfileParseError;
 
@@ -638,12 +968,30 @@ pub struct ProfileBranch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileScoreView {
+    #[serde(default)]
+    pub evidence_basis: ProfileEvidenceBasis,
+    #[serde(default)]
+    pub weight_basis: ProfileWeightBasis,
     pub earned_weight: u32,
     pub total_weight: u32,
     pub score_x100: u8,
     pub present_rules: usize,
     pub missing_rules: usize,
     pub note: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileEvidenceBasis {
+    #[default]
+    RepositoryEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileWeightBasis {
+    #[default]
+    StaticProfileRegistry,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -656,7 +1004,7 @@ pub struct ProfileRuleResult {
     pub status: BaselineStatus,
     pub weight: u32,
     pub priority: ProfilePriority,
-    pub evidence_ids: Vec<String>,
+    pub evidence_ids: Vec<EvidenceId>,
     pub finding_id: Option<String>,
     pub reason: String,
 }
@@ -770,6 +1118,8 @@ pub struct CalibrationRun {
     pub profile_branches: Vec<ProfileBranch>,
     pub pending_patterns: Vec<PendingPatternCandidate>,
     pub weight_suggestions: Vec<WeightSuggestion>,
+    #[serde(default)]
+    pub resource_trace: CalibrationResourceTrace,
     pub claim_boundary: ClaimBoundary,
 }
 
@@ -800,6 +1150,7 @@ impl CalibrationRun {
 
         if !source_id_map.is_empty() {
             public_run.dataset_id = "redacted-calibration-dataset".to_string();
+            public_run.resource_trace.replay_digest = None;
         }
         public_run.redact_source_references(&source_id_map);
         public_run
@@ -826,6 +1177,99 @@ impl CalibrationRun {
             redact_source_ids(&mut suggestion.source_ids, source_id_map);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationAggregationMode {
+    #[default]
+    MaterializedCompatibility,
+    StreamingJsonl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationRecordIdentity {
+    #[default]
+    RepositoryIdDeduplicated,
+    OneNonemptyJsonlLinePerRepository,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalibrationReplayDigest(u64);
+
+impl CalibrationReplayDigest {
+    #[must_use]
+    pub const fn from_u64(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for CalibrationReplayDigest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "fnv1a64:{:016x}", self.0)
+    }
+}
+
+impl Serialize for CalibrationReplayDigest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for CalibrationReplayDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = String::deserialize(deserializer)?;
+        let hex = wire
+            .strip_prefix("fnv1a64:")
+            .filter(|hex| hex.len() == 16)
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "calibration replay digest must use fnv1a64 plus 16 lowercase hex digits",
+                )
+            })?;
+        if !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(serde::de::Error::custom(
+                "calibration replay digest contains invalid hex digits",
+            ));
+        }
+        let value = u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)?;
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CalibrationResourceTrace {
+    pub aggregation_mode: CalibrationAggregationMode,
+    pub record_identity: CalibrationRecordIdentity,
+    pub records_seen: usize,
+    pub max_buffered_line_bytes: usize,
+    pub max_patterns_per_record: usize,
+    pub known_pattern_slots: usize,
+    pub route_slots: usize,
+    pub profile_slots: usize,
+    pub co_occurrence_slots: usize,
+    pub pending_pattern_slots: usize,
+    pub metadata_source_slots: usize,
+    pub retained_records: usize,
+    pub retained_repository_id_entries: usize,
+    pub per_pattern_repository_sets: usize,
+    #[serde(default)]
+    pub replay_digest: Option<CalibrationReplayDigest>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -899,8 +1343,8 @@ pub struct CalibrationSource {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CalibrationSourceVisibility {
-    #[default]
     Public,
+    #[default]
     LocalOnly,
     Redacted,
 }
@@ -1092,8 +1536,10 @@ pub enum ClaimStrength {
 pub enum MeaningAtom {
     RouteObserved,
     RouteMissing,
-    RouteTargetPresent,
-    RouteTargetMissing,
+    #[serde(alias = "route_target_present")]
+    RepositoryLocalTargetPresent,
+    #[serde(alias = "route_target_missing")]
+    RepositoryLocalTargetMissing,
     ReadmeMentionsRoute,
     StructuredFilePresent,
     AutomationConfigured,
@@ -1323,8 +1769,10 @@ const MEANING_STRUCTURED: &[MeaningAtom] = &[
     MeaningAtom::StructuredFilePresent,
     MeaningAtom::RouteObserved,
 ];
-const MEANING_VERIFIED: &[MeaningAtom] =
-    &[MeaningAtom::RouteObserved, MeaningAtom::RouteTargetPresent];
+const MEANING_VERIFIED: &[MeaningAtom] = &[
+    MeaningAtom::RouteObserved,
+    MeaningAtom::RepositoryLocalTargetPresent,
+];
 const MEANING_INHERITED: &[MeaningAtom] =
     &[MeaningAtom::RouteObserved, MeaningAtom::HumanReviewRequired];
 const MEANING_CONFLICTING: &[MeaningAtom] =
@@ -1335,7 +1783,7 @@ const MEANING_OVERLOADED: &[MeaningAtom] = &[
 ];
 const MEANING_STALE: &[MeaningAtom] = &[
     MeaningAtom::ReadmeMentionsRoute,
-    MeaningAtom::RouteTargetMissing,
+    MeaningAtom::RepositoryLocalTargetMissing,
     MeaningAtom::HumanReviewRequired,
 ];
 const MEANING_UNSAFE_TO_INVENT: &[MeaningAtom] = &[
@@ -1482,8 +1930,16 @@ pub struct CodexRouteMeaningDigest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexAuditSummary {
     pub entries_scanned: usize,
+    #[serde(default)]
+    pub document_events: usize,
+    #[serde(default)]
+    pub document_diagnostics: usize,
+    #[serde(default)]
+    pub evidence_kernel_facts: usize,
     pub evidence_items: usize,
     pub evidence_ledger_records: usize,
+    #[serde(default)]
+    pub route_assessments: usize,
     pub route_states: usize,
     #[serde(default)]
     pub content_claims: usize,
@@ -1672,6 +2128,7 @@ pub struct PatchPlanOperation {
     pub requires_confirmation: bool,
     pub rationale: String,
     pub planned_change: String,
+    pub proposal: PatchProposal,
     pub preflight: Vec<PatchPreflightCheck>,
     pub diff_preview: Vec<String>,
 }
@@ -1701,6 +2158,8 @@ pub struct PatchPlanBlockedItem {
     pub pattern_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_kind: Option<PatchOperationKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<PatchProposal>,
     pub reason: String,
     pub preflight: Vec<PatchPreflightCheck>,
 }
@@ -1739,6 +2198,12 @@ pub enum PatchPreflightCheckKind {
     ReadmeRouteAbsent,
     ExistingTarget,
     NoPolicyContent,
+    BaseDigestBound,
+    EncodingKnown,
+    LineEndingBound,
+    NonOverlappingSpans,
+    PolicySlotsResolved,
+    ProposalReady,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1761,7 +2226,7 @@ pub struct Finding {
     pub severity: Severity,
     pub title: String,
     pub message: String,
-    pub evidence_ids: Vec<String>,
+    pub evidence_ids: Vec<EvidenceId>,
     pub recommendation: Option<Recommendation>,
 }
 

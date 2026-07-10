@@ -1,8 +1,16 @@
+mod streaming;
+
+pub use streaming::{
+    calibrate_jsonl_path, calibrate_jsonl_reader, calibrate_jsonl_reader_with_limits,
+    StreamingCalibrationLimits, StreamingCalibrationMetadata, StreamingLimitKind,
+};
+
 use seiri_core::{
-    stable_id, BaselineRequirement, BenchmarkDataset, BenchmarkRepoRecord, CalibrationConfidence,
-    CalibrationReviewStatus, CalibrationRun, CalibrationScale, CalibrationSource,
-    CalibrationSourceKind, CalibrationSourceVisibility, CalibrationSummary, ClaimBoundary,
-    EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence, PatternStats,
+    stable_id, BaselineRequirement, BenchmarkDataset, BenchmarkRepoRecord,
+    CalibrationAggregationMode, CalibrationConfidence, CalibrationRecordIdentity,
+    CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun, CalibrationScale,
+    CalibrationSource, CalibrationSourceKind, CalibrationSourceVisibility, CalibrationSummary,
+    ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence, PatternStats,
     PendingPatternCandidate, ProfileBranch, ProfileKind, ProfilePatternCorrelation,
     ProfilePriority, RouteKind, RouteRequirement, WeightSuggestion, SCHEMA_VERSION,
 };
@@ -16,7 +24,26 @@ use std::path::Path;
 pub enum CalibrationError {
     Io(std::io::Error),
     Json(serde_json::Error),
-    Jsonl { line: usize, message: String },
+    Jsonl {
+        line: usize,
+        message: String,
+    },
+    InvalidUtf8 {
+        line: usize,
+    },
+    StreamingLimitExceeded {
+        line: usize,
+        resource: StreamingLimitKind,
+        limit: usize,
+        actual: usize,
+    },
+    CounterOverflow {
+        line: usize,
+        counter: &'static str,
+    },
+    PatternCatalogTooLarge {
+        patterns: usize,
+    },
 }
 
 impl Display for CalibrationError {
@@ -27,6 +54,26 @@ impl Display for CalibrationError {
             Self::Jsonl { line, message } => {
                 write!(f, "invalid JSONL record at line {line}: {message}")
             }
+            Self::InvalidUtf8 { line } => {
+                write!(f, "JSONL record at line {line} is not valid UTF-8")
+            }
+            Self::StreamingLimitExceeded {
+                line,
+                resource,
+                limit,
+                actual,
+            } => write!(
+                f,
+                "streaming calibration {resource} limit exceeded at line {line}: limit {limit}, actual {actual}"
+            ),
+            Self::CounterOverflow { line, counter } => {
+                write!(f, "streaming calibration counter '{counter}' overflowed at line {line}")
+            }
+            Self::PatternCatalogTooLarge { patterns } => write!(
+                f,
+                "pattern catalog has {patterns} entries; streaming slots support at most {}",
+                u16::MAX
+            ),
         }
     }
 }
@@ -37,6 +84,10 @@ impl std::error::Error for CalibrationError {
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Jsonl { .. } => None,
+            Self::InvalidUtf8 { .. }
+            | Self::StreamingLimitExceeded { .. }
+            | Self::CounterOverflow { .. }
+            | Self::PatternCatalogTooLarge { .. } => None,
         }
     }
 }
@@ -154,6 +205,15 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
         add_co_occurrences(&mut stats, &record.repo_id, &repo_patterns);
     }
 
+    let resource_trace = materialized_resource_trace(
+        dataset,
+        &stats,
+        &routes,
+        &pending,
+        &profile_totals,
+        &sources,
+    );
+
     let pattern_stats = build_pattern_stats(
         &stats,
         dataset.records.len(),
@@ -191,7 +251,82 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
         profile_branches,
         pending_patterns,
         weight_suggestions,
+        resource_trace,
         claim_boundary: default_claim_boundary(),
+    }
+}
+
+fn materialized_resource_trace(
+    dataset: &BenchmarkDataset,
+    stats: &BTreeMap<String, StatAccumulator>,
+    routes: &BTreeMap<RouteKind, RouteAccumulator>,
+    pending: &BTreeMap<String, PendingAccumulator>,
+    profile_totals: &BTreeMap<ProfileKind, usize>,
+    sources: &[CalibrationSource],
+) -> CalibrationResourceTrace {
+    let stat_repository_entries = stats
+        .values()
+        .map(|stat| {
+            stat.repositories.len()
+                + stat
+                    .profile_repositories
+                    .values()
+                    .map(BTreeSet::len)
+                    .sum::<usize>()
+                + stat
+                    .co_repositories
+                    .values()
+                    .map(BTreeSet::len)
+                    .sum::<usize>()
+        })
+        .sum::<usize>();
+    let route_repository_entries = routes
+        .values()
+        .map(|route| route.repositories.len())
+        .sum::<usize>();
+    let pending_repository_entries = pending
+        .values()
+        .map(|candidate| candidate.repositories.len())
+        .sum::<usize>();
+    let per_pattern_repository_sets = stats
+        .values()
+        .map(|stat| 1 + stat.profile_repositories.len() + stat.co_repositories.len())
+        .sum::<usize>()
+        + routes.len()
+        + pending.len();
+    let metadata_source_slots = sources
+        .iter()
+        .flat_map(|source| source.metadata_sources.iter())
+        .collect::<BTreeSet<_>>()
+        .len();
+
+    CalibrationResourceTrace {
+        aggregation_mode: CalibrationAggregationMode::MaterializedCompatibility,
+        record_identity: CalibrationRecordIdentity::RepositoryIdDeduplicated,
+        records_seen: dataset.records.len(),
+        max_buffered_line_bytes: 0,
+        max_patterns_per_record: dataset
+            .records
+            .iter()
+            .map(|record| record.observed_patterns.len())
+            .max()
+            .unwrap_or(0),
+        known_pattern_slots: stats.len(),
+        route_slots: routes.len(),
+        profile_slots: profile_totals.len()
+            + stats
+                .values()
+                .map(|stat| stat.profile_repositories.len())
+                .sum::<usize>(),
+        co_occurrence_slots: stats.values().map(|stat| stat.co_repositories.len()).sum(),
+        pending_pattern_slots: pending.len(),
+        metadata_source_slots,
+        retained_records: dataset.records.len(),
+        retained_repository_id_entries: stat_repository_entries
+            + route_repository_entries
+            + pending_repository_entries,
+        per_pattern_repository_sets,
+        replay_digest: None,
     }
 }
 
@@ -231,7 +366,7 @@ fn dataset_from_records(path: &Path, records: Vec<BenchmarkRepoRecord>) -> Bench
         calibration_sources: vec![CalibrationSource {
             id: stable_id("calibration-source", 1),
             kind: CalibrationSourceKind::JsonlRecords,
-            visibility: CalibrationSourceVisibility::Public,
+            visibility: CalibrationSourceVisibility::LocalOnly,
             label: dataset_id.clone(),
             collected_at: "unknown".to_string(),
             records: records.len(),
@@ -276,9 +411,13 @@ fn pattern_route_map() -> BTreeMap<String, RouteKind> {
 
 fn current_weight_map() -> BTreeMap<(ProfileKind, String), u32> {
     let mut map = BTreeMap::new();
-    for profile in all_profiles() {
-        for rule in seiri_profiles::profile_rules(profile) {
-            map.insert((profile, rule.pattern_id.to_string()), rule.weight);
+    let registry = seiri_profiles::common_profile_registry();
+    for definition in registry.definitions() {
+        for rule in &definition.rules {
+            map.insert(
+                (definition.profile, rule.pattern_id.to_string()),
+                rule.weight.get(),
+            );
         }
     }
     map
@@ -309,7 +448,7 @@ fn calibration_sources(dataset: &BenchmarkDataset) -> Vec<CalibrationSource> {
     vec![CalibrationSource {
         id: stable_id("calibration-source", 1),
         kind: inferred_source_kind(dataset),
-        visibility: CalibrationSourceVisibility::Public,
+        visibility: CalibrationSourceVisibility::LocalOnly,
         label: dataset.name.clone(),
         collected_at: dataset.collected_at.clone(),
         records: dataset.records.len(),
@@ -718,22 +857,6 @@ fn priority_from_weight(weight: u32) -> ProfilePriority {
         7..=14 => ProfilePriority::Normal,
         _ => ProfilePriority::Low,
     }
-}
-
-fn all_profiles() -> [ProfileKind; 11] {
-    [
-        ProfileKind::Common,
-        ProfileKind::Library,
-        ProfileKind::Cli,
-        ProfileKind::Infra,
-        ProfileKind::Product,
-        ProfileKind::Runtime,
-        ProfileKind::Docs,
-        ProfileKind::Tutorial,
-        ProfileKind::Ml,
-        ProfileKind::Research,
-        ProfileKind::Template,
-    ]
 }
 
 fn default_claim_boundary() -> ClaimBoundary {

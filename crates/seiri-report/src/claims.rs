@@ -78,11 +78,7 @@ fn route_state_strength(state: RouteState) -> ClaimStrength {
 }
 
 fn normalized_evidence_ids(ids: &[EvidenceId]) -> Vec<EvidenceId> {
-    let mut evidence_ids = ids
-        .iter()
-        .filter(|id| !id.trim().is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut evidence_ids = ids.to_vec();
     evidence_ids.sort();
     evidence_ids.dedup();
     evidence_ids

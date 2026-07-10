@@ -1,4 +1,4 @@
-use seiri_core::{BaselineStatus, ProfileKind};
+use seiri_core::{BaselineStatus, ProfileEvidenceBasis, ProfileKind, ProfileWeightBasis};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -46,6 +46,14 @@ fn profile_score_view_is_deterministic_and_bounded() {
     assert!(profile.score.score_x100 <= 100);
     assert!(profile.score.total_weight > 0);
     assert!(profile.score.earned_weight <= profile.score.total_weight);
+    assert_eq!(
+        profile.score.evidence_basis,
+        ProfileEvidenceBasis::RepositoryEvidence
+    );
+    assert_eq!(
+        profile.score.weight_basis,
+        ProfileWeightBasis::StaticProfileRegistry
+    );
     assert!(profile
         .rules
         .iter()
@@ -54,7 +62,7 @@ fn profile_score_view_is_deterministic_and_bounded() {
         .rules
         .iter()
         .any(|rule| rule.status == BaselineStatus::Missing));
-    assert!(profile.score.note.contains("not a popularity"));
+    assert!(profile.score.note.contains("Calibration estimates remain"));
     assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Docs);
     assert_eq!(profile.branches.len(), 9);
     assert!(profile.branch_summary.top_profile.is_some());

@@ -1,15 +1,21 @@
+mod registry;
+mod weight;
+
+pub use registry::{ProfileDefinition, ProfileRegistry, ProfileRegistryError};
+pub use weight::StaticProfileWeight;
+
 use seiri_core::{
     BaselineReport, BaselineRuleResult, BaselineStatus, FileKind, Finding, GateKind,
-    ImportantFileKind, ProfileBranch, ProfileBranchSummary, ProfileKind, ProfilePriority,
-    ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, RepoSnapshot,
-    RouteKind, Severity,
+    ImportantFileKind, ProfileBranch, ProfileBranchSummary, ProfileEvidenceBasis, ProfileKind,
+    ProfilePriority, ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView,
+    ProfileWeightBasis, RepoSnapshot, RouteKind, Severity,
 };
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileRuleDefinition {
     pub pattern_id: &'static str,
-    pub weight: u32,
+    pub weight: StaticProfileWeight,
     pub priority: ProfilePriority,
     pub reason: &'static str,
 }
@@ -17,8 +23,10 @@ pub struct ProfileRuleDefinition {
 #[must_use]
 pub fn evaluate_profile(snapshot: &RepoSnapshot, profile: ProfileKind) -> Option<ProfileReport> {
     let baseline = snapshot.baseline.as_ref()?;
-    let mut report = evaluate_profile_from_parts(baseline, &snapshot.findings, profile);
-    let branches = profile_branches(Some(snapshot), baseline, profile);
+    let registry = common_profile_registry();
+    let mut report =
+        evaluate_profile_from_registry(baseline, &snapshot.findings, profile, &registry);
+    let branches = profile_branches(Some(snapshot), baseline, profile, &registry);
     report.branch_summary = profile_branch_summary(profile, &branches);
     report.branches = branches;
     Some(report)
@@ -30,6 +38,16 @@ pub fn evaluate_profile_from_parts(
     findings: &[Finding],
     profile: ProfileKind,
 ) -> ProfileReport {
+    let registry = common_profile_registry();
+    evaluate_profile_from_registry(baseline, findings, profile, &registry)
+}
+
+fn evaluate_profile_from_registry(
+    baseline: &BaselineReport,
+    findings: &[Finding],
+    profile: ProfileKind,
+    registry: &ProfileRegistry,
+) -> ProfileReport {
     let baseline_by_pattern = baseline
         .rules
         .iter()
@@ -40,21 +58,25 @@ pub fn evaluate_profile_from_parts(
         .map(|finding| (finding.id.as_str(), finding))
         .collect::<BTreeMap<_, _>>();
 
+    let profile_definition = registry
+        .definition(profile)
+        .expect("complete profile registry must contain every profile");
     let mut rules = Vec::new();
-    for (index, definition) in profile_rules(profile).iter().enumerate() {
+    let mut scoring_inputs = Vec::new();
+    for (index, definition) in profile_definition.rules.iter().enumerate() {
         let baseline_rule = baseline_by_pattern.get(definition.pattern_id).copied();
-        rules.push(to_profile_rule_result(
-            index + 1,
-            profile,
-            definition,
-            baseline_rule,
-        ));
+        let result = to_profile_rule_result(index + 1, profile, definition, baseline_rule);
+        scoring_inputs.push(ProfileScoringInput {
+            status: result.status,
+            weight: definition.weight,
+        });
+        rules.push(result);
     }
 
-    let score = score_view(&rules);
+    let score = score_view(&scoring_inputs);
     let recommendations = ordered_recommendations(&rules, &findings_by_id);
 
-    let branches = profile_branches(None, baseline, profile);
+    let branches = profile_branches(None, baseline, profile, registry);
 
     ProfileReport {
         profile,
@@ -68,6 +90,27 @@ pub fn evaluate_profile_from_parts(
 
 #[must_use]
 pub fn profile_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
+    common_profile_registry()
+        .definition(profile)
+        .expect("complete profile registry must contain every profile")
+        .rules
+        .clone()
+}
+
+#[must_use]
+pub fn common_profile_registry() -> ProfileRegistry {
+    let definitions = ProfileKind::ALL
+        .into_iter()
+        .map(|profile| ProfileDefinition {
+            profile,
+            rules: catalog_rules(profile),
+        })
+        .collect();
+    ProfileRegistry::try_complete(definitions)
+        .expect("built-in profile registry must satisfy Q16 completeness invariants")
+}
+
+fn catalog_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
     match profile {
         ProfileKind::Common => vec![
             rule(
@@ -651,6 +694,7 @@ fn profile_branches(
     snapshot: Option<&RepoSnapshot>,
     baseline: &BaselineReport,
     selected_profile: ProfileKind,
+    registry: &ProfileRegistry,
 ) -> Vec<ProfileBranch> {
     let baseline_by_pattern = baseline
         .rules
@@ -661,19 +705,22 @@ fn profile_branches(
     let mut branches = branch_profiles()
         .iter()
         .map(|(profile, prior_x1000)| {
-            let rules = profile_rules(*profile)
+            let definition = registry
+                .definition(*profile)
+                .expect("complete profile registry must contain branch profiles");
+            let scoring_inputs = definition
+                .rules
                 .iter()
-                .enumerate()
-                .map(|(index, definition)| {
-                    to_profile_rule_result(
-                        index + 1,
-                        *profile,
-                        definition,
-                        baseline_by_pattern.get(definition.pattern_id).copied(),
-                    )
+                .map(|definition| ProfileScoringInput {
+                    status: baseline_by_pattern
+                        .get(definition.pattern_id)
+                        .map_or(BaselineStatus::Missing, |rule| {
+                            evidence_backed_status(rule)
+                        }),
+                    weight: definition.weight,
                 })
                 .collect::<Vec<_>>();
-            let score = score_view(&rules);
+            let score = score_view(&scoring_inputs);
             let (evidence_score_x100, matched_signals, missing_signals) =
                 profile_signal_score(snapshot, baseline, *profile);
             let confidence_x100 =
@@ -1093,10 +1140,18 @@ fn has_route(snapshot: Option<&RepoSnapshot>, baseline: &BaselineReport, route: 
                     state.state,
                     seiri_core::RouteState::Absent | seiri_core::RouteState::UnsafeToInvent
                 )
-        }) || snapshot
-            .evidence_ledger
-            .iter()
-            .any(|record| record.route == Some(route))
+        }) || if snapshot.evidence_kernel.is_empty() {
+            snapshot
+                .evidence_ledger
+                .iter()
+                .any(|record| record.route == Some(route))
+        } else {
+            snapshot
+                .evidence_kernel
+                .facts()
+                .iter()
+                .any(|fact| fact.route == Some(route))
+        }
     })
 }
 
@@ -1142,13 +1197,14 @@ fn contains_signal(value: &str, needles: &[&str]) -> bool {
 
 fn rule(
     pattern_id: &'static str,
-    weight: u32,
+    weight: u16,
     priority: ProfilePriority,
     reason: &'static str,
 ) -> ProfileRuleDefinition {
     ProfileRuleDefinition {
         pattern_id,
-        weight,
+        weight: StaticProfileWeight::from_registry_value(weight)
+            .expect("built-in profile weights must be non-zero"),
         priority,
         reason,
     }
@@ -1167,8 +1223,8 @@ fn to_profile_rule_result(
             pattern_id: definition.pattern_id.to_string(),
             title: rule.title.clone(),
             route: rule.route,
-            status: rule.status,
-            weight: definition.weight,
+            status: evidence_backed_status(rule),
+            weight: definition.weight.get(),
             priority: definition.priority,
             evidence_ids: rule.evidence_ids.clone(),
             finding_id: rule.finding_id.clone(),
@@ -1181,7 +1237,7 @@ fn to_profile_rule_result(
             title: "Unknown baseline pattern".to_string(),
             route: None,
             status: BaselineStatus::Missing,
-            weight: definition.weight,
+            weight: definition.weight.get(),
             priority: definition.priority,
             evidence_ids: Vec::new(),
             finding_id: None,
@@ -1190,12 +1246,26 @@ fn to_profile_rule_result(
     }
 }
 
-fn score_view(rules: &[ProfileRuleResult]) -> ProfileScoreView {
-    let total_weight = rules.iter().map(|rule| rule.weight).sum::<u32>();
-    let earned_weight = rules
+fn evidence_backed_status(rule: &BaselineRuleResult) -> BaselineStatus {
+    if rule.status == BaselineStatus::Present && !rule.evidence_ids.is_empty() {
+        BaselineStatus::Present
+    } else {
+        BaselineStatus::Missing
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProfileScoringInput {
+    status: BaselineStatus,
+    weight: StaticProfileWeight,
+}
+
+fn score_view(inputs: &[ProfileScoringInput]) -> ProfileScoreView {
+    let total_weight = inputs.iter().map(|input| input.weight.get()).sum::<u32>();
+    let earned_weight = inputs
         .iter()
-        .filter(|rule| rule.status == BaselineStatus::Present)
-        .map(|rule| rule.weight)
+        .filter(|input| input.status == BaselineStatus::Present)
+        .map(|input| input.weight.get())
         .sum::<u32>();
     let score_x100 = earned_weight
         .saturating_mul(100)
@@ -1204,18 +1274,20 @@ fn score_view(rules: &[ProfileRuleResult]) -> ProfileScoreView {
         .min(100) as u8;
 
     ProfileScoreView {
+        evidence_basis: ProfileEvidenceBasis::RepositoryEvidence,
+        weight_basis: ProfileWeightBasis::StaticProfileRegistry,
         earned_weight,
         total_weight,
         score_x100,
-        present_rules: rules
+        present_rules: inputs
             .iter()
-            .filter(|rule| rule.status == BaselineStatus::Present)
+            .filter(|input| input.status == BaselineStatus::Present)
             .count(),
-        missing_rules: rules
+        missing_rules: inputs
             .iter()
-            .filter(|rule| rule.status == BaselineStatus::Missing)
+            .filter(|input| input.status == BaselineStatus::Missing)
             .count(),
-        note: "Score view is a deterministic priority view over observed baseline patterns, not a popularity, trust, security, or quality guarantee.".to_string(),
+        note: "Score view uses repository evidence and static profile-registry weights only. Calibration estimates remain review-only suggestions until separately adopted; this is not a popularity, trust, security, or quality guarantee.".to_string(),
     }
 }
 

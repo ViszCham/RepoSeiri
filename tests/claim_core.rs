@@ -1,6 +1,6 @@
 use seiri_core::{
-    stable_claim_id, ClaimBoundary, ClaimBoundaryKind, ClaimRefIndex, ClaimStrength, ContentClaim,
-    MeaningAtom, RouteKind, RouteState,
+    stable_claim_id, stable_evidence_id, ClaimBoundary, ClaimBoundaryKind, ClaimRefIndex,
+    ClaimStrength, ContentClaim, MeaningAtom, RouteKind, RouteState,
 };
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ fn q1_content_claim_core_schema_roundtrips_through_json() {
         RouteKind::Security,
         RouteState::Verified,
         ClaimStrength::Observed,
-        vec!["evrec-0001".to_string(), "evrec-0002".to_string()],
+        vec![stable_evidence_id(1), stable_evidence_id(2)],
         vec![
             MeaningAtom::RouteObserved,
             MeaningAtom::StructuredFilePresent,
@@ -94,7 +94,7 @@ fn q5_claim_ref_index_groups_ids_and_deduplicates_boundaries() {
             RouteKind::Security,
             RouteState::Verified,
             ClaimStrength::Observed,
-            vec!["evrec-0001".to_string()],
+            vec![stable_evidence_id(1)],
             vec![MeaningAtom::RouteObserved],
             vec![
                 ClaimBoundaryKind::NotSecurityGuarantee,
@@ -106,7 +106,7 @@ fn q5_claim_ref_index_groups_ids_and_deduplicates_boundaries() {
             RouteKind::Security,
             RouteState::Verified,
             ClaimStrength::Suggested,
-            vec!["evrec-0002".to_string()],
+            vec![stable_evidence_id(2)],
             vec![MeaningAtom::CalibrationCandidate],
             vec![
                 ClaimBoundaryKind::NotQualityGuarantee,

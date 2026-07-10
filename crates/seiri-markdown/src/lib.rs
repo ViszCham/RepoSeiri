@@ -1,27 +1,98 @@
 use seiri_core::{
-    MarkdownBadge, MarkdownHeading, MarkdownLink, ReadmeSummary, RouteCandidate, RouteKind,
-    RouteSource, SourceSpan,
+    DocumentEvent, DocumentScan, DocumentScanInvariantError, ReadmeSummary, RouteKind, SourceSpan,
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod events;
 mod route_map;
 
 use route_map::build_route_map;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentScanOptions {
+    pub max_source_bytes: usize,
+    pub max_events: usize,
+    pub max_diagnostics: usize,
+}
+
+impl Default for DocumentScanOptions {
+    fn default() -> Self {
+        Self {
+            max_source_bytes: 2 * 1024 * 1024,
+            max_events: 65_536,
+            max_diagnostics: 1_024,
+        }
+    }
+}
+
+impl DocumentScanOptions {
+    fn compatibility(source_bytes: usize) -> Self {
+        Self {
+            max_source_bytes: source_bytes,
+            max_events: source_bytes.saturating_mul(2).saturating_add(1),
+            max_diagnostics: source_bytes.saturating_add(1),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum MarkdownError {
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
+    InvalidUtf8 {
+        path: PathBuf,
+        valid_up_to: usize,
+    },
+    SourceLimitExceeded {
+        path: String,
+        bytes: usize,
+        limit: usize,
+    },
+    EventLimitExceeded {
+        path: String,
+        limit: usize,
+    },
+    DiagnosticLimitExceeded {
+        path: String,
+        limit: usize,
+    },
+    Invariant(DocumentScanInvariantError),
 }
 
 impl Display for MarkdownError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io { path, source } => {
-                write!(f, "failed to read markdown {}: {source}", path.display())
+                write!(
+                    formatter,
+                    "failed to read markdown {}: {source}",
+                    path.display()
+                )
             }
+            Self::InvalidUtf8 { path, valid_up_to } => write!(
+                formatter,
+                "markdown {} is not valid UTF-8 after byte {valid_up_to}",
+                path.display()
+            ),
+            Self::SourceLimitExceeded { path, bytes, limit } => write!(
+                formatter,
+                "markdown {path} has {bytes} bytes and exceeds source limit {limit}"
+            ),
+            Self::EventLimitExceeded { path, limit } => {
+                write!(formatter, "markdown {path} exceeds event limit {limit}")
+            }
+            Self::DiagnosticLimitExceeded { path, limit } => {
+                write!(
+                    formatter,
+                    "markdown {path} exceeds diagnostic limit {limit}"
+                )
+            }
+            Self::Invariant(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -30,95 +101,92 @@ impl std::error::Error for MarkdownError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
+            Self::Invariant(error) => Some(error),
+            Self::InvalidUtf8 { .. }
+            | Self::SourceLimitExceeded { .. }
+            | Self::EventLimitExceeded { .. }
+            | Self::DiagnosticLimitExceeded { .. } => None,
         }
     }
 }
 
-pub fn analyze_readme(repo_root: impl AsRef<Path>) -> Result<Option<ReadmeSummary>, MarkdownError> {
+pub fn scan_readme_document(
+    repo_root: impl AsRef<Path>,
+) -> Result<Option<DocumentScan>, MarkdownError> {
+    scan_readme_document_with_options(repo_root, &DocumentScanOptions::default())
+}
+
+pub fn scan_readme_document_with_options(
+    repo_root: impl AsRef<Path>,
+    options: &DocumentScanOptions,
+) -> Result<Option<DocumentScan>, MarkdownError> {
     let repo_root = repo_root.as_ref();
     let Some(readme_path) = find_readme(repo_root) else {
         return Ok(None);
     };
-    let text = fs::read_to_string(&readme_path).map_err(|source| MarkdownError::Io {
+    let bytes = fs::read(&readme_path).map_err(|source| MarkdownError::Io {
         path: readme_path.clone(),
         source,
     })?;
-    Ok(Some(parse_readme_with_context(
-        normalize_relative_path(repo_root, &readme_path),
-        &text,
-        Some(repo_root),
-    )))
+    let relative_path = normalize_relative_path(repo_root, &readme_path);
+    if bytes.len() > options.max_source_bytes {
+        return Err(MarkdownError::SourceLimitExceeded {
+            path: relative_path,
+            bytes: bytes.len(),
+            limit: options.max_source_bytes,
+        });
+    }
+    let text = String::from_utf8(bytes).map_err(|error| MarkdownError::InvalidUtf8 {
+        path: readme_path,
+        valid_up_to: error.utf8_error().valid_up_to(),
+    })?;
+    events::scan_text(relative_path, &text, options).map(Some)
+}
+
+pub fn scan_document(path: impl Into<String>, text: &str) -> Result<DocumentScan, MarkdownError> {
+    scan_document_with_options(path, text, &DocumentScanOptions::default())
+}
+
+pub fn scan_document_with_options(
+    path: impl Into<String>,
+    text: &str,
+    options: &DocumentScanOptions,
+) -> Result<DocumentScan, MarkdownError> {
+    events::scan_text(path.into(), text, options)
+}
+
+pub fn analyze_readme(repo_root: impl AsRef<Path>) -> Result<Option<ReadmeSummary>, MarkdownError> {
+    let repo_root = repo_root.as_ref();
+    scan_readme_document(repo_root).map(|document| {
+        document.map(|document| summarize_readme_document(&document, Some(repo_root)))
+    })
 }
 
 pub fn parse_readme(path: impl Into<String>, text: &str) -> ReadmeSummary {
-    parse_readme_with_context(path, text, None)
+    let document =
+        scan_document_with_options(path, text, &DocumentScanOptions::compatibility(text.len()))
+            .expect("in-memory compatibility limits are derived from the supplied source");
+    summarize_readme_document(&document, None)
 }
 
-fn parse_readme_with_context(
-    path: impl Into<String>,
-    text: &str,
+#[must_use]
+pub fn summarize_readme_document(
+    document: &DocumentScan,
     repo_root: Option<&Path>,
 ) -> ReadmeSummary {
     let mut headings = Vec::new();
     let mut links = Vec::new();
     let mut badges = Vec::new();
     let mut route_candidates = Vec::new();
-    let path = path.into();
 
-    for line in markdown_lines(text) {
-        if let Some(heading) = parse_heading(line) {
-            let route = classify_route(&heading.text, None);
-            if route != RouteKind::Unknown {
-                route_candidates.push(RouteCandidate {
-                    route,
-                    source: RouteSource::Heading,
-                    text: heading.text.clone(),
-                    target: None,
-                    line: line.number,
-                    span: heading.span,
-                });
-            }
-            headings.push(heading);
-        }
-
-        for image in parse_markdown_links(line, true) {
-            if looks_like_badge(&image.text, &image.target) {
-                route_candidates.push(RouteCandidate {
-                    route: RouteKind::Automation,
-                    source: RouteSource::Badge,
-                    text: image.text.clone(),
-                    target: Some(image.target.clone()),
-                    line: line.number,
-                    span: image.span,
-                });
-                badges.push(MarkdownBadge {
-                    alt: image.text,
-                    target: image.target,
-                    line: line.number,
-                    span: image.span,
-                });
-            }
-        }
-
-        for link in parse_markdown_links(line, false) {
-            let route = classify_route(&link.text, Some(&link.target));
-            if route != RouteKind::Unknown {
-                route_candidates.push(RouteCandidate {
-                    route,
-                    source: RouteSource::Link,
-                    text: link.text.clone(),
-                    target: Some(link.target.clone()),
-                    line: line.number,
-                    span: link.span,
-                });
-            }
-            links.push(MarkdownLink {
-                route: (route != RouteKind::Unknown).then_some(route),
-                ..link
-            });
+    for event in document.events() {
+        match event {
+            DocumentEvent::Heading(value) => headings.push(value.clone()),
+            DocumentEvent::Link(value) => links.push(value.clone()),
+            DocumentEvent::Badge(value) => badges.push(value.clone()),
+            DocumentEvent::RouteCandidate(value) => route_candidates.push(value.clone()),
         }
     }
-
     route_candidates.sort_by(|left, right| {
         left.route
             .cmp(&right.route)
@@ -128,8 +196,8 @@ fn parse_readme_with_context(
     });
 
     ReadmeSummary {
+        path: document.path().to_string(),
         route_map: build_route_map(&route_candidates, repo_root),
-        path,
         headings,
         links,
         badges,
@@ -334,131 +402,6 @@ fn is_hygiene_route_text(value: &str) -> bool {
     )
 }
 
-#[derive(Debug, Clone, Copy)]
-struct MarkdownLine<'a> {
-    number: usize,
-    byte_start: usize,
-    text: &'a str,
-}
-
-fn markdown_lines(text: &str) -> impl Iterator<Item = MarkdownLine<'_>> {
-    let mut number = 0;
-    let mut byte_start = 0;
-    text.split_inclusive('\n').map(move |segment| {
-        number += 1;
-        let current_start = byte_start;
-        byte_start += segment.len();
-        let line = if let Some(line) = segment.strip_suffix('\n') {
-            line.strip_suffix('\r').unwrap_or(line)
-        } else {
-            segment
-        };
-        MarkdownLine {
-            number,
-            byte_start: current_start,
-            text: line,
-        }
-    })
-}
-
-fn parse_heading(line: MarkdownLine<'_>) -> Option<MarkdownHeading> {
-    let marker_start = first_non_whitespace_byte(line.text)?;
-    let trimmed = &line.text[marker_start..];
-    let level = trimmed.chars().take_while(|value| *value == '#').count();
-    if !(1..=6).contains(&level) {
-        return None;
-    }
-    let rest = trimmed.get(level..)?;
-    if !rest.starts_with(' ') {
-        return None;
-    }
-    let text = rest.trim().trim_end_matches('#').trim();
-    if text.is_empty() {
-        return None;
-    }
-    Some(MarkdownHeading {
-        level: level as u8,
-        text: text.to_string(),
-        line: line.number,
-        span: Some(source_span(line, marker_start, line.text.len())),
-    })
-}
-
-fn parse_markdown_links(line: MarkdownLine<'_>, images_only: bool) -> Vec<MarkdownLink> {
-    let bytes = line.text.as_bytes();
-    let mut cursor = 0;
-    let mut out = Vec::new();
-
-    while cursor < bytes.len() {
-        let is_image =
-            bytes[cursor] == b'!' && cursor + 1 < bytes.len() && bytes[cursor + 1] == b'[';
-        let starts_link = bytes[cursor] == b'[' || is_image;
-        if !starts_link {
-            cursor += 1;
-            continue;
-        }
-        if images_only != is_image {
-            cursor += if is_image { 2 } else { 1 };
-            continue;
-        }
-
-        let label_start = cursor + usize::from(is_image) + 1;
-        let Some(label_end_offset) = line.text[label_start..].find(']') else {
-            cursor += 1;
-            continue;
-        };
-        let label_end = label_start + label_end_offset;
-        let open_paren = label_end + 1;
-        if bytes.get(open_paren) != Some(&b'(') {
-            cursor = label_end + 1;
-            continue;
-        }
-        let target_start = open_paren + 1;
-        let Some(target_end_offset) = line.text[target_start..].find(')') else {
-            cursor = target_start;
-            continue;
-        };
-        let target_end = target_start + target_end_offset;
-        let text = line.text[label_start..label_end].trim();
-        let target = line.text[target_start..target_end].trim();
-        if !text.is_empty() && !target.is_empty() {
-            out.push(MarkdownLink {
-                text: text.to_string(),
-                target: target.to_string(),
-                line: line.number,
-                span: Some(source_span(line, cursor, target_end + 1)),
-                route: None,
-            });
-        }
-        cursor = target_end + 1;
-    }
-
-    out
-}
-
-fn first_non_whitespace_byte(line: &str) -> Option<usize> {
-    line.char_indices()
-        .find(|(_, character)| !character.is_whitespace())
-        .map(|(index, _)| index)
-}
-
-fn source_span(line: MarkdownLine<'_>, start_in_line: usize, end_in_line: usize) -> SourceSpan {
-    SourceSpan::new(
-        line.number,
-        column_for_byte(line.text, start_in_line),
-        line.byte_start + start_in_line,
-        line.byte_start + end_in_line,
-    )
-}
-
-fn column_for_byte(line: &str, byte_index: usize) -> usize {
-    line[..byte_index].chars().count() + 1
-}
-
-fn span_start(span: Option<SourceSpan>) -> usize {
-    span.map_or(usize::MAX, |span| span.byte_start)
-}
-
 fn find_readme(repo_root: &Path) -> Option<PathBuf> {
     let candidates = ["README.md", "Readme.md", "readme.md", "README"];
     candidates
@@ -492,4 +435,8 @@ fn normalize_relative_path(root: &Path, path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn span_start(span: Option<SourceSpan>) -> usize {
+    span.map_or(usize::MAX, |span| span.byte_start)
 }

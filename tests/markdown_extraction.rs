@@ -1,4 +1,6 @@
-use seiri_core::{ReadmeRouteMapEntry, RouteKind, RouteSource, RouteState, SourceSpan};
+use seiri_core::{
+    ReadmeRouteMapEntry, ReadmeRouteTargetStatus, RouteKind, RouteSource, RouteState, SourceSpan,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,12 @@ fn markdown_extracts_headings_links_badges_and_routes() {
         .entries
         .iter()
         .any(|entry| entry.route == RouteKind::Quickstart && entry.state == RouteState::Routed));
+    let automation = route_entry(&summary, RouteKind::Automation);
+    assert_eq!(automation.state, RouteState::Routed);
+    assert!(automation
+        .targets
+        .iter()
+        .all(|target| target.status == ReadmeRouteTargetStatus::External));
 }
 
 #[test]
@@ -84,16 +92,25 @@ fn readme_route_map_detects_weak_conflicting_overloaded_and_stale_routes() {
     );
 
     assert_eq!(
-        route_entry(&summary, RouteKind::Docs).observed_gap_count,
-        Some(186_000)
+        route_entry(&summary, RouteKind::Docs)
+            .gap_estimate
+            .expect("docs gap estimate")
+            .estimated_repositories,
+        186_000
     );
     assert_eq!(
-        route_entry(&summary, RouteKind::Quickstart).observed_gap_count,
-        Some(438_000)
+        route_entry(&summary, RouteKind::Quickstart)
+            .gap_estimate
+            .expect("quickstart gap estimate")
+            .estimated_repositories,
+        438_000
     );
     assert_eq!(
-        route_entry(&summary, RouteKind::Release).observed_gap_count,
-        Some(454_000)
+        route_entry(&summary, RouteKind::Release)
+            .gap_estimate
+            .expect("release gap estimate")
+            .estimated_repositories,
+        454_000
     );
 }
 
@@ -107,6 +124,51 @@ fn readme_route_map_detects_hygiene_self_audit_route() {
     assert_eq!(hygiene.state, RouteState::Verified);
     assert_eq!(hygiene.candidate_count, 1);
     assert_eq!(hygiene.target_count, 1);
+}
+
+#[test]
+fn q12_external_mail_anchor_and_unknown_targets_are_routed_not_verified() {
+    let summary = seiri_markdown::parse_readme(
+        "README.md",
+        "# Routes\n\n- [Documentation](https://example.invalid/docs)\n- [Support](mailto:help@example.invalid)\n- [Security](#security)\n- [Contributing](CONTRIBUTING.md)\n",
+    );
+
+    for route in [
+        RouteKind::Docs,
+        RouteKind::Support,
+        RouteKind::Security,
+        RouteKind::Contributing,
+    ] {
+        assert_eq!(route_entry(&summary, route).state, RouteState::Routed);
+    }
+    assert!(summary.route_map.entries.iter().all(|entry| {
+        entry.state != RouteState::Verified
+            || entry
+                .targets
+                .iter()
+                .any(|target| target.status == ReadmeRouteTargetStatus::LocalPresent)
+    }));
+}
+
+#[test]
+fn q12_legacy_readme_gap_key_deserializes_as_an_estimate() {
+    let summary = seiri_markdown::analyze_readme(fixture("readme-route-repo"))
+        .expect("read README")
+        .expect("README exists");
+    let docs = route_entry(&summary, RouteKind::Docs);
+    let mut json = serde_json::to_value(docs).expect("route entry JSON");
+    let object = json.as_object_mut().expect("route entry object");
+    object.remove("gap_estimate");
+    object.insert("observed_gap_count".to_string(), serde_json::json!(186_000));
+
+    let legacy: ReadmeRouteMapEntry = serde_json::from_value(json).expect("legacy route map entry");
+    assert_eq!(
+        legacy
+            .gap_estimate
+            .expect("legacy gap estimate")
+            .estimated_repositories,
+        186_000
+    );
 }
 
 #[test]

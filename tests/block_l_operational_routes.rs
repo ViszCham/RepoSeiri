@@ -32,7 +32,7 @@ fn block_l_operational_files_feed_route_states() {
 
     assert_route_state(&snapshot, RouteKind::Support, RouteState::Verified);
     assert_route_state(&snapshot, RouteKind::Security, RouteState::Verified);
-    assert_route_state(&snapshot, RouteKind::Intake, RouteState::Verified);
+    assert_route_state(&snapshot, RouteKind::Intake, RouteState::Structured);
     assert_route_state(&snapshot, RouteKind::Automation, RouteState::Structured);
 }
 

@@ -1,9 +1,9 @@
 use seiri_core::{
-    stable_id, BaselineStatus, CalibrationRun, ClaimBoundaryKind, ClaimId, ClaimRefIndex,
-    ClaimStrength, CodexReviewContext, Evidence, EvidenceKind, EvidenceSource, ImportantFileKind,
-    PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState, WordingLintReport,
+    BaselineStatus, CalibrationRun, ClaimBoundaryKind, ClaimId, ClaimRefIndex, ClaimStrength,
+    CodexLinterContext, CodexNativeReviewContext, CodexQueryKind, CodexQueryView,
+    CodexReviewContext, EvidenceId, PatchEditContent, PatchPlan, PatchProposal, ProfileKind,
+    RepoSnapshot, RouteKind, RouteState, WordingLintReport,
 };
-use seiri_fs::RepoFsScan;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::path::Path;
@@ -14,7 +14,10 @@ mod route_priority;
 mod wording;
 
 use claims::build_content_claims;
-use evidence::{build_evidence_ledger, build_route_states};
+use evidence::{
+    build_evidence_kernel, build_route_assessments, legacy_evidence_ledger_view,
+    legacy_evidence_view, legacy_route_state_views,
+};
 use route_priority::build_missing_route_priority_report;
 
 #[derive(Debug)]
@@ -22,6 +25,8 @@ pub enum AuditError {
     Fs(seiri_fs::FsError),
     Markdown(seiri_markdown::MarkdownError),
     Calibration(seiri_calibration::CalibrationError),
+    EvidenceKernel(seiri_core::EvidenceKernelError),
+    RouteAssessment(seiri_core::RouteAssessmentError),
     Json(serde_json::Error),
     Io {
         path: std::path::PathBuf,
@@ -35,6 +40,8 @@ impl Display for AuditError {
             Self::Fs(error) => write!(f, "{error}"),
             Self::Markdown(error) => write!(f, "{error}"),
             Self::Calibration(error) => write!(f, "{error}"),
+            Self::EvidenceKernel(error) => write!(f, "{error}"),
+            Self::RouteAssessment(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
             Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
         }
@@ -47,6 +54,8 @@ impl std::error::Error for AuditError {
             Self::Fs(error) => Some(error),
             Self::Markdown(error) => Some(error),
             Self::Calibration(error) => Some(error),
+            Self::EvidenceKernel(error) => Some(error),
+            Self::RouteAssessment(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io { source, .. } => Some(source),
         }
@@ -71,6 +80,18 @@ impl From<seiri_calibration::CalibrationError> for AuditError {
     }
 }
 
+impl From<seiri_core::EvidenceKernelError> for AuditError {
+    fn from(value: seiri_core::EvidenceKernelError) -> Self {
+        Self::EvidenceKernel(value)
+    }
+}
+
+impl From<seiri_core::RouteAssessmentError> for AuditError {
+    fn from(value: seiri_core::RouteAssessmentError) -> Self {
+        Self::RouteAssessment(value)
+    }
+}
+
 impl From<serde_json::Error> for AuditError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
@@ -86,24 +107,30 @@ pub fn audit_repository_with_profile(
     profile: ProfileKind,
 ) -> Result<RepoSnapshot, AuditError> {
     let fs_scan = seiri_fs::scan_repository(path)?;
-    let readme = seiri_markdown::analyze_readme(&fs_scan.repo_root)?;
+    let readme_document = seiri_markdown::scan_readme_document(&fs_scan.repo_root)?;
+    let readme = readme_document.as_ref().map(|document| {
+        seiri_markdown::summarize_readme_document(document, Some(&fs_scan.repo_root))
+    });
     let repo_root = fs_scan.repo_root.to_string_lossy().replace('\\', "/");
     let mut snapshot = RepoSnapshot::new(repo_root);
     snapshot.entry_count = fs_scan.files.len();
     snapshot.files = fs_scan.files.clone();
     snapshot.important_files = fs_scan.important_files.clone();
+    snapshot.readme_document = readme_document;
     snapshot.readme = readme;
-    snapshot.evidence = build_evidence(&fs_scan, snapshot.readme.as_ref());
-    snapshot.evidence_ledger = build_evidence_ledger(&snapshot.evidence);
+    snapshot.evidence_kernel = build_evidence_kernel(&fs_scan, snapshot.readme_document.as_ref())?;
+    snapshot.evidence = legacy_evidence_view(&snapshot.evidence_kernel);
+    snapshot.evidence_ledger = legacy_evidence_ledger_view(&snapshot.evidence_kernel);
     let baseline = seiri_patterns::evaluate_common_baseline(&snapshot);
     snapshot.pattern_matches = baseline.pattern_matches;
     snapshot.findings = baseline.findings;
     snapshot.baseline = Some(baseline.report);
-    snapshot.route_states = build_route_states(
-        &snapshot.evidence_ledger,
+    snapshot.route_assessments = build_route_assessments(
+        snapshot.evidence_kernel.facts(),
         &snapshot.pattern_matches,
         snapshot.readme.as_ref(),
-    );
+    )?;
+    snapshot.route_states = legacy_route_state_views(&snapshot.route_assessments);
     snapshot.profile = seiri_profiles::evaluate_profile(&snapshot, profile);
     snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot);
     snapshot.claims = build_content_claims(&snapshot);
@@ -160,6 +187,14 @@ pub fn wording_lint_to_markdown(report: &WordingLintReport) -> String {
 }
 
 pub fn calibrate_dataset_path(path: impl AsRef<Path>) -> Result<CalibrationRun, AuditError> {
+    let path = path.as_ref();
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"))
+    {
+        return Ok(seiri_calibration::calibrate_jsonl_path(path)?);
+    }
     let dataset = seiri_calibration::load_dataset(path)?;
     Ok(seiri_calibration::calibrate_dataset(&dataset))
 }
@@ -174,11 +209,40 @@ pub fn codex_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<CodexReviewContext, AuditError> {
+    Ok(codex_repository_kernel_with_profile(path, profile)?.compatibility_v1())
+}
+
+pub fn codex_native_repository_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<CodexNativeReviewContext, AuditError> {
+    Ok(codex_repository_kernel_with_profile(path, profile)?.native_v2())
+}
+
+pub fn codex_query_repository_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    query: CodexQueryKind,
+) -> Result<CodexQueryView, AuditError> {
+    Ok(codex_repository_kernel_with_profile(path, profile)?.query(query))
+}
+
+pub fn codex_linter_repository_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<CodexLinterContext, AuditError> {
+    Ok(codex_repository_kernel_with_profile(path, profile)?.linter_context())
+}
+
+pub fn codex_repository_kernel_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<seiri_codex::CodexReviewKernel, AuditError> {
     let path = path.as_ref();
     let snapshot = audit_repository_with_profile(path, profile)?;
     let plan = seiri_planner::plan_safe_patches(&snapshot);
     let wording_lint = wording::lint_repository_with_profile(path, profile)?;
-    Ok(seiri_codex::build_review_context_with_wording(
+    Ok(seiri_codex::build_review_kernel(
         &snapshot,
         &plan,
         Some(&wording_lint),
@@ -189,6 +253,18 @@ pub fn codex_to_json(context: &CodexReviewContext) -> Result<String, AuditError>
     Ok(serde_json::to_string_pretty(context)?)
 }
 
+pub fn codex_native_to_json(context: &CodexNativeReviewContext) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(context)?)
+}
+
+pub fn codex_query_to_json(view: &CodexQueryView) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(view)?)
+}
+
+pub fn codex_linter_context_to_json(context: &CodexLinterContext) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(context)?)
+}
+
 pub fn codex_pr_draft_to_json(context: &CodexReviewContext) -> Result<String, AuditError> {
     Ok(serde_json::to_string_pretty(&context.pr_draft)?)
 }
@@ -196,6 +272,21 @@ pub fn codex_pr_draft_to_json(context: &CodexReviewContext) -> Result<String, Au
 #[must_use]
 pub fn codex_to_markdown(context: &CodexReviewContext) -> String {
     seiri_codex::render_review_context_markdown(context)
+}
+
+#[must_use]
+pub fn codex_native_to_markdown(context: &CodexNativeReviewContext) -> String {
+    seiri_codex::render_native_context_markdown(context)
+}
+
+#[must_use]
+pub fn codex_query_to_markdown(view: &CodexQueryView) -> String {
+    seiri_codex::render_query_view_markdown(view)
+}
+
+#[must_use]
+pub fn codex_linter_context_to_markdown(context: &CodexLinterContext) -> String {
+    seiri_codex::render_linter_context_markdown(context)
 }
 
 #[must_use]
@@ -246,6 +337,36 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
         "- Weight suggestions: `{}`\n",
         run.summary.weight_suggestions
     ));
+    out.push_str(&format!(
+        "- Aggregation: `{:?}` / identity `{:?}`\n",
+        run.resource_trace.aggregation_mode, run.resource_trace.record_identity
+    ));
+    out.push_str(&format!(
+        "- Resource trace: records `{}` / retained records `{}` / retained repository-id entries `{}` / per-pattern repository sets `{}`\n",
+        run.resource_trace.records_seen,
+        run.resource_trace.retained_records,
+        run.resource_trace.retained_repository_id_entries,
+        run.resource_trace.per_pattern_repository_sets
+    ));
+    out.push_str(&format!(
+        "- Aggregate slots: patterns `{}` / routes `{}` / profiles `{}` / co-occurrences `{}` / pending `{}` / metadata sources `{}`\n",
+        run.resource_trace.known_pattern_slots,
+        run.resource_trace.route_slots,
+        run.resource_trace.profile_slots,
+        run.resource_trace.co_occurrence_slots,
+        run.resource_trace.pending_pattern_slots,
+        run.resource_trace.metadata_source_slots
+    ));
+    out.push_str(&format!(
+        "- Peak record buffer: bytes `{}` / patterns `{}`\n",
+        run.resource_trace.max_buffered_line_bytes, run.resource_trace.max_patterns_per_record
+    ));
+    let replay_digest = run.resource_trace.replay_digest.map_or_else(
+        || "redacted_or_unavailable".to_string(),
+        |digest| digest.to_string(),
+    );
+    out.push_str(&format!("- Replay digest: `{replay_digest}`\n"));
+    out.push_str("- Resource boundary: structural retained-state counts and replay digests are diagnostic evidence, not measured memory, throughput, or performance guarantees.\n");
     out.push_str(&format!("- Boundary: {}\n", run.claim_boundary.summary));
     out.push_str(&format!(
         "- Boundary gates: review_required `{}` runtime_rule_adoption `{}` automatic_weight_adoption `{}` guarantees `{}`\n\n",
@@ -453,6 +574,7 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
             }
             out.push_str(&format!("- Change: {}\n", operation.planned_change));
             out.push_str(&format!("- Rationale: {}\n\n", operation.rationale));
+            render_patch_proposal(&mut out, &operation.proposal, "");
             out.push_str("Preflight:\n");
             for check in &operation.preflight {
                 out.push_str(&format!(
@@ -468,6 +590,33 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
             }
             out.push_str("```\n\n");
         }
+    }
+
+    out.push_str("## Held or Rejected Safe Proposals\n\n");
+    let safe_blocked = plan
+        .blocked
+        .iter()
+        .filter(|item| item.gate == seiri_core::GateKind::Safe)
+        .collect::<Vec<_>>();
+    if safe_blocked.is_empty() {
+        out.push_str("- No held or rejected Safe proposals.\n\n");
+    } else {
+        for item in safe_blocked {
+            out.push_str(&format!(
+                "- `{}` `{}`: {}\n",
+                item.id, item.pattern_id, item.reason
+            ));
+            if let Some(proposal) = &item.proposal {
+                render_patch_proposal(&mut out, proposal, "  ");
+            }
+            for check in &item.preflight {
+                out.push_str(&format!(
+                    "  Preflight `{:?}` `{:?}`: {}\n",
+                    check.kind, check.status, check.detail
+                ));
+            }
+        }
+        out.push('\n');
     }
 
     out.push_str("## Guarded Drafts\n\n");
@@ -526,6 +675,40 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
     out
 }
 
+fn render_patch_proposal(out: &mut String, proposal: &PatchProposal, indent: &str) {
+    let structural = proposal.preflight_structure();
+    out.push_str(&format!("{indent}Patch Proposal IR:\n"));
+    out.push_str(&format!(
+        "{indent}- Schema: `{}`\n{indent}- Proposal: `{}`\n{indent}- Path: `{}`\n",
+        proposal.schema_version, proposal.id, proposal.path
+    ));
+    out.push_str(&format!(
+        "{indent}- Base: `{}` `{:?}` `{:?}` `{}` bytes\n",
+        proposal.base.digest(),
+        proposal.base.encoding(),
+        proposal.base.line_ending(),
+        proposal.base.byte_len()
+    ));
+    out.push_str(&format!(
+        "{indent}- Structural decision: `{:?}` with `{}` issue(s)\n",
+        structural.decision,
+        structural.issues.len()
+    ));
+    for edit in &proposal.edits {
+        let content = match &edit.content {
+            PatchEditContent::Literal(_) => "literal".to_string(),
+            PatchEditContent::UnresolvedSlot(slot) => {
+                format!("unresolved_slot:{:?}", slot.kind)
+            }
+        };
+        out.push_str(&format!(
+            "{indent}- Edit `{}`: bytes `{}..{}` content `{content}`\n",
+            edit.id, edit.span.byte_start, edit.span.byte_end
+        ));
+    }
+    out.push('\n');
+}
+
 #[must_use]
 pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     let mut out = String::new();
@@ -563,6 +746,21 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         }
     }
     out.push_str(&format!(
+        "- Document events: `{}` / diagnostics `{}`\n",
+        snapshot
+            .readme_document
+            .as_ref()
+            .map_or(0, |document| document.events().len()),
+        snapshot
+            .readme_document
+            .as_ref()
+            .map_or(0, |document| document.diagnostics().len())
+    ));
+    out.push_str(&format!(
+        "- Evidence kernel facts: `{}`\n",
+        snapshot.evidence_kernel.len()
+    ));
+    out.push_str(&format!(
         "- Evidence items: `{}`\n",
         snapshot.evidence.len()
     ));
@@ -571,6 +769,10 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         snapshot.evidence_ledger.len()
     ));
     out.push_str(&format!("- Content claims: `{}`\n", snapshot.claims.len()));
+    out.push_str(&format!(
+        "- Route assessments: `{}`\n",
+        snapshot.route_assessments.len()
+    ));
     out.push_str(&format!(
         "- Route states: `{}`\n",
         snapshot.route_states.len()
@@ -642,9 +844,15 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     match &snapshot.readme {
         Some(readme) => {
             for entry in &readme.route_map.entries {
-                let gap = entry
-                    .observed_gap_count
-                    .map_or_else(|| "n/a".to_string(), |count| count.to_string());
+                let gap = entry.gap_estimate.map_or_else(
+                    || "n/a".to_string(),
+                    |estimate| {
+                        format!(
+                            "{} / {}",
+                            estimate.estimated_repositories, estimate.denominator
+                        )
+                    },
+                );
                 let targets = if entry.targets.is_empty() {
                     "none".to_string()
                 } else {
@@ -661,7 +869,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                         .join("; ")
                 };
                 out.push_str(&format!(
-                    "- `{:?}` `{:?}` candidates `{}` targets `{}` stale `{}` conflicts `{}` gap `{}`: {}\n",
+                    "- `{:?}` `{:?}` candidates `{}` targets `{}` stale `{}` conflicts `{}` estimated_gap `{}`: {}\n",
                     entry.route,
                     entry.state,
                     entry.candidate_count,
@@ -732,7 +940,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             let evidence = if state.evidence_ids.is_empty() {
                 "none".to_string()
             } else {
-                state.evidence_ids.join("`, `")
+                join_evidence_ids(&state.evidence_ids)
             };
             let claim_ids = claim_index.claim_ids_for_route_state(state.route, state.state);
             out.push_str(&format!(
@@ -743,6 +951,39 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                 evidence,
                 claim_ids_or_none(&claim_ids),
                 state.reason
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Route Assessment Axes\n\n");
+    if snapshot.route_assessments.is_empty() {
+        out.push_str("- No route assessments emitted.\n\n");
+    } else {
+        for assessment in &snapshot.route_assessments {
+            let projection = assessment.legacy_projection();
+            out.push_str(&format!(
+                "- `{:?}` presence root `{}` inherited `{}` / README candidates `{}` targets `{}` / local present `{}` missing `{}` external `{}` anchor `{}` mail `{}` unknown `{}` / conflicts `{}` / freshness `{:?}` / legacy `{:?}`\n",
+                assessment.route(),
+                assessment.presence().root_structured(),
+                assessment.presence().inherited(),
+                assessment.readme().routing().candidate_count(),
+                assessment.readme().routing().target_count(),
+                assessment
+                    .readme()
+                    .target_reachability()
+                    .repository_local_present(),
+                assessment
+                    .readme()
+                    .target_reachability()
+                    .repository_local_missing(),
+                assessment.readme().target_reachability().external(),
+                assessment.readme().target_reachability().anchor(),
+                assessment.readme().target_reachability().mail(),
+                assessment.readme().target_reachability().unknown(),
+                assessment.readme().conflict().shared_target_count(),
+                assessment.readme().freshness(),
+                projection.state
             ));
         }
         out.push('\n');
@@ -766,9 +1007,14 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         let claim_index = ClaimRefIndex::new(&snapshot.claims);
         for priority in &snapshot.missing_route_priority.priorities {
             let score = decimal_confidence(priority.priority_score_x100);
-            let observed = priority.observed_missing_repositories.map_or_else(
+            let estimate = priority.calibration_estimate.map_or_else(
                 || "n/a".to_string(),
-                |repositories| repositories.to_string(),
+                |estimate| {
+                    format!(
+                        "{} / {}",
+                        estimate.estimated_repositories, estimate.denominator
+                    )
+                },
             );
             let baseline = list_or_none(&priority.baseline_pattern_ids);
             let candidate = list_or_none(&priority.candidate_pattern_ids);
@@ -776,13 +1022,13 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             let claim_ids = claim_index.claim_ids_for_route(priority.route);
             let boundary_kinds = claim_index.boundary_kinds_for_route(priority.route);
             out.push_str(&format!(
-                "{}. `{:?}` `{:?}` priority `{}` gate `{:?}` observed_missing `{}`: {}\n",
+                "{}. `{:?}` `{:?}` priority `{}` gate `{:?}` estimated_missing `{}`: {}\n",
                 priority.rank,
                 priority.route,
                 priority.priority,
                 score,
                 priority.gate,
-                observed,
+                estimate,
                 priority.reason
             ));
             out.push_str(&format!("   Baseline: {baseline}\n"));
@@ -814,8 +1060,14 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             let present_signals = list_or_none(&gap.present_signals);
             let missing_signals = list_or_none(&gap.missing_signals);
             out.push_str(&format!(
-                "- `{}` {:?} support `{}` repos `{}` gate `{:?}`: {}\n",
-                gap.id, gap.priority, support, gap.observed_repositories, gap.gate, gap.title
+                "- `{}` {:?} estimated_support `{}` estimated_repos `{}` / `{}` gate `{:?}`: {}\n",
+                gap.id,
+                gap.priority,
+                support,
+                gap.calibration_estimate.estimated_repositories,
+                gap.calibration_estimate.denominator,
+                gap.gate,
+                gap.title
             ));
             out.push_str(&format!("  Present routes: {present_routes}\n"));
             out.push_str(&format!("  Missing routes: {missing_routes}\n"));
@@ -917,7 +1169,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             if !finding.evidence_ids.is_empty() {
                 out.push_str(&format!(
                     "- Evidence: `{}`\n",
-                    finding.evidence_ids.join("`, `")
+                    join_evidence_ids(&finding.evidence_ids)
                 ));
             }
             if let Some(recommendation) = &finding.recommendation {
@@ -929,141 +1181,6 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     }
 
     out
-}
-
-fn build_evidence(
-    fs_scan: &RepoFsScan,
-    readme: Option<&seiri_core::ReadmeSummary>,
-) -> Vec<Evidence> {
-    let mut evidence = Vec::new();
-
-    for important in &fs_scan.important_files {
-        evidence.push(Evidence {
-            id: stable_id("ev-important-file", evidence.len() + 1),
-            kind: EvidenceKind::ImportantFile,
-            path: Some(important.path.clone()),
-            route: route_for_important_file(important.kind),
-            value: format!("{:?}", important.kind),
-            source: EvidenceSource {
-                scanner: "seiri-fs".to_string(),
-                detail: "important file detection".to_string(),
-            },
-        });
-    }
-
-    match readme {
-        Some(summary) => {
-            evidence.push(Evidence {
-                id: stable_id("ev-readme-present", evidence.len() + 1),
-                kind: EvidenceKind::ReadmePresent,
-                path: Some(summary.path.clone()),
-                route: Some(RouteKind::Identity),
-                value: "README detected".to_string(),
-                source: EvidenceSource {
-                    scanner: "seiri-markdown".to_string(),
-                    detail: "readme discovery".to_string(),
-                },
-            });
-
-            for heading in &summary.headings {
-                evidence.push(Evidence {
-                    id: stable_id("ev-heading", evidence.len() + 1),
-                    kind: EvidenceKind::MarkdownHeading,
-                    path: Some(summary.path.clone()),
-                    route: seiri_markdown::classify_route(&heading.text, None)
-                        .ne(&RouteKind::Unknown)
-                        .then(|| seiri_markdown::classify_route(&heading.text, None)),
-                    value: heading.text.clone(),
-                    source: EvidenceSource {
-                        scanner: "seiri-markdown".to_string(),
-                        detail: format!("heading line {}", heading.line),
-                    },
-                });
-            }
-
-            for link in &summary.links {
-                evidence.push(Evidence {
-                    id: stable_id("ev-link", evidence.len() + 1),
-                    kind: EvidenceKind::MarkdownLink,
-                    path: Some(summary.path.clone()),
-                    route: link.route,
-                    value: format!("{} -> {}", link.text, link.target),
-                    source: EvidenceSource {
-                        scanner: "seiri-markdown".to_string(),
-                        detail: format!("link line {}", link.line),
-                    },
-                });
-            }
-
-            for badge in &summary.badges {
-                evidence.push(Evidence {
-                    id: stable_id("ev-badge", evidence.len() + 1),
-                    kind: EvidenceKind::MarkdownBadge,
-                    path: Some(summary.path.clone()),
-                    route: Some(RouteKind::Automation),
-                    value: format!("{} -> {}", badge.alt, badge.target),
-                    source: EvidenceSource {
-                        scanner: "seiri-markdown".to_string(),
-                        detail: format!("badge line {}", badge.line),
-                    },
-                });
-            }
-
-            for route in &summary.route_candidates {
-                evidence.push(Evidence {
-                    id: stable_id("ev-route", evidence.len() + 1),
-                    kind: EvidenceKind::RouteCandidate,
-                    path: Some(summary.path.clone()),
-                    route: Some(route.route),
-                    value: route.target.as_ref().map_or_else(
-                        || route.text.clone(),
-                        |target| format!("{} -> {}", route.text, target),
-                    ),
-                    source: EvidenceSource {
-                        scanner: "seiri-markdown".to_string(),
-                        detail: format!("{:?} line {}", route.source, route.line),
-                    },
-                });
-            }
-        }
-        None => evidence.push(Evidence {
-            id: stable_id("ev-readme-missing", evidence.len() + 1),
-            kind: EvidenceKind::ReadmeMissing,
-            path: None,
-            route: Some(RouteKind::Identity),
-            value: "README not detected".to_string(),
-            source: EvidenceSource {
-                scanner: "seiri-markdown".to_string(),
-                detail: "readme discovery".to_string(),
-            },
-        }),
-    }
-
-    evidence
-}
-
-fn route_for_important_file(kind: ImportantFileKind) -> Option<RouteKind> {
-    match kind {
-        ImportantFileKind::Readme => Some(RouteKind::Identity),
-        ImportantFileKind::License => Some(RouteKind::License),
-        ImportantFileKind::Contributing => Some(RouteKind::Contributing),
-        ImportantFileKind::Security => Some(RouteKind::Security),
-        ImportantFileKind::Support => Some(RouteKind::Support),
-        ImportantFileKind::IssueTemplate
-        | ImportantFileKind::IssueForm
-        | ImportantFileKind::PullRequestTemplate => Some(RouteKind::Intake),
-        ImportantFileKind::Changelog => Some(RouteKind::Release),
-        ImportantFileKind::Codeowners => Some(RouteKind::Ownership),
-        ImportantFileKind::CargoToml => Some(RouteKind::Identity),
-        ImportantFileKind::DocsDirectory => Some(RouteKind::Docs),
-        ImportantFileKind::Workflow => Some(RouteKind::Automation),
-        ImportantFileKind::DependencyBot | ImportantFileKind::SecurityAutomation => {
-            Some(RouteKind::Automation)
-        }
-        ImportantFileKind::Gitignore
-        | ImportantFileKind::Gitattributes
-        | ImportantFileKind::EditorConfig => Some(RouteKind::Hygiene),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1165,7 +1282,7 @@ fn render_content_claims(out: &mut String, snapshot: &RepoSnapshot) {
             claim.strength,
             claim.route,
             claim.state,
-            claim.evidence_ids.join("`, `")
+            join_evidence_ids(&claim.evidence_ids)
         ));
         out.push_str(&format!(
             "  Allows: {}\n",
@@ -1188,6 +1305,13 @@ fn claim_ids_or_none(ids: &[ClaimId]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+fn join_evidence_ids(ids: &[EvidenceId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("`, `")
 }
 
 fn boundary_kinds_or_none(boundaries: &[ClaimBoundaryKind]) -> String {

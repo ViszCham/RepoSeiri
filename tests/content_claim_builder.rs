@@ -32,7 +32,7 @@ fn q4_route_state_claims_are_evidence_linked() {
     assert!(docs.allowed_meanings.contains(&MeaningAtom::RouteObserved));
     assert!(docs
         .allowed_meanings
-        .contains(&MeaningAtom::RouteTargetPresent));
+        .contains(&MeaningAtom::RepositoryLocalTargetPresent));
     assert!(docs
         .boundaries
         .contains(&ClaimBoundaryKind::NotQualityGuarantee));

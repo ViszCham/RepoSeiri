@@ -1,6 +1,6 @@
 use seiri_core::{
-    CalibrationReviewStatus, CalibrationScale, CalibrationSourceKind, CalibrationSourceVisibility,
-    ProfileKind, RouteKind, SCHEMA_VERSION,
+    CalibrationReviewStatus, CalibrationScale, CalibrationSource, CalibrationSourceKind,
+    CalibrationSourceVisibility, ProfileKind, RouteKind, SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -115,11 +115,39 @@ fn calibration_jsonl_loader_wraps_records_with_dataset_metadata() {
         dataset.calibration_sources[0].kind,
         CalibrationSourceKind::JsonlRecords
     );
+    assert_eq!(
+        dataset.calibration_sources[0].visibility,
+        CalibrationSourceVisibility::LocalOnly
+    );
     assert_eq!(dataset.evidence_schema.schema_version, SCHEMA_VERSION);
     assert!(run
         .pending_patterns
         .iter()
         .any(|candidate| candidate.raw_label == "install_matrix_table"));
+
+    let public_json = seiri_report::calibration_to_json(&run).expect("public JSONL report");
+    assert!(public_json.contains("\"visibility\": \"redacted\""));
+    assert!(!public_json.contains("\"dataset_id\": \"calibration-records\""));
+}
+
+#[test]
+fn q12_omitted_calibration_visibility_fails_closed() {
+    let source: CalibrationSource = serde_json::from_value(serde_json::json!({
+        "id": "source-without-visibility",
+        "kind": "aggregate_analysis",
+        "label": "synthetic source",
+        "collected_at": "unknown",
+        "records": 12,
+        "scale": "tiny",
+        "review_status": "pending_review"
+    }))
+    .expect("deserialize source without visibility");
+
+    assert_eq!(source.visibility, CalibrationSourceVisibility::LocalOnly);
+    assert_eq!(
+        CalibrationSourceVisibility::default(),
+        CalibrationSourceVisibility::LocalOnly
+    );
 }
 
 #[test]

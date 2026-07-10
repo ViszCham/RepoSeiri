@@ -1,7 +1,8 @@
 use seiri_core::{
-    BaselineRequirement, BaselineRuleResult, BaselineStatus, FileKind, GateKind,
-    MissingRoutePriority, MissingRoutePriorityReport, MissingRoutePrioritySummary, ProfileKind,
-    ProfilePriority, RepoSnapshot, RouteCoOccurrenceGap, RouteKind, RouteState, Severity,
+    AggregateRepositoryEstimate, BaselineRequirement, BaselineRuleResult, BaselineStatus, FileKind,
+    GateKind, MissingRoutePriority, MissingRoutePriorityReport, MissingRoutePrioritySummary,
+    ProfileKind, ProfilePriority, RepoSnapshot, RouteCoOccurrenceGap, RouteKind, RouteState,
+    Severity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,8 +77,7 @@ pub(crate) fn build_missing_route_priority_report(
             severity: severity_from_score(priority_score_x100),
             priority: priority_from_score(priority_score_x100),
             priority_score_x100,
-            observed_missing_repositories: prior.map(|prior| prior.observed_missing_repositories),
-            observed_missing_x1000: prior.map(|prior| prior.observed_missing_x1000),
+            calibration_estimate: prior.map(|prior| prior.calibration_estimate),
             baseline_pattern_ids,
             candidate_pattern_ids,
             co_occurrence_gap_ids,
@@ -122,36 +122,34 @@ pub(crate) fn build_missing_route_priority_report(
         summary,
         priorities,
         co_occurrence_gaps,
-        boundary: "Missing route priority is a deterministic routing hint from observed evidence, fixed 1,000,000-repository calibration priors, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
+        boundary: "Missing route priority is a deterministic routing hint from repository observations, fixed aggregate calibration estimates with a 1,000,000-repository denominator, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct RouteGapPrior {
-    observed_missing_repositories: u32,
-    observed_missing_x1000: u16,
+    calibration_estimate: AggregateRepositoryEstimate,
     leverage_x100: u8,
 }
 
 fn route_gap_prior(route: RouteKind) -> Option<RouteGapPrior> {
-    let (observed_missing_repositories, observed_missing_x1000, leverage_x100) = match route {
-        RouteKind::Identity => (14_000, 14, 52),
-        RouteKind::Docs => (186_000, 186, 30),
-        RouteKind::Quickstart => (438_000, 438, 34),
-        RouteKind::Support => (503_000, 503, 43),
-        RouteKind::Intake => (822_000, 822, 42),
-        RouteKind::Contributing => (325_000, 325, 24),
-        RouteKind::Security => (558_000, 558, 45),
-        RouteKind::Release => (454_000, 454, 32),
-        RouteKind::Governance => (787_000, 787, 20),
-        RouteKind::License => (80_000, 80, 50),
-        RouteKind::Automation => (229_000, 229, 28),
-        RouteKind::Ownership => (605_000, 605, 40),
+    let (estimated_repositories, leverage_x100) = match route {
+        RouteKind::Identity => (14_000, 52),
+        RouteKind::Docs => (186_000, 30),
+        RouteKind::Quickstart => (438_000, 34),
+        RouteKind::Support => (503_000, 43),
+        RouteKind::Intake => (822_000, 42),
+        RouteKind::Contributing => (325_000, 24),
+        RouteKind::Security => (558_000, 45),
+        RouteKind::Release => (454_000, 32),
+        RouteKind::Governance => (787_000, 20),
+        RouteKind::License => (80_000, 50),
+        RouteKind::Automation => (229_000, 28),
+        RouteKind::Ownership => (605_000, 40),
         RouteKind::Lifecycle | RouteKind::Hygiene | RouteKind::Unknown => return None,
     };
     Some(RouteGapPrior {
-        observed_missing_repositories,
-        observed_missing_x1000,
+        calibration_estimate: AggregateRepositoryEstimate::fixed(estimated_repositories, 1_000_000),
         leverage_x100,
     })
 }
@@ -189,7 +187,7 @@ impl PathSignal {
 struct CoOccurrenceRule {
     id: &'static str,
     title: &'static str,
-    observed_repositories: u32,
+    estimated_repositories: u32,
     gate: GateKind,
     expected: &'static [ExpectedSignal],
     reason: &'static str,
@@ -233,15 +231,15 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-README-LICENSE",
             title: "README + LICENSE entry boundary",
-            observed_repositories: 905_000,
+            estimated_repositories: 905_000,
             gate: GateKind::Manual,
             expected: BASELINE_OSS_ENTRY,
-            reason: "README and LICENSE co-occurred in 905,000 repositories in the 1,000,000-level analysis; missing members are high-leverage routing gaps but still require human review for content or legal decisions.",
+            reason: "A fixed aggregate calibration estimate assigns high support to the README + LICENSE combination; missing members are high-leverage routing gaps but still require human review for content or legal decisions.",
         },
         CoOccurrenceRule {
             id: "co-README-SUPPORT-ISSUE-FORMS",
             title: "README + Support + Issue forms intake control",
-            observed_repositories: 300_000,
+            estimated_repositories: 300_000,
             gate: GateKind::Guarded,
             expected: SUPPORT_INTAKE_CONTROL,
             reason: "Support routes and structured issue forms explain how questions, bugs, and feature requests should enter the project without turning every question into a generic issue.",
@@ -249,7 +247,7 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-README-SECURITY-CI-DEPENDENCY-BOT",
             title: "README + Security + CI + Dependency bot supply-chain route",
-            observed_repositories: 260_000,
+            estimated_repositories: 260_000,
             gate: GateKind::Guarded,
             expected: SUPPLY_CHAIN_MINIMUM,
             reason: "The analysis identified README, security routing, CI, and dependency bot configuration as a useful supply-chain hygiene combination; RepoSeiri reports missing members as routing evidence only.",
@@ -257,7 +255,7 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-CI-RELEASE-CHANGELOG",
             title: "CI + Release + Changelog update-risk route",
-            observed_repositories: 330_000,
+            estimated_repositories: 330_000,
             gate: GateKind::Guarded,
             expected: RELEASE_READINESS,
             reason: "CI, release routing, and changelog evidence help users judge update risk; missing members should be reviewed against the repository purpose.",
@@ -265,7 +263,7 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-CODEOWNERS-CI-PR-TEMPLATE",
             title: "CODEOWNERS + CI + PR template review route",
-            observed_repositories: 240_000,
+            estimated_repositories: 240_000,
             gate: GateKind::Manual,
             expected: OWNERSHIP_REVIEW,
             reason: "Ownership, CI, and PR template signals often co-occur in mature review flows; owner assignment and decision rights remain manual.",
@@ -306,11 +304,13 @@ fn build_co_occurrence_gaps(snapshot: &RepoSnapshot) -> Vec<RouteCoOccurrenceGap
             continue;
         }
 
-        let support_x1000 = ratio_x1000(rule.observed_repositories, 1_000_000);
+        let calibration_estimate =
+            AggregateRepositoryEstimate::fixed(rule.estimated_repositories, 1_000_000);
+        let support_x1000 = calibration_estimate.rate_x1000;
         gaps.push(RouteCoOccurrenceGap {
             id: rule.id.to_string(),
             title: rule.title.to_string(),
-            observed_repositories: rule.observed_repositories,
+            calibration_estimate,
             support_x1000,
             gate: rule.gate,
             priority: priority_from_support(support_x1000),
@@ -370,7 +370,7 @@ fn missing_candidate_patterns(
         })
         .map(|definition| MissingCandidatePattern {
             id: definition.id.to_string(),
-            gate: definition.missing_gate,
+            gate: definition.boundary.missing_gate,
         })
         .collect()
 }
@@ -459,8 +459,9 @@ fn priority_reason(
     let mut parts = vec![format!("route state {state:?}")];
     if let Some(prior) = prior {
         parts.push(format!(
-            "analysis gap {} of 1,000,000 repositories",
-            prior.observed_missing_repositories
+            "fixed aggregate calibration estimate {} of {} repositories",
+            prior.calibration_estimate.estimated_repositories,
+            prior.calibration_estimate.denominator
         ));
     }
     if !baseline_pattern_ids.is_empty() {
@@ -778,15 +779,4 @@ fn gate_rank(gate: GateKind) -> u8 {
         GateKind::Guarded => 1,
         GateKind::Manual => 2,
     }
-}
-
-fn ratio_x1000(numerator: u32, denominator: u32) -> u16 {
-    if denominator == 0 {
-        return 0;
-    }
-    numerator
-        .saturating_mul(1000)
-        .checked_div(denominator)
-        .unwrap_or(0)
-        .min(1000) as u16
 }

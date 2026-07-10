@@ -44,8 +44,11 @@ rg -n -i "(token|secret|password|api[_-]?key|private[_-]?key|credential|github_p
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
 git diff --check
 ```
 
@@ -56,7 +59,7 @@ git diff --check
 - crates.io や plugin marketplace への公開。
 - 外部利用者への support SLA。
 - security program の完全性。
-- RepoSeiri score による品質保証。
+- RepoSeiri score を品質の根拠として扱うこと。
 - GitHub visibility の暗黙変更。
 
 ### visibility と公開状態の最終確認
@@ -113,8 +116,11 @@ rg -n -i "(token|secret|password|api[_-]?key|private[_-]?key|credential|github_p
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
 git diff --check
 ```
 
@@ -125,7 +131,7 @@ If `rg` reports a real secret candidate instead of documentation text, handle se
 - Publication to crates.io or a plugin marketplace.
 - A support SLA for external users.
 - Completeness of a security program.
-- Quality guarantees from RepoSeiri scores.
+- Treating RepoSeiri scores as evidence of quality.
 - Implicit GitHub visibility changes.
 
 ### Final Visibility And Public-State Check

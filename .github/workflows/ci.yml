@@ -45,6 +45,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Check minimum supported Rust version
+        run: |
+          rustup toolchain install 1.76.0 --profile minimal
+          cargo +1.76.0 check --workspace --all-targets --locked
+
       - name: Prepare RepoSeiri self-audit artifacts
         run: mkdir -p target/reposeiri-self-audit
 
@@ -57,10 +62,16 @@ jobs:
       - name: Build Codex review context
         run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown | tee target/reposeiri-self-audit/codex.md
 
+      - name: Build Codex native v2 context
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json | tee target/reposeiri-self-audit/codex-native-v2.json
+
+      - name: Build Codex linter context
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
+
       - name: Upload RepoSeiri self-audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: reposeiri-self-audit
-          path: target/reposeiri-self-audit/*.md
+          path: target/reposeiri-self-audit/*
           if-no-files-found: error
