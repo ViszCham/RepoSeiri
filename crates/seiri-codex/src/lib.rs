@@ -10,10 +10,17 @@ use seiri_core::{
 use std::collections::BTreeSet;
 
 mod v4;
+mod v5;
 
 pub use v4::{
     render_linter_context_markdown, render_native_context_markdown, render_query_view_markdown,
     CodexReviewKernel,
+};
+pub use v5::{
+    render_native_v3_query_markdown, CodexNativeV3DocumentsQuery, CodexNativeV3EvidenceQuery,
+    CodexNativeV3GovernanceQuery, CodexNativeV3PatchQuery, CodexNativeV3Query,
+    CodexNativeV3QueryKind, CodexNativeV3QueryView, CodexNativeV3RoutesQuery, CodexNativeV3Summary,
+    CodexNativeV3View,
 };
 
 #[must_use]

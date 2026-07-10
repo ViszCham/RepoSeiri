@@ -1,6 +1,6 @@
 use seiri_core::{stable_id, CodexCommand, CodexNativeAction, ProfileKind, RepoSnapshot};
 
-pub(super) fn build_native_actions(
+pub(crate) fn build_native_actions(
     snapshot: &RepoSnapshot,
     profile: Option<ProfileKind>,
 ) -> Vec<CodexNativeAction> {

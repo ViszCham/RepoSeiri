@@ -2,10 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 mod base;
+mod binding;
 mod engine;
 
 use base::detect_line_ending;
 pub use base::{PatchBaseDigest, TextDocumentBase, TextEditSpan, TextEncoding, TextLineEnding};
+pub use binding::{
+    PatchAnalysisRun, PatchAnchorContext, PatchAnchorSlice, PatchProposalBinding,
+    PatchProposalBindingError, PATCH_ANCHOR_CONTEXT_BYTES,
+};
 
 pub const PATCH_PROPOSAL_SCHEMA_VERSION: &str = "seiri.patch_proposal.v1";
 
@@ -115,6 +120,8 @@ pub enum PatchProposalIssueKind {
     OverlappingSpans,
     UnresolvedPolicySlot,
     StaleBase,
+    AnalysisBindingMismatch,
+    StaleAnchorContext,
     OutputLengthOverflow,
 }
 
@@ -140,6 +147,8 @@ impl PatchProposalIssueKind {
             | Self::SpanNotUtf8Boundary
             | Self::OverlappingSpans
             | Self::StaleBase
+            | Self::AnalysisBindingMismatch
+            | Self::StaleAnchorContext
             | Self::OutputLengthOverflow => PatchProposalDecision::Reject,
         }
     }

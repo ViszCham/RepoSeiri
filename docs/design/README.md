@@ -12,7 +12,7 @@
 | 2 | [Baseline And Profiles](baseline-and-profiles.md) | 分析データ、common baseline、目的別 profile の扱いを読むとき。 |
 | 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Rust module 境界、safe/guarded/manual gate、verification を読むとき。 |
 | 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | 実装block、将来拡張、calibration ingest 準備を読むとき。 |
-| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | claim boundary、route meaning、wording lint、local-only calibration guard の実装条件を読むとき。 |
+| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Q0-Q34のclaim boundary、evidence-closed route、coverage、wording、patch safetyの実装条件を読むとき。 |
 
 ### Boundaries
 
@@ -45,7 +45,7 @@ This subindex defines the reading order and responsibility boundaries for RepoSe
 | 2 | [Baseline And Profiles](baseline-and-profiles.md) | Reading analysis data handling, common baseline, and purpose-specific profiles. |
 | 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Reading Rust module boundaries, safe/guarded/manual gates, and verification. |
 | 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | Reading implementation blocks, future extension, and calibration ingest preparation. |
-| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Reading implementation criteria for claim boundaries, route meanings, wording linting, and local-only calibration guards. |
+| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Reading Q0-Q34 implementation criteria for claim boundaries, evidence-closed routes, coverage, wording, and patch safety. |
 
 ### Boundaries
 

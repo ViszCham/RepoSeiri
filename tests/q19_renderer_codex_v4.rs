@@ -14,7 +14,7 @@ fn fixture(name: &str) -> PathBuf {
 fn build_kernel(name: &str, profile: ProfileKind) -> seiri_codex::CodexReviewKernel {
     let root = fixture(name);
     let snapshot = seiri_report::audit_repository_with_profile(&root, profile).expect("audit");
-    let plan = seiri_planner::plan_safe_patches(&snapshot);
+    let plan = seiri_planner::plan_compatibility_safe_patches(&snapshot);
     let linter =
         seiri_report::lint_wording_repository_with_profile(&root, profile).expect("wording lint");
     seiri_codex::build_review_kernel(&snapshot, &plan, Some(&linter))
@@ -108,7 +108,7 @@ fn q19_argv_commands_preserve_arguments_and_validate_wire_input() {
     .is_err());
 
     let snapshot = RepoSnapshot::new(path);
-    let plan = seiri_planner::plan_safe_patches(&snapshot);
+    let plan = seiri_planner::plan_compatibility_safe_patches(&snapshot);
     let kernel = seiri_codex::build_review_kernel(&snapshot, &plan, None);
     let native = kernel.native_v2();
     assert!(native.actions[0]

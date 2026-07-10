@@ -5,10 +5,11 @@ pub use registry::{ProfileDefinition, ProfileRegistry, ProfileRegistryError};
 pub use weight::StaticProfileWeight;
 
 use seiri_core::{
-    BaselineReport, BaselineRuleResult, BaselineStatus, FileKind, Finding, GateKind,
-    ImportantFileKind, ProfileBranch, ProfileBranchSummary, ProfileEvidenceBasis, ProfileKind,
-    ProfilePriority, ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView,
-    ProfileWeightBasis, RepoSnapshot, RouteKind, Severity,
+    facet_evidence_ids, BaselineReport, BaselineRuleResult, BaselineStatus, FacetAssessment,
+    FacetReport, FileKind, Finding, GateKind, ImportantFileKind, Observation, ProfileBranch,
+    ProfileBranchSummary, ProfileEvidenceBasis, ProfileKind, ProfilePriority,
+    ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, ProfileWeightBasis,
+    RepoSnapshot, RepositoryFacet, RouteKind, Severity,
 };
 use std::collections::BTreeMap;
 
@@ -30,6 +31,27 @@ pub fn evaluate_profile(snapshot: &RepoSnapshot, profile: ProfileKind) -> Option
     report.branch_summary = profile_branch_summary(profile, &branches);
     report.branches = branches;
     Some(report)
+}
+
+/// Evaluates coexisting repository facets without selecting a repository type.
+#[must_use]
+pub fn evaluate_facets(snapshot: &RepoSnapshot) -> FacetReport {
+    let facets = RepositoryFacet::ALL
+        .into_iter()
+        .map(|facet| {
+            let evidence = facet_evidence_ids(facet, snapshot.evidence_kernel.facts());
+            let observation = if evidence.is_empty() {
+                snapshot
+                    .coverage
+                    .observe_absence(seiri_core::CoverageScope::RepositoryFiles)
+            } else {
+                Observation::present((), evidence)
+                    .expect("facet evidence ids are non-empty after collection")
+            };
+            FacetAssessment { facet, observation }
+        })
+        .collect();
+    FacetReport::try_new(facets).expect("complete facet evaluation is canonical")
 }
 
 #[must_use]

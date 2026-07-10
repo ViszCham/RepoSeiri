@@ -152,10 +152,26 @@ pub fn read_jsonl_records<R: BufRead>(
 
 #[must_use]
 pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
-    let known_patterns = known_pattern_ids();
-    let pattern_routes = pattern_route_map();
+    let pack = seiri_patterns::common_pattern_pack();
+    calibrate_dataset_with_pattern_pack(dataset, &pack)
+}
+
+#[must_use]
+pub fn calibrate_dataset_with_pattern_pack(
+    dataset: &BenchmarkDataset,
+    pack: &seiri_patterns::PatternPack,
+) -> CalibrationRun {
+    let selected_records = dataset
+        .records
+        .iter()
+        .filter(|record| pack.matches_record(record))
+        .collect::<Vec<_>>();
+    let eligible_records = selected_records.len();
+    let excluded_records = dataset.records.len().saturating_sub(eligible_records);
+    let known_patterns = known_pattern_ids(pack.registry());
+    let pattern_routes = pattern_route_map(pack.registry());
     let current_weights = current_weight_map();
-    let profile_totals = profile_totals(&dataset.records);
+    let profile_totals = profile_totals(selected_records.iter().copied());
     let profiles = profiles_for_suggestions(&profile_totals);
     let sources = calibration_sources(dataset);
     let source_ids = source_ids(&sources);
@@ -163,7 +179,7 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
     let mut routes = BTreeMap::<RouteKind, RouteAccumulator>::new();
     let mut pending = BTreeMap::<String, PendingAccumulator>::new();
 
-    for record in &dataset.records {
+    for record in &selected_records {
         let mut repo_patterns = BTreeSet::new();
         for observed in &record.observed_patterns {
             if let Some(route) = route_for_observed(observed, &pattern_routes) {
@@ -206,7 +222,7 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
     }
 
     let resource_trace = materialized_resource_trace(
-        dataset,
+        &selected_records,
         &stats,
         &routes,
         &pending,
@@ -216,13 +232,13 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
 
     let pattern_stats = build_pattern_stats(
         &stats,
-        dataset.records.len(),
+        eligible_records,
         &profile_totals,
         &pattern_routes,
         &source_ids,
     );
-    let route_requirements = build_route_requirements(&routes, dataset.records.len(), &source_ids);
-    let profile_branches = build_profile_branches(&profile_totals, dataset.records.len());
+    let route_requirements = build_route_requirements(&routes, eligible_records, &source_ids);
+    let profile_branches = build_profile_branches(&profile_totals, eligible_records);
     let pending_patterns = build_pending_patterns(pending, &source_ids);
     let weight_suggestions = build_weight_suggestions(
         &pattern_stats,
@@ -236,9 +252,12 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
         schema_version: SCHEMA_VERSION.to_string(),
         run_id: stable_id("calibration-run", 1),
         dataset_id: dataset.dataset_id.clone(),
+        pattern_pack: Some(
+            pack.calibration_metadata_for_counts(eligible_records, excluded_records),
+        ),
         sources,
         summary: CalibrationSummary {
-            records: dataset.records.len(),
+            records: eligible_records,
             sources: source_ids.len(),
             known_pattern_stats: pattern_stats.len(),
             route_requirements: route_requirements.len(),
@@ -256,8 +275,20 @@ pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
     }
 }
 
-fn materialized_resource_trace(
+#[must_use]
+pub fn calibrate_local_dataset_with_pattern_pack(
     dataset: &BenchmarkDataset,
+    pack: &seiri_patterns::PatternPack,
+) -> CalibrationRun {
+    let mut local_dataset = dataset.clone();
+    for source in &mut local_dataset.calibration_sources {
+        source.visibility = CalibrationSourceVisibility::LocalOnly;
+    }
+    calibrate_dataset_with_pattern_pack(&local_dataset, pack)
+}
+
+fn materialized_resource_trace(
+    records: &[&BenchmarkRepoRecord],
     stats: &BTreeMap<String, StatAccumulator>,
     routes: &BTreeMap<RouteKind, RouteAccumulator>,
     pending: &BTreeMap<String, PendingAccumulator>,
@@ -303,10 +334,9 @@ fn materialized_resource_trace(
     CalibrationResourceTrace {
         aggregation_mode: CalibrationAggregationMode::MaterializedCompatibility,
         record_identity: CalibrationRecordIdentity::RepositoryIdDeduplicated,
-        records_seen: dataset.records.len(),
+        records_seen: records.len(),
         max_buffered_line_bytes: 0,
-        max_patterns_per_record: dataset
-            .records
+        max_patterns_per_record: records
             .iter()
             .map(|record| record.observed_patterns.len())
             .max()
@@ -321,7 +351,7 @@ fn materialized_resource_trace(
         co_occurrence_slots: stats.values().map(|stat| stat.co_repositories.len()).sum(),
         pending_pattern_slots: pending.len(),
         metadata_source_slots,
-        retained_records: dataset.records.len(),
+        retained_records: records.len(),
         retained_repository_id_entries: stat_repository_entries
             + route_repository_entries
             + pending_repository_entries,
@@ -389,16 +419,16 @@ fn dataset_from_records(path: &Path, records: Vec<BenchmarkRepoRecord>) -> Bench
     }
 }
 
-fn known_pattern_ids() -> BTreeSet<String> {
-    seiri_patterns::common_registry()
+fn known_pattern_ids(registry: &seiri_patterns::PatternRegistry) -> BTreeSet<String> {
+    registry
         .definitions()
         .iter()
         .map(|definition| definition.id.to_string())
         .collect()
 }
 
-fn pattern_route_map() -> BTreeMap<String, RouteKind> {
-    seiri_patterns::common_registry()
+fn pattern_route_map(registry: &seiri_patterns::PatternRegistry) -> BTreeMap<String, RouteKind> {
+    registry
         .definitions()
         .iter()
         .filter_map(|definition| {
@@ -423,7 +453,9 @@ fn current_weight_map() -> BTreeMap<(ProfileKind, String), u32> {
     map
 }
 
-fn profile_totals(records: &[BenchmarkRepoRecord]) -> BTreeMap<ProfileKind, usize> {
+fn profile_totals<'a>(
+    records: impl IntoIterator<Item = &'a BenchmarkRepoRecord>,
+) -> BTreeMap<ProfileKind, usize> {
     let mut totals = BTreeMap::new();
     for record in records {
         if let Some(profile) = record.profile_hint {

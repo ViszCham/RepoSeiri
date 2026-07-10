@@ -150,6 +150,6 @@ fn common_baseline_does_not_credit_nested_license_as_root_license() {
             && pattern_match.outcome == PatternOutcome::Missing
     }));
     assert!(snapshot.route_states.iter().any(|state| {
-        state.route == RouteKind::License && state.state == RouteState::Inherited
+        state.route == RouteKind::License && state.state == RouteState::UnsafeToInvent
     }));
 }

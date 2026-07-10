@@ -1,7 +1,7 @@
 use seiri_core::{
     DocumentDiagnosticKind, DocumentEvent, DocumentScan, EvidenceKind, ImportantFileKind,
 };
-use seiri_fs::{FsError, IgnorePolicy, ScanOptions, WalkLimitKind};
+use seiri_fs::{IgnorePolicy, ScanOptions, WalkCompletion, WalkLimitKind};
 use seiri_markdown::{DocumentScanOptions, MarkdownError};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,45 +55,46 @@ fn q15_bounded_walker_separates_ignore_and_classification() {
 }
 
 #[test]
-fn q15_walker_limits_fail_closed() {
+fn q23_walker_limits_return_typed_partial_records() {
     let repo = TempRepo::new("walker-limits");
     repo.write("README.md", "# Fixture\n");
     repo.write("one.txt", "1\n");
     repo.write("nested/two.txt", "2\n");
 
-    let entry_error = seiri_fs::walk_repository_with_options(
+    let entry_partial = seiri_fs::walk_repository_with_options(
         repo.path(),
         &ScanOptions {
             max_entries: 1,
             ..ScanOptions::default()
         },
     )
-    .expect_err("entry limit must fail");
+    .expect("entry limit returns a partial walk");
     assert!(matches!(
-        entry_error,
-        FsError::LimitExceeded {
-            kind: WalkLimitKind::Entries,
-            limit: 1,
-            ..
-        }
+        entry_partial.summary().completion,
+        WalkCompletion::Truncated(ref truncation)
+            if matches!(truncation.kind, WalkLimitKind::Entries)
+                && truncation.limit == 1
     ));
+    assert!(entry_partial.records().len() <= 1);
 
-    let depth_error = seiri_fs::walk_repository_with_options(
+    let depth_partial = seiri_fs::walk_repository_with_options(
         repo.path(),
         &ScanOptions {
             max_depth: 0,
             ..ScanOptions::default()
         },
     )
-    .expect_err("depth limit must fail");
+    .expect("depth limit returns a partial walk");
     assert!(matches!(
-        depth_error,
-        FsError::LimitExceeded {
-            kind: WalkLimitKind::Depth,
-            limit: 0,
-            ..
-        }
+        depth_partial.summary().completion,
+        WalkCompletion::Truncated(ref truncation)
+            if matches!(truncation.kind, WalkLimitKind::Depth)
+                && truncation.limit == 0
     ));
+    assert!(depth_partial
+        .records()
+        .iter()
+        .all(|record| record.path != "nested/two.txt"));
 }
 
 #[test]
@@ -232,6 +233,18 @@ fn q15_audit_uses_document_events_as_canonical_evidence_input() {
             + summary.badges.len()
             + summary.route_candidates.len()
     );
+    let expected_markdown_fact_count = snapshot
+        .document_index
+        .scanned_documents()
+        .map(|indexed| {
+            indexed
+                .scan
+                .as_ref()
+                .expect("scanned index entry")
+                .events()
+                .len()
+        })
+        .sum::<usize>();
     let markdown_fact_count = snapshot
         .evidence_kernel
         .facts()
@@ -246,7 +259,7 @@ fn q15_audit_uses_document_events_as_canonical_evidence_input() {
             )
         })
         .count();
-    assert_eq!(markdown_fact_count, document.events().len());
+    assert_eq!(markdown_fact_count, expected_markdown_fact_count);
     assert!(document.events().iter().all(|event| {
         let span = event.span();
         snapshot

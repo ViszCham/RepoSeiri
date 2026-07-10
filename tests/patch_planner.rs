@@ -19,7 +19,8 @@ fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
     let plan = seiri_planner::plan_safe_patches(&snapshot);
 
     assert_eq!(plan.mode, seiri_core::PatchPlanMode::DryRun);
-    assert_eq!(plan.planner_version, "safe_patch_planner.v3");
+    assert_eq!(plan.planner_version, "safe_patch_planner.v4");
+    assert!(plan.analysis_run.is_some());
     assert!(!plan.safety_policy.writes_files);
     assert!(!plan.safety_policy.applies_patches);
     assert!(plan.safety_policy.safe_gate_only);
@@ -48,12 +49,21 @@ fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
         plan.operations[0].proposal.preflight_structure().decision,
         seiri_core::PatchProposalDecision::Ready
     );
+    assert!(plan.operations[0].binding.is_some());
     assert!(plan.operations[0].preflight.iter().any(|check| {
         check.kind == PatchPreflightCheckKind::ExistingReadme
             && check.status == PatchPreflightStatus::Pass
     }));
     assert!(plan.operations[0].preflight.iter().any(|check| {
         check.kind == PatchPreflightCheckKind::ExistingTarget
+            && check.status == PatchPreflightStatus::Pass
+    }));
+    assert!(plan.operations[0].preflight.iter().any(|check| {
+        check.kind == PatchPreflightCheckKind::CurrentAnalysisInput
+            && check.status == PatchPreflightStatus::Pass
+    }));
+    assert!(plan.operations[0].preflight.iter().any(|check| {
+        check.kind == PatchPreflightCheckKind::AnchorContextBound
             && check.status == PatchPreflightStatus::Pass
     }));
     assert!(plan.operations[0]
@@ -98,13 +108,13 @@ fn patch_plan_report_renders_json_and_markdown() {
     let markdown = seiri_report::plan_to_markdown(&plan);
 
     assert!(json.contains("\"mode\": \"dry_run\""));
-    assert!(json.contains("\"planner_version\": \"safe_patch_planner.v3\""));
+    assert!(json.contains("\"planner_version\": \"safe_patch_planner.v4\""));
     assert!(json.contains("\"schema_version\": \"seiri.patch_proposal.v1\""));
     assert!(json.contains("\"safety_policy\""));
     assert!(json.contains("\"preflight\""));
     assert!(json.contains("\"operations\""));
     assert!(markdown.contains("# RepoSeiri Patch Plan"));
-    assert!(markdown.contains("Planner: `safe_patch_planner.v3`"));
+    assert!(markdown.contains("Planner: `safe_patch_planner.v4`"));
     assert!(markdown.contains("Patch Proposal IR:"));
     assert!(markdown.contains("Preflight:"));
     assert!(markdown.contains("## Safe Fixes"));

@@ -52,10 +52,16 @@ fn q18_planner_binds_safe_edit_to_scanner_base_and_applies_only_in_memory() {
         operation.proposal.preflight_against(&source).decision,
         PatchProposalDecision::Ready
     );
+    let binding = operation.binding.as_ref().expect("Q34 operation binding");
+    assert_eq!(
+        binding
+            .preflight_against(&operation.proposal, &source)
+            .decision,
+        PatchProposalDecision::Ready
+    );
 
-    let output = operation
-        .proposal
-        .apply_to_bytes(&source)
+    let output = binding
+        .apply_to_bytes(&operation.proposal, &source)
         .expect("ready proposal applies to an owned byte buffer");
     assert_eq!(&output[..source.len()], source.as_slice());
     assert!(String::from_utf8(output)

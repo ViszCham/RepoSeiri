@@ -6,8 +6,8 @@ mod walker;
 
 pub use walker::{
     resolve_repo_root, walk_repository, walk_repository_with_options, FsError, IgnorePolicy,
-    RepositoryRoot, RepositoryWalk, RepositoryWalkSummary, ScanOptions, WalkLimitKind,
-    DEFAULT_IGNORED_NAMES,
+    RepositoryRoot, RepositoryWalk, RepositoryWalkSummary, ScanOptions, WalkCompletion,
+    WalkLimitKind, WalkTruncation, DEFAULT_IGNORED_NAMES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

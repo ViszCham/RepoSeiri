@@ -1,11 +1,21 @@
 mod boundary;
 mod detector;
 mod fixture;
+mod pack;
+mod predicate;
 mod registry;
 
 pub use boundary::PatternBoundary;
 pub use detector::PatternDetector;
 pub use fixture::{common_negative_fixtures, PatternNegativeFixture};
+pub use pack::{
+    common_pattern_pack, profile_pattern_pack, PatternFixture, PatternFixtureKind, PatternPack,
+    PatternPackCondition, PatternPackError, RegistryFingerprint,
+};
+pub use predicate::{
+    PredicateAtom, PredicateContext, PredicateInstruction, PredicateProgram, PredicateProgramError,
+    MAX_PREDICATE_ATOMS, MAX_PREDICATE_OPERATIONS, MAX_PREDICATE_STACK,
+};
 pub use registry::{
     PatternAdoptionStage, PatternDefinition, PatternRegistry, PatternRegistryError,
 };
@@ -682,6 +692,7 @@ fn pattern(
             recommendation_title,
             recommendation_message,
         },
+        predicate: None,
     }
 }
 

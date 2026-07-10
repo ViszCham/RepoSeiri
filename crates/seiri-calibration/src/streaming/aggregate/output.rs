@@ -19,6 +19,8 @@ impl StreamingAccumulator {
         metadata: crate::StreamingCalibrationMetadata,
         replay_digest: CalibrationReplayDigest,
     ) -> CalibrationRun {
+        let pattern_pack = seiri_patterns::common_pattern_pack()
+            .calibration_metadata_for_counts(self.records_seen, 0);
         let sources = vec![CalibrationSource {
             id: stable_id("calibration-source", 1),
             kind: CalibrationSourceKind::JsonlRecords,
@@ -86,6 +88,7 @@ impl StreamingAccumulator {
             schema_version: SCHEMA_VERSION.to_string(),
             run_id: stable_id("calibration-run", 1),
             dataset_id: metadata.dataset_id,
+            pattern_pack: Some(pattern_pack),
             sources,
             summary: CalibrationSummary {
                 records: self.records_seen,

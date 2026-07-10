@@ -2,17 +2,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod codex_view;
+mod document_index;
 mod document_scan;
 mod evidence_kernel;
+mod evidence_v2;
+mod facets;
+mod github_local;
+mod obligation_graph;
+mod observation;
 mod patch_proposal;
+mod remote_evidence;
+mod review_priority;
 mod route_assessment;
+mod route_content;
 
 pub use codex_view::{
     CodexCommand, CodexCommandError, CodexLinterContext, CodexNativeAction,
     CodexNativeAuditSummary, CodexNativeReviewContext, CodexNativeRouteSummary, CodexQueryData,
     CodexQueryKind, CodexQueryView, CodexRoutesQuery, CodexSummaryQuery,
     CODEX_KERNEL_SCHEMA_VERSION, CODEX_LINTER_CONTEXT_SCHEMA_VERSION, CODEX_NATIVE_SCHEMA_VERSION,
-    CODEX_QUERY_SCHEMA_VERSION,
+    CODEX_NATIVE_V3_SCHEMA_VERSION, CODEX_QUERY_SCHEMA_VERSION,
+};
+pub use document_index::{
+    DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentScanStatus,
+    IndexedDocument,
 };
 pub use document_scan::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan,
@@ -22,16 +35,50 @@ pub use evidence_kernel::{
     stable_evidence_id, EvidenceDraft, EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel,
     EvidenceKernelError, EvidenceOrigin, EvidenceScanner, ParseEvidenceIdError,
 };
+pub use evidence_v2::{
+    ByteOffset, DocumentId, DocumentRecord, EvidenceAtom, EvidenceFactV2, EvidenceKernelV2,
+    EvidenceKernelV2Error, EvidenceProducer, EvidenceProvenance, MarkdownEvidenceKind,
+    ReadmePresence, SourceDomain, SourceSpanV2,
+};
+pub use facets::{
+    facet_evidence_ids, FacetAssessment, FacetReport, FacetReportError, RepositoryFacet,
+};
+pub use github_local::{
+    CodeownerEntry, Codeowners, DependencyBot, DependencyBotProvider, DependencyUpdate,
+    GithubDiagnostic, GithubDiagnosticKind, GithubDocumentIr, GithubDocumentKind,
+    GithubLocalDocument, GithubLocalDocumentError, GithubLocalDocuments, GithubLocalDocumentsError,
+    GithubParseStatus, IssueForm, IssueFormField, IssueFormFieldKind, StructuredBudgetKind,
+    Workflow, WorkflowJob, WorkflowTrigger,
+};
+pub use obligation_graph::{
+    ConditionalObligation, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
+    DocumentConsistencyReport,
+};
+pub use observation::{
+    CoverageId, CoverageIncompleteReason, CoverageIndex, CoverageIndexError, CoverageRecord,
+    CoverageScope, CoverageStatus, EvidenceSet, Observation, ObservationError, UnknownReason,
+};
 pub use patch_proposal::{
-    PatchBaseDigest, PatchEditContent, PatchProposal, PatchProposalApplyError,
+    PatchAnalysisRun, PatchAnchorContext, PatchAnchorSlice, PatchBaseDigest, PatchEditContent,
+    PatchProposal, PatchProposalApplyError, PatchProposalBinding, PatchProposalBindingError,
     PatchProposalDecision, PatchProposalIssue, PatchProposalIssueKind, PatchProposalPreflight,
     PatchTextEdit, PolicySlotKind, TextDocumentBase, TextEditSpan, TextEncoding, TextLineEnding,
-    UnresolvedPolicySlot, PATCH_PROPOSAL_SCHEMA_VERSION,
+    UnresolvedPolicySlot, PATCH_ANCHOR_CONTEXT_BYTES, PATCH_PROPOSAL_SCHEMA_VERSION,
+};
+pub use remote_evidence::{
+    RemoteEvidenceReport, RemoteEvidenceStatus, RemoteRepositoryMetadata,
+    RemoteRepositoryReference, RemoteRepositoryReferenceError, RemoteUnavailableReason,
+};
+pub use review_priority::{
+    ReviewGap, ReviewGapKind, ReviewPriority, ReviewPriorityReport, ReviewPrioritySummary,
 };
 pub use route_assessment::{
     LegacyRouteProjection, ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment,
     RouteAssessmentError, RouteConflictAssessment, RouteEvidenceGroups, RouteFreshness,
     RoutePolicyBoundary, RoutePresenceAssessment, TargetReachabilityAssessment,
+};
+pub use route_content::{
+    ContentObservation, RouteContentAssessment, RouteContentAtom, RouteContentAtomAssessment,
 };
 
 pub const SCHEMA_VERSION: &str = "seiri.block_p.v1";
@@ -46,12 +93,28 @@ pub struct RepoSnapshot {
     pub entry_count: usize,
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
+    #[serde(skip, default)]
+    pub document_index: DocumentIndex,
+    #[serde(skip, default)]
+    pub github_local_documents: GithubLocalDocuments,
     #[serde(default)]
     pub readme_document: Option<DocumentScan>,
     // Compatibility document view retained until renderer/schema separation in Q19.
     pub readme: Option<ReadmeSummary>,
     #[serde(default)]
     pub evidence_kernel: EvidenceKernel,
+    #[serde(skip, default)]
+    pub evidence_kernel_v2: EvidenceKernelV2,
+    #[serde(skip, default)]
+    pub coverage: CoverageIndex,
+    #[serde(skip, default)]
+    pub route_content: Vec<RouteContentAssessment>,
+    #[serde(skip, default)]
+    pub facets: FacetReport,
+    #[serde(skip, default)]
+    pub document_consistency: DocumentConsistencyReport,
+    #[serde(skip, default)]
+    pub remote_evidence: RemoteEvidenceReport,
     // Compatibility views retained until renderer/schema separation in Q19.
     pub evidence: Vec<Evidence>,
     pub evidence_ledger: Vec<EvidenceRecord>,
@@ -61,6 +124,8 @@ pub struct RepoSnapshot {
     // Compatibility projections retained until renderer/schema separation in Q19.
     pub route_states: Vec<RouteStateReport>,
     pub missing_route_priority: MissingRoutePriorityReport,
+    #[serde(skip, default)]
+    pub review_priority: ReviewPriorityReport,
     #[serde(default)]
     pub claims: Vec<ContentClaim>,
     pub baseline: Option<BaselineReport>,
@@ -78,15 +143,24 @@ impl RepoSnapshot {
             entry_count: 0,
             files: Vec::new(),
             important_files: Vec::new(),
+            document_index: DocumentIndex::default(),
+            github_local_documents: GithubLocalDocuments::default(),
             readme_document: None,
             readme: None,
             evidence_kernel: EvidenceKernel::default(),
+            evidence_kernel_v2: EvidenceKernelV2::default(),
+            coverage: CoverageIndex::default(),
+            route_content: Vec::new(),
+            facets: FacetReport::default(),
+            document_consistency: DocumentConsistencyReport::default(),
+            remote_evidence: RemoteEvidenceReport::default(),
             evidence: Vec::new(),
             evidence_ledger: Vec::new(),
             pattern_matches: Vec::new(),
             route_assessments: Vec::new(),
             route_states: Vec::new(),
             missing_route_priority: MissingRoutePriorityReport::empty(),
+            review_priority: ReviewPriorityReport::default(),
             claims: Vec::new(),
             baseline: None,
             profile: None,
@@ -1111,6 +1185,8 @@ pub struct CalibrationRun {
     pub schema_version: String,
     pub run_id: String,
     pub dataset_id: String,
+    #[serde(default)]
+    pub pattern_pack: Option<CalibrationPatternPack>,
     pub sources: Vec<CalibrationSource>,
     pub summary: CalibrationSummary,
     pub stats: Vec<PatternStats>,
@@ -1121,6 +1197,16 @@ pub struct CalibrationRun {
     #[serde(default)]
     pub resource_trace: CalibrationResourceTrace,
     pub claim_boundary: ClaimBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalibrationPatternPack {
+    pub id: String,
+    pub version: String,
+    pub condition: String,
+    pub registry_fingerprint: String,
+    pub eligible_records: usize,
+    pub excluded_records: usize,
 }
 
 impl CalibrationRun {
@@ -2076,6 +2162,8 @@ pub struct PatchPlan {
     pub mode: PatchPlanMode,
     pub profile: Option<ProfileKind>,
     pub safety_policy: PatchPlanSafetyPolicy,
+    #[serde(skip, default)]
+    pub analysis_run: Option<PatchAnalysisRun>,
     pub summary: PatchPlanSummary,
     pub operations: Vec<PatchPlanOperation>,
     pub blocked: Vec<PatchPlanBlockedItem>,
@@ -2129,6 +2217,8 @@ pub struct PatchPlanOperation {
     pub rationale: String,
     pub planned_change: String,
     pub proposal: PatchProposal,
+    #[serde(skip, default)]
+    pub binding: Option<PatchProposalBinding>,
     pub preflight: Vec<PatchPreflightCheck>,
     pub diff_preview: Vec<String>,
 }
@@ -2199,6 +2289,9 @@ pub enum PatchPreflightCheckKind {
     ExistingTarget,
     NoPolicyContent,
     BaseDigestBound,
+    CurrentAnalysisInput,
+    AnalysisRunBound,
+    AnchorContextBound,
     EncodingKnown,
     LineEndingBound,
     NonOverlappingSpans,

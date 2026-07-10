@@ -154,10 +154,12 @@ dependencies = [
  "seiri-codex",
  "seiri-core",
  "seiri-fs",
+ "seiri-github-local",
  "seiri-markdown",
  "seiri-patterns",
  "seiri-planner",
  "seiri-profiles",
+ "seiri-remote",
  "seiri-report",
  "serde_json",
 ]
@@ -186,6 +188,7 @@ name = "seiri-codex"
 version = "0.1.0"
 dependencies = [
  "seiri-core",
+ "serde",
 ]
 
 [[package]]
@@ -200,6 +203,14 @@ name = "seiri-fs"
 version = "0.1.0"
 dependencies = [
  "seiri-core",
+]
+
+[[package]]
+name = "seiri-github-local"
+version = "0.1.0"
+dependencies = [
+ "seiri-core",
+ "serde_json",
 ]
 
 [[package]]
@@ -223,6 +234,7 @@ name = "seiri-planner"
 version = "0.1.0"
 dependencies = [
  "seiri-core",
+ "seiri-fs",
 ]
 
 [[package]]
@@ -233,6 +245,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seiri-remote"
+version = "0.1.0"
+dependencies = [
+ "seiri-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "seiri-report"
 version = "0.1.0"
 dependencies = [
@@ -240,10 +261,12 @@ dependencies = [
  "seiri-codex",
  "seiri-core",
  "seiri-fs",
+ "seiri-github-local",
  "seiri-markdown",
  "seiri-patterns",
  "seiri-planner",
  "seiri-profiles",
+ "seiri-remote",
  "serde_json",
 ]
 

@@ -105,12 +105,33 @@ pub enum WalkLimitKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkTruncation {
+    pub kind: WalkLimitKind,
+    pub path: String,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalkCompletion {
+    Complete,
+    Truncated(WalkTruncation),
+}
+
+impl WalkCompletion {
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryWalkSummary {
     pub max_depth: usize,
     pub max_entries: usize,
     pub visited_entries: usize,
     pub ignored_entries: usize,
     pub max_depth_reached: usize,
+    pub completion: WalkCompletion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +221,7 @@ pub fn walk_repository_with_options(
         visited_entries: state.records.len(),
         ignored_entries: state.ignored_entries,
         max_depth_reached: state.max_depth_reached,
+        completion: state.completion.unwrap_or(WalkCompletion::Complete),
     };
     Ok(RepositoryWalk {
         root,
@@ -217,6 +239,7 @@ struct WalkState {
     records: Vec<FileRecord>,
     ignored_entries: usize,
     max_depth_reached: usize,
+    completion: Option<WalkCompletion>,
 }
 
 fn walk_dir(
@@ -226,16 +249,24 @@ fn walk_dir(
     options: &ScanOptions,
     state: &mut WalkState,
 ) -> Result<(), FsError> {
-    let entries = fs::read_dir(dir).map_err(|source| FsError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    if state.completion.is_some() {
+        return Ok(());
+    }
 
-    for entry_result in entries {
-        let entry = entry_result.map_err(|source| FsError::Io {
+    let entries = fs::read_dir(dir)
+        .map_err(|source| FsError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| FsError::Io {
             path: dir.to_path_buf(),
             source,
         })?;
+    let mut entries = entries;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
         let path = entry.path();
         let name = entry.file_name();
         if should_ignore_name(&name.to_string_lossy(), options) {
@@ -243,11 +274,12 @@ fn walk_dir(
             continue;
         }
         if state.records.len() >= options.max_entries {
-            return Err(FsError::LimitExceeded {
+            state.completion = Some(WalkCompletion::Truncated(WalkTruncation {
                 kind: WalkLimitKind::Entries,
-                path,
+                path: normalize_relative_path(root, &path),
                 limit: options.max_entries,
-            });
+            }));
+            return Ok(());
         }
 
         let file_type = entry.file_type().map_err(|source| FsError::Io {
@@ -282,11 +314,12 @@ fn walk_dir(
 
         if file_type.is_dir() {
             if depth >= options.max_depth {
-                return Err(FsError::LimitExceeded {
+                state.completion = Some(WalkCompletion::Truncated(WalkTruncation {
                     kind: WalkLimitKind::Depth,
-                    path,
+                    path: normalize_relative_path(root, &path),
                     limit: options.max_depth,
-                });
+                }));
+                return Ok(());
             }
             walk_dir(root, &path, depth + 1, options, state)?;
         }
