@@ -1,61 +1,22 @@
+mod boundary;
+mod detector;
+mod fixture;
+mod registry;
+
+pub use boundary::PatternBoundary;
+pub use detector::PatternDetector;
+pub use fixture::{common_negative_fixtures, PatternNegativeFixture};
+pub use registry::{
+    PatternAdoptionStage, PatternDefinition, PatternRegistry, PatternRegistryError,
+};
+
 use seiri_core::{
     stable_id, BaselineProfile, BaselineReport, BaselineRequirement, BaselineRuleResult,
-    BaselineStatus, BaselineSummary, EvidenceKind, EvidenceScope, Finding, GateKind,
+    BaselineStatus, BaselineSummary, EvidenceId, EvidenceKind, Finding, GateKind,
     ImportantFileKind, PatternGroup, PatternMatch, PatternOutcome, Recommendation, RepoSnapshot,
     RouteKind, Severity, SCHEMA_VERSION,
 };
 use serde::Serialize;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatternDefinition {
-    pub id: &'static str,
-    pub group: PatternGroup,
-    pub title: &'static str,
-    pub route: Option<RouteKind>,
-    pub detector: PatternDetector,
-    pub requirement: BaselineRequirement,
-    pub adoption_stage: PatternAdoptionStage,
-    pub missing_severity: Severity,
-    pub missing_gate: GateKind,
-    pub missing_title: &'static str,
-    pub missing_message: &'static str,
-    pub recommendation_title: &'static str,
-    pub recommendation_message: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatternAdoptionStage {
-    CommonBaseline,
-    Candidate,
-}
-
-impl PatternAdoptionStage {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::CommonBaseline => "common_baseline",
-            Self::Candidate => "candidate",
-        }
-    }
-
-    #[must_use]
-    pub fn active_in_common_baseline(self) -> bool {
-        matches!(self, Self::CommonBaseline)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatternDetector {
-    EvidenceKind(EvidenceKind),
-    Route(RouteKind),
-    ReadmeRoute(RouteKind),
-    ImportantFile(ImportantFileKind),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatternRegistry {
-    definitions: Vec<PatternDefinition>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PatternGroupDefinition {
@@ -70,6 +31,7 @@ pub struct PatternRegistryDocument {
     pub registry_version: &'static str,
     pub groups: Vec<PatternGroupDocument>,
     pub patterns: Vec<PatternDocument>,
+    pub negative_fixtures: Vec<PatternNegativeFixture>,
     pub claim_boundary: &'static str,
 }
 
@@ -79,8 +41,10 @@ pub struct PatternGroupDocument {
     pub title: &'static str,
     pub description: &'static str,
     pub pattern_count: usize,
+    pub detector_count: usize,
     pub baseline_count: usize,
     pub candidate_count: usize,
+    pub negative_fixture_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,56 +62,12 @@ pub struct PatternDocument {
     pub missing_severity: Severity,
 }
 
-impl PatternRegistry {
-    #[must_use]
-    pub fn new(definitions: Vec<PatternDefinition>) -> Self {
-        Self { definitions }
-    }
-
-    #[must_use]
-    pub fn definitions(&self) -> &[PatternDefinition] {
-        &self.definitions
-    }
-
-    #[must_use]
-    pub fn evaluation_definitions(&self) -> Vec<&PatternDefinition> {
-        self.definitions
-            .iter()
-            .filter(|definition| definition.adoption_stage.active_in_common_baseline())
-            .collect()
-    }
-
-    #[must_use]
-    pub fn evaluate_patterns(&self, snapshot: &RepoSnapshot) -> Vec<PatternMatch> {
-        self.evaluation_definitions()
-            .into_iter()
-            .enumerate()
-            .map(|(index, definition)| {
-                let evidence_ids = evidence_ids_for_detector(snapshot, definition.detector);
-                PatternMatch {
-                    id: stable_id("pattern-match", index + 1),
-                    pattern_id: definition.id.to_string(),
-                    title: definition.title.to_string(),
-                    route: definition.route,
-                    outcome: if evidence_ids.is_empty() {
-                        PatternOutcome::Missing
-                    } else {
-                        PatternOutcome::Present
-                    },
-                    evidence_ids,
-                    basis: detector_basis(definition.detector).to_string(),
-                }
-            })
-            .collect()
-    }
-}
-
 #[must_use]
 pub fn evidence_ids_for_definition(
     snapshot: &RepoSnapshot,
     definition: &PatternDefinition,
-) -> Vec<String> {
-    evidence_ids_for_detector(snapshot, definition.detector)
+) -> Vec<EvidenceId> {
+    definition.detector.evidence_ids(snapshot)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,7 +153,8 @@ pub fn pattern_groups() -> &'static [PatternGroupDefinition] {
 
 #[must_use]
 pub fn common_registry() -> PatternRegistry {
-    PatternRegistry::new(vec![
+    PatternRegistry::try_complete(
+        vec![
         baseline_pattern(
             PatternGroup::Idn,
             "common.identity.readme_present",
@@ -524,7 +445,10 @@ pub fn common_registry() -> PatternRegistry {
             "Expose hygiene route",
             "Use hygiene signals as review context, not as an automatic quality guarantee.",
         ),
-    ])
+        ],
+        common_negative_fixtures(),
+    )
+    .expect("built-in pattern registry must satisfy Q16 coverage invariants")
 }
 
 #[must_use]
@@ -542,6 +466,7 @@ pub fn registry_document(registry: &PatternRegistry) -> PatternRegistryDocument 
                 title: group_definition.title,
                 description: group_definition.description,
                 pattern_count: definitions.len(),
+                detector_count: definitions.len(),
                 baseline_count: definitions
                     .iter()
                     .filter(|definition| {
@@ -553,6 +478,9 @@ pub fn registry_document(registry: &PatternRegistry) -> PatternRegistryDocument 
                     .filter(|definition| {
                         definition.adoption_stage == PatternAdoptionStage::Candidate
                     })
+                    .count(),
+                negative_fixture_count: registry
+                    .negative_fixtures_for(group_definition.group)
                     .count(),
             }
         })
@@ -566,21 +494,22 @@ pub fn registry_document(registry: &PatternRegistry) -> PatternRegistryDocument 
             group: definition.group,
             title: definition.title,
             route: definition.route,
-            detector_kind: detector_basis(definition.detector),
-            detector: detector_label(definition.detector),
-            requirement: definition.requirement,
+            detector_kind: definition.detector.basis(),
+            detector: definition.detector.label(),
+            requirement: definition.boundary.requirement,
             adoption_stage: definition.adoption_stage.as_str(),
             active_in_common_baseline: definition.adoption_stage.active_in_common_baseline(),
-            missing_gate: definition.missing_gate,
-            missing_severity: definition.missing_severity,
+            missing_gate: definition.boundary.missing_gate,
+            missing_severity: definition.boundary.missing_severity,
         })
         .collect::<Vec<_>>();
 
     PatternRegistryDocument {
         schema_version: SCHEMA_VERSION.to_string(),
-        registry_version: "pattern_registry.v2",
+        registry_version: "pattern_registry.v3",
         groups,
         patterns,
+        negative_fixtures: registry.negative_fixtures().to_vec(),
         claim_boundary: "Registry patterns are deterministic review rules and candidates. They are not popularity, trust, security, or quality guarantees.",
     }
 }
@@ -605,12 +534,22 @@ pub fn render_registry_markdown(registry: &PatternRegistry) -> String {
     out.push_str("## Groups\n\n");
     for group in &document.groups {
         out.push_str(&format!(
-            "- `{}` {}: `{}` patterns (`{}` baseline / `{}` candidate)\n",
+            "- `{}` {}: `{}` detectors, `{}` negative fixtures (`{}` baseline / `{}` candidate)\n",
             group.code,
             group.title,
-            group.pattern_count,
+            group.detector_count,
+            group.negative_fixture_count,
             group.baseline_count,
             group.candidate_count
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Negative Fixtures\n\n");
+    for fixture in &document.negative_fixtures {
+        out.push_str(&format!(
+            "- `{}` group `{}` repository `{}` expects `{}` to be missing\n",
+            fixture.id, fixture.group, fixture.repository, fixture.pattern_id
         ));
     }
     out.push('\n');
@@ -636,7 +575,7 @@ pub fn render_registry_markdown(registry: &PatternRegistry) -> String {
                 definition.id,
                 definition.adoption_stage.as_str(),
                 route,
-                detector_label(definition.detector),
+                definition.detector.label(),
                 definition.title
             ));
         }
@@ -733,14 +672,16 @@ fn pattern(
         title,
         route,
         detector,
-        requirement,
         adoption_stage,
-        missing_severity,
-        missing_gate,
-        missing_title,
-        missing_message,
-        recommendation_title,
-        recommendation_message,
+        boundary: PatternBoundary {
+            requirement,
+            missing_severity,
+            missing_gate,
+            missing_title,
+            missing_message,
+            recommendation_title,
+            recommendation_message,
+        },
     }
 }
 
@@ -772,21 +713,21 @@ pub fn evaluate_with_registry(
             PatternOutcome::Present => BaselineStatus::Present,
             PatternOutcome::Missing => BaselineStatus::Missing,
         };
-        increment_summary(&mut summary, definition.requirement, status);
+        increment_summary(&mut summary, definition.boundary.requirement, status);
 
         let finding_id = if status == BaselineStatus::Missing {
             let id = stable_id("finding", findings.len() + 1);
             findings.push(Finding {
                 id: id.clone(),
-                severity: definition.missing_severity,
-                title: definition.missing_title.to_string(),
-                message: definition.missing_message.to_string(),
+                severity: definition.boundary.missing_severity,
+                title: definition.boundary.missing_title.to_string(),
+                message: definition.boundary.missing_message.to_string(),
                 evidence_ids: pattern_match.evidence_ids.clone(),
                 recommendation: Some(Recommendation {
                     id: stable_id("rec", findings.len() + 1),
-                    gate: definition.missing_gate,
-                    title: definition.recommendation_title.to_string(),
-                    message: definition.recommendation_message.to_string(),
+                    gate: definition.boundary.missing_gate,
+                    title: definition.boundary.recommendation_title.to_string(),
+                    message: definition.boundary.recommendation_message.to_string(),
                 }),
             });
             Some(id)
@@ -799,9 +740,9 @@ pub fn evaluate_with_registry(
             pattern_id: definition.id.to_string(),
             title: definition.title.to_string(),
             route: definition.route,
-            requirement: definition.requirement,
+            requirement: definition.boundary.requirement,
             status,
-            severity: definition.missing_severity,
+            severity: definition.boundary.missing_severity,
             evidence_ids: pattern_match.evidence_ids.clone(),
             finding_id,
             message: baseline_message(definition, status).to_string(),
@@ -816,128 +757,6 @@ pub fn evaluate_with_registry(
             rules,
         },
         findings,
-    }
-}
-
-fn evidence_ids_for_detector(snapshot: &RepoSnapshot, detector: PatternDetector) -> Vec<String> {
-    match detector {
-        PatternDetector::EvidenceKind(kind) => {
-            if let Some(ledger_ids) = ledger_legacy_ids(snapshot, |record| {
-                record.scope == EvidenceScope::Root && record.kind == kind
-            }) {
-                ledger_ids
-            } else {
-                snapshot
-                    .evidence
-                    .iter()
-                    .filter(|evidence| evidence.kind == kind)
-                    .map(|evidence| evidence.id.clone())
-                    .collect()
-            }
-        }
-        PatternDetector::Route(route) => {
-            if let Some(ledger_ids) = ledger_legacy_ids(snapshot, |record| {
-                record.scope == EvidenceScope::Root && record.route == Some(route)
-            }) {
-                ledger_ids
-            } else {
-                snapshot
-                    .evidence
-                    .iter()
-                    .filter(|evidence| evidence.route == Some(route))
-                    .map(|evidence| evidence.id.clone())
-                    .collect()
-            }
-        }
-        PatternDetector::ReadmeRoute(route) => {
-            if let Some(ledger_ids) = ledger_legacy_ids(snapshot, |record| {
-                record.scope == EvidenceScope::Root
-                    && record.route == Some(route)
-                    && matches!(
-                        record.kind,
-                        EvidenceKind::MarkdownHeading
-                            | EvidenceKind::MarkdownLink
-                            | EvidenceKind::RouteCandidate
-                    )
-            }) {
-                ledger_ids
-            } else {
-                snapshot
-                    .evidence
-                    .iter()
-                    .filter(|evidence| {
-                        evidence.route == Some(route)
-                            && matches!(
-                                evidence.kind,
-                                EvidenceKind::MarkdownHeading
-                                    | EvidenceKind::MarkdownLink
-                                    | EvidenceKind::RouteCandidate
-                            )
-                    })
-                    .map(|evidence| evidence.id.clone())
-                    .collect()
-            }
-        }
-        PatternDetector::ImportantFile(kind) => {
-            let expected = format!("{kind:?}");
-            if let Some(ledger_ids) = ledger_legacy_ids(snapshot, |record| {
-                record.scope == EvidenceScope::Root
-                    && record.kind == EvidenceKind::ImportantFile
-                    && record.value == expected
-            }) {
-                ledger_ids
-            } else {
-                snapshot
-                    .evidence
-                    .iter()
-                    .filter(|evidence| {
-                        evidence.kind == EvidenceKind::ImportantFile && evidence.value == expected
-                    })
-                    .map(|evidence| evidence.id.clone())
-                    .collect()
-            }
-        }
-    }
-}
-
-fn ledger_legacy_ids(
-    snapshot: &RepoSnapshot,
-    predicate: impl Fn(&seiri_core::EvidenceRecord) -> bool,
-) -> Option<Vec<String>> {
-    if snapshot.evidence_ledger.is_empty() {
-        return None;
-    }
-
-    Some(
-        snapshot
-            .evidence_ledger
-            .iter()
-            .filter(|record| predicate(record))
-            .map(|record| {
-                record
-                    .legacy_evidence_id
-                    .clone()
-                    .unwrap_or_else(|| record.id.clone())
-            })
-            .collect(),
-    )
-}
-
-fn detector_basis(detector: PatternDetector) -> &'static str {
-    match detector {
-        PatternDetector::EvidenceKind(_) => "evidence kind",
-        PatternDetector::Route(_) => "trust route",
-        PatternDetector::ReadmeRoute(_) => "README trust route",
-        PatternDetector::ImportantFile(_) => "important file",
-    }
-}
-
-fn detector_label(detector: PatternDetector) -> String {
-    match detector {
-        PatternDetector::EvidenceKind(kind) => format!("evidence kind:{kind:?}"),
-        PatternDetector::Route(route) => format!("trust route:{route:?}"),
-        PatternDetector::ReadmeRoute(route) => format!("README route:{route:?}"),
-        PatternDetector::ImportantFile(kind) => format!("important file:{kind:?}"),
     }
 }
 
@@ -957,6 +776,6 @@ fn increment_summary(
 fn baseline_message(definition: &PatternDefinition, status: BaselineStatus) -> &'static str {
     match status {
         BaselineStatus::Present => "Pattern observed in common baseline evidence.",
-        BaselineStatus::Missing => definition.missing_message,
+        BaselineStatus::Missing => definition.boundary.missing_message,
     }
 }

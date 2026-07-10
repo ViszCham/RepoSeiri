@@ -48,16 +48,24 @@ fn common_registry_exposes_stable_pattern_definitions() {
     assert!(registry.evaluation_definitions().iter().all(|definition| {
         definition.adoption_stage == seiri_patterns::PatternAdoptionStage::CommonBaseline
     }));
+    registry
+        .validate_complete()
+        .expect("common registry coverage");
 }
 
 #[test]
-fn pattern_registry_v2_renders_grouped_json_and_markdown() {
+fn pattern_registry_v3_renders_grouped_json_and_markdown() {
     let registry = seiri_patterns::common_registry();
     let document = seiri_patterns::registry_document(&registry);
 
     assert_eq!(document.schema_version, seiri_core::SCHEMA_VERSION);
-    assert_eq!(document.registry_version, "pattern_registry.v2");
+    assert_eq!(document.registry_version, "pattern_registry.v3");
     assert_eq!(document.groups.len(), 13);
+    assert_eq!(document.negative_fixtures.len(), 13);
+    assert!(document
+        .groups
+        .iter()
+        .all(|group| { group.detector_count > 0 && group.negative_fixture_count > 0 }));
     assert!(document
         .groups
         .iter()
@@ -72,11 +80,14 @@ fn pattern_registry_v2_renders_grouped_json_and_markdown() {
         .any(|pattern| pattern.id == "INT-003" && pattern.route == Some(RouteKind::Intake)));
 
     let json = seiri_patterns::registry_to_json(&registry).expect("registry json");
-    assert!(json.contains("\"registry_version\": \"pattern_registry.v2\""));
+    assert!(json.contains("\"registry_version\": \"pattern_registry.v3\""));
+    assert!(json.contains("\"negative_fixtures\""));
     assert!(json.contains("\"group\": \"SEC\""));
     assert!(json.contains("\"id\": \"OWN-001\""));
 
     let markdown = seiri_patterns::render_registry_markdown(&registry);
+    assert!(markdown.contains("## Negative Fixtures"));
+    assert!(markdown.contains("`negative.hyg.minimal` group `HYG`"));
     assert!(markdown.contains("## SEC - Security"));
     assert!(markdown.contains("`SEC-001` `candidate`"));
     assert!(markdown.contains("## HYG - Hygiene"));

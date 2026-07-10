@@ -1,6 +1,7 @@
 use seiri_core::{
-    ReadmeRouteMap, ReadmeRouteMapEntry, ReadmeRouteMapSummary, ReadmeRouteTarget,
-    ReadmeRouteTargetStatus, RouteCandidate, RouteKind, RouteSource, RouteState,
+    AggregateRepositoryEstimate, ReadmeRouteAssessment, ReadmeRouteMap, ReadmeRouteMapEntry,
+    ReadmeRouteMapSummary, ReadmeRouteTarget, ReadmeRouteTargetStatus, RouteCandidate, RouteKind,
+    RouteSource, RouteState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -50,18 +51,22 @@ pub(crate) fn build_route_map(
             .filter(|target| target.routes.len() > 1)
             .count();
         let candidate_count = route_candidates.len();
-        let state = readme_route_state(
-            route,
+        let assessment = ReadmeRouteAssessment::from_observations(
             candidate_count,
+            heading_count,
+            link_count,
+            badge_count,
             target_count,
-            stale_target_count,
-            conflicting_target_count,
-        );
+            &targets,
+        )
+        .expect("README route observations must form a valid assessment");
+        let state = assessment.legacy_state(route);
 
         entries.push(ReadmeRouteMapEntry {
             route,
+            assessment,
             state,
-            observed_gap_count: observed_gap_count(route),
+            gap_estimate: gap_estimate(route),
             candidate_count,
             heading_count,
             link_count,
@@ -71,7 +76,7 @@ pub(crate) fn build_route_map(
             conflicting_target_count,
             evidence_lines,
             targets,
-            reason: readme_route_reason(route, state).to_string(),
+            reason: assessment.legacy_reason(route).to_string(),
         });
     }
 
@@ -150,6 +155,7 @@ fn route_targets(
 
 fn readme_hub_routes() -> &'static [RouteKind] {
     &[
+        RouteKind::Identity,
         RouteKind::Docs,
         RouteKind::Quickstart,
         RouteKind::Support,
@@ -161,70 +167,24 @@ fn readme_hub_routes() -> &'static [RouteKind] {
         RouteKind::Contributing,
         RouteKind::License,
         RouteKind::Automation,
+        RouteKind::Ownership,
         RouteKind::Hygiene,
     ]
 }
 
-fn readme_route_state(
-    route: RouteKind,
-    candidate_count: usize,
-    target_count: usize,
-    stale_target_count: usize,
-    conflicting_target_count: usize,
-) -> RouteState {
-    if candidate_count == 0 {
-        RouteState::Absent
-    } else if stale_target_count > 0 {
-        RouteState::Stale
-    } else if conflicting_target_count > 0 {
-        RouteState::Conflicting
-    } else if candidate_count >= 4 || target_count >= 4 {
-        RouteState::Overloaded
-    } else if target_count == 0 && !heading_only_route_is_actionable(route) {
-        RouteState::Weak
-    } else if target_count > 0 {
-        RouteState::Verified
-    } else {
-        RouteState::Routed
-    }
-}
-
-fn heading_only_route_is_actionable(route: RouteKind) -> bool {
-    matches!(route, RouteKind::Quickstart)
-}
-
-fn observed_gap_count(route: RouteKind) -> Option<u32> {
-    match route {
-        RouteKind::Docs => Some(186_000),
-        RouteKind::Quickstart => Some(438_000),
-        RouteKind::Support => Some(503_000),
-        RouteKind::Intake => Some(822_000),
-        RouteKind::Release => Some(454_000),
-        _ => None,
-    }
-}
-
-fn readme_route_reason(route: RouteKind, state: RouteState) -> &'static str {
-    match state {
-        RouteState::Absent => "No README evidence was observed for this route.",
-        RouteState::Weak => "README route evidence is visible but does not expose a target.",
-        RouteState::Conflicting => {
-            "README links reuse a target across multiple route kinds, so route intent is ambiguous."
-        }
-        RouteState::Overloaded => {
-            "README exposes many entries for this route; users may need a clearer single path."
-        }
-        RouteState::Stale => "README links to a local target that was not found in the repository.",
-        RouteState::Verified if route == RouteKind::Quickstart => {
-            "README exposes a reachable first-run path."
-        }
-        RouteState::Verified if route == RouteKind::Lifecycle => {
-            "README exposes a reachable lifecycle, maintenance, deprecation, or supported-version route."
-        }
-        RouteState::Verified => "README exposes a reachable route target.",
-        RouteState::Routed => "README exposes this route inside the README.",
-        _ => "README route map emitted this state from observed route evidence.",
-    }
+fn gap_estimate(route: RouteKind) -> Option<AggregateRepositoryEstimate> {
+    let estimated_repositories = match route {
+        RouteKind::Docs => 186_000,
+        RouteKind::Quickstart => 438_000,
+        RouteKind::Support => 503_000,
+        RouteKind::Intake => 822_000,
+        RouteKind::Release => 454_000,
+        _ => return None,
+    };
+    Some(AggregateRepositoryEstimate::fixed(
+        estimated_repositories,
+        1_000_000,
+    ))
 }
 
 fn classify_target_status(target: &str, repo_root: Option<&Path>) -> ReadmeRouteTargetStatus {
