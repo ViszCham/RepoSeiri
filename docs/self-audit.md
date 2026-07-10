@@ -12,9 +12,12 @@ RepoSeiri の self-audit loop は、RepoSeiri 自身を RepoSeiri で読み直�
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
 git diff --check
 ```
 
@@ -24,10 +27,12 @@ CI は次を実行します。
 
 | Step | Output | Use |
 | --- | --- | --- |
-| format / test / clippy | job result | Rust workspace の基本的な regression を見る。 |
+| format / test / clippy / Rust 1.76 check | job result | Rust workspace の基本的な regression と MSRV compile を見る。 |
 | `seiri audit` | `audit.md` artifact | route state、profile、missing route priority を見る。 |
 | `seiri plan` | `plan.md` artifact | safe / guarded / manual gate を見る。 |
 | `seiri codex` | `codex.md` artifact | Codex review context と PR draft surface を見る。 |
+| `seiri codex --schema native-v2` | `codex-native-v2.json` artifact | typed evidence、route assessment、claim、patch proposal を見る。 |
+| `seiri codex --view linter` | `codex-linter.md` artifact | evidence-scoped wording findings を見る。 |
 
 ### Review loop
 
@@ -50,9 +55,12 @@ This loop is not self-approval. CI, RepoSeiri scores, Codex drafts, and patch pl
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
 git diff --check
 ```
 
@@ -62,10 +70,12 @@ CI runs the following.
 
 | Step | Output | Use |
 | --- | --- | --- |
-| format / test / clippy | job result | Review basic Rust workspace regression. |
+| format / test / clippy / Rust 1.76 check | job result | Review basic Rust workspace regression and MSRV compilation. |
 | `seiri audit` | `audit.md` artifact | Review route state, profile, and missing route priority. |
 | `seiri plan` | `plan.md` artifact | Review safe / guarded / manual gates. |
 | `seiri codex` | `codex.md` artifact | Review Codex review context and PR draft surface. |
+| `seiri codex --schema native-v2` | `codex-native-v2.json` artifact | Review typed evidence, route assessments, claims, and patch proposals. |
+| `seiri codex --view linter` | `codex-linter.md` artifact | Review evidence-scoped wording findings. |
 
 ### Review loop
 

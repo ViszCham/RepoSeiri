@@ -93,7 +93,7 @@ MVP は、graph と safety gate が通る最小単位に絞ります。
 
 RepoSeiri がやらないこと:
 
-- 人気になることを保証しない。
+- 人気が確立済みだと主張しない。
 - 単一スコアで repo の価値を断定しない。
 - 全 repo に同じ template を押し付けない。
 - LICENSE、CODEOWNERS、security SLA、governance を勝手に決めない。
@@ -206,7 +206,7 @@ Verification is for detector and recommendation validity, not for guaranteeing p
 
 RepoSeiri does not:
 
-- guarantee popularity.
+- claim established popularity.
 - assert repository value from one score.
 - force the same template on every repository.
 - choose LICENSE, CODEOWNERS, security SLA, or governance automatically.
