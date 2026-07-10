@@ -132,8 +132,8 @@ fn block_p_route_state_matrix_locks_representative_states() {
         (
             "nested-license-only-repo",
             RouteKind::License,
-            RouteState::Inherited,
-            EvidenceConfidence::Low,
+            RouteState::UnsafeToInvent,
+            EvidenceConfidence::Medium,
         ),
     ];
 
@@ -157,7 +157,8 @@ fn block_p_route_state_matrix_locks_representative_states() {
         seen_states.insert(expected_state);
     }
 
-    assert_eq!(seen_states.len(), 10);
+    assert_eq!(seen_states.len(), 9);
+    assert!(!seen_states.contains(&RouteState::Inherited));
 }
 
 #[test]

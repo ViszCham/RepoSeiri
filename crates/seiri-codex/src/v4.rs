@@ -1,7 +1,7 @@
-mod actions;
+pub(crate) mod actions;
 mod linter;
 mod render;
-mod summary;
+pub(crate) mod summary;
 
 use seiri_core::{
     CodexLinterContext, CodexNativeAction, CodexNativeReviewContext, CodexQueryData,

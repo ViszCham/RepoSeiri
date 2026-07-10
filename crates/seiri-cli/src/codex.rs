@@ -15,6 +15,7 @@ pub(super) enum CodexView {
 pub(super) enum CodexSchema {
     CompatibilityV1,
     NativeV2,
+    NativeV3,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -27,6 +28,18 @@ pub(super) enum CodexQuery {
 }
 
 impl From<CodexQuery> for CodexQueryKind {
+    fn from(value: CodexQuery) -> Self {
+        match value {
+            CodexQuery::Summary => Self::Summary,
+            CodexQuery::Routes => Self::Routes,
+            CodexQuery::Patches => Self::Patches,
+            CodexQuery::Linter => Self::Linter,
+            CodexQuery::Actions => Self::Actions,
+        }
+    }
+}
+
+impl From<CodexQuery> for seiri_report::CodexNativeV3QueryKind {
     fn from(value: CodexQuery) -> Self {
         match value {
             CodexQuery::Summary => Self::Summary,
@@ -63,6 +76,20 @@ pub(super) fn render(
             let context = seiri_report::codex_native_repository_with_profile(path, profile)?;
             Ok(seiri_report::codex_native_to_markdown(&context))
         }
+        (CodexView::Context, CodexSchema::NativeV3, OutputFormat::Json) => {
+            seiri_report::codex_native_v3_query_repository_to_json(
+                path,
+                profile,
+                seiri_report::CodexNativeV3QueryKind::Summary,
+            )
+        }
+        (CodexView::Context, CodexSchema::NativeV3, OutputFormat::Markdown) => {
+            seiri_report::codex_native_v3_query_repository_to_markdown(
+                path,
+                profile,
+                seiri_report::CodexNativeV3QueryKind::Summary,
+            )
+        }
         (CodexView::PrBody, _, OutputFormat::Json) => {
             let context = seiri_report::codex_repository_with_profile(path, profile)?;
             seiri_report::codex_pr_draft_to_json(&context)
@@ -70,6 +97,12 @@ pub(super) fn render(
         (CodexView::PrBody, _, OutputFormat::Markdown) => {
             let context = seiri_report::codex_repository_with_profile(path, profile)?;
             Ok(seiri_report::codex_pr_body_to_markdown(&context))
+        }
+        (CodexView::Query, CodexSchema::NativeV3, OutputFormat::Json) => {
+            seiri_report::codex_native_v3_query_repository_to_json(path, profile, query.into())
+        }
+        (CodexView::Query, CodexSchema::NativeV3, OutputFormat::Markdown) => {
+            seiri_report::codex_native_v3_query_repository_to_markdown(path, profile, query.into())
         }
         (CodexView::Query, _, OutputFormat::Json) => {
             let view =

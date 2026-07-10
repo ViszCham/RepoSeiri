@@ -8,8 +8,12 @@ use std::fmt::{Display, Formatter};
 use std::io;
 use std::path::Path;
 
+pub use seiri_codex::CodexNativeV3QueryKind;
+
 mod claims;
 mod evidence;
+mod obligation_graph;
+mod route_content;
 mod route_priority;
 mod wording;
 
@@ -18,7 +22,9 @@ use evidence::{
     build_evidence_kernel, build_route_assessments, legacy_evidence_ledger_view,
     legacy_evidence_view, legacy_route_state_views,
 };
-use route_priority::build_missing_route_priority_report;
+use obligation_graph::build_document_consistency_report;
+use route_content::build_route_content;
+use route_priority::{build_missing_route_priority_report, build_review_priority_report};
 
 #[derive(Debug)]
 pub enum AuditError {
@@ -26,7 +32,12 @@ pub enum AuditError {
     Markdown(seiri_markdown::MarkdownError),
     Calibration(seiri_calibration::CalibrationError),
     EvidenceKernel(seiri_core::EvidenceKernelError),
+    EvidenceKernelV2(seiri_core::EvidenceKernelV2Error),
+    DocumentIndex(seiri_core::DocumentIndexError),
+    GithubLocal(seiri_github_local::GithubLocalParserError),
+    Coverage(seiri_core::CoverageIndexError),
     RouteAssessment(seiri_core::RouteAssessmentError),
+    DocumentConsistency(seiri_core::DocumentConsistencyError),
     Json(serde_json::Error),
     Io {
         path: std::path::PathBuf,
@@ -41,7 +52,12 @@ impl Display for AuditError {
             Self::Markdown(error) => write!(f, "{error}"),
             Self::Calibration(error) => write!(f, "{error}"),
             Self::EvidenceKernel(error) => write!(f, "{error}"),
+            Self::EvidenceKernelV2(error) => write!(f, "{error}"),
+            Self::DocumentIndex(error) => write!(f, "{error}"),
+            Self::GithubLocal(error) => write!(f, "{error}"),
+            Self::Coverage(error) => write!(f, "{error}"),
             Self::RouteAssessment(error) => write!(f, "{error}"),
+            Self::DocumentConsistency(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
             Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
         }
@@ -55,7 +71,12 @@ impl std::error::Error for AuditError {
             Self::Markdown(error) => Some(error),
             Self::Calibration(error) => Some(error),
             Self::EvidenceKernel(error) => Some(error),
+            Self::EvidenceKernelV2(error) => Some(error),
+            Self::DocumentIndex(error) => Some(error),
+            Self::GithubLocal(error) => Some(error),
+            Self::Coverage(error) => Some(error),
             Self::RouteAssessment(error) => Some(error),
+            Self::DocumentConsistency(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io { source, .. } => Some(source),
         }
@@ -86,9 +107,39 @@ impl From<seiri_core::EvidenceKernelError> for AuditError {
     }
 }
 
+impl From<seiri_core::EvidenceKernelV2Error> for AuditError {
+    fn from(value: seiri_core::EvidenceKernelV2Error) -> Self {
+        Self::EvidenceKernelV2(value)
+    }
+}
+
+impl From<seiri_core::DocumentIndexError> for AuditError {
+    fn from(value: seiri_core::DocumentIndexError) -> Self {
+        Self::DocumentIndex(value)
+    }
+}
+
+impl From<seiri_github_local::GithubLocalParserError> for AuditError {
+    fn from(value: seiri_github_local::GithubLocalParserError) -> Self {
+        Self::GithubLocal(value)
+    }
+}
+
+impl From<seiri_core::CoverageIndexError> for AuditError {
+    fn from(value: seiri_core::CoverageIndexError) -> Self {
+        Self::Coverage(value)
+    }
+}
+
 impl From<seiri_core::RouteAssessmentError> for AuditError {
     fn from(value: seiri_core::RouteAssessmentError) -> Self {
         Self::RouteAssessment(value)
+    }
+}
+
+impl From<seiri_core::DocumentConsistencyError> for AuditError {
+    fn from(value: seiri_core::DocumentConsistencyError) -> Self {
+        Self::DocumentConsistency(value)
     }
 }
 
@@ -106,8 +157,43 @@ pub fn audit_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<RepoSnapshot, AuditError> {
-    let fs_scan = seiri_fs::scan_repository(path)?;
-    let readme_document = seiri_markdown::scan_readme_document(&fs_scan.repo_root)?;
+    audit_repository_with_options(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+    )
+}
+
+pub fn audit_repository_with_remote<T: seiri_remote::RemoteTransport>(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    remote_options: &seiri_remote::RemoteEvidenceOptions,
+    transport: &T,
+) -> Result<RepoSnapshot, AuditError> {
+    let mut snapshot = audit_repository_with_profile(path, profile)?;
+    snapshot.remote_evidence = seiri_remote::collect_repository_evidence(remote_options, transport);
+    snapshot.coverage = snapshot.coverage.with_status(
+        seiri_core::CoverageScope::RemoteMetadata,
+        snapshot.remote_evidence.coverage,
+    )?;
+    Ok(snapshot)
+}
+
+pub fn audit_repository_with_options(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    fs_options: &seiri_fs::ScanOptions,
+    document_options: &seiri_markdown::DocumentIndexOptions,
+) -> Result<RepoSnapshot, AuditError> {
+    let fs_scan = seiri_fs::scan_repository_with_options(path, fs_options)?;
+    let document_index = seiri_markdown::scan_document_index_with_options(
+        &fs_scan.repo_root,
+        &fs_scan.files,
+        fs_scan.walk_summary.completion.is_complete(),
+        document_options,
+    )?;
+    let readme_document = document_index.root_readme_document().cloned();
     let readme = readme_document.as_ref().map(|document| {
         seiri_markdown::summarize_readme_document(document, Some(&fs_scan.repo_root))
     });
@@ -116,9 +202,27 @@ pub fn audit_repository_with_profile(
     snapshot.entry_count = fs_scan.files.len();
     snapshot.files = fs_scan.files.clone();
     snapshot.important_files = fs_scan.important_files.clone();
+    snapshot.document_index = document_index;
     snapshot.readme_document = readme_document;
     snapshot.readme = readme;
-    snapshot.evidence_kernel = build_evidence_kernel(&fs_scan, snapshot.readme_document.as_ref())?;
+    snapshot.evidence_kernel = build_evidence_kernel(&fs_scan, &snapshot.document_index)?;
+    snapshot.evidence_kernel_v2 =
+        seiri_core::EvidenceKernelV2::from_legacy(&snapshot.evidence_kernel)?;
+    snapshot.document_index = snapshot
+        .document_index
+        .clone()
+        .with_document_ids(|path| snapshot.evidence_kernel_v2.document_id_for_path(path));
+    snapshot.github_local_documents = seiri_github_local::parse_repository_github_documents(
+        &fs_scan.repo_root,
+        &snapshot.document_index,
+    )?;
+    snapshot.coverage = build_coverage_index(
+        &fs_scan,
+        &snapshot.evidence_kernel_v2,
+        &snapshot.document_index,
+        &snapshot.github_local_documents,
+    )?;
+    snapshot.route_content = build_route_content(&snapshot.evidence_kernel, &snapshot.coverage);
     snapshot.evidence = legacy_evidence_view(&snapshot.evidence_kernel);
     snapshot.evidence_ledger = legacy_evidence_ledger_view(&snapshot.evidence_kernel);
     let baseline = seiri_patterns::evaluate_common_baseline(&snapshot);
@@ -127,14 +231,95 @@ pub fn audit_repository_with_profile(
     snapshot.baseline = Some(baseline.report);
     snapshot.route_assessments = build_route_assessments(
         snapshot.evidence_kernel.facts(),
+        &snapshot.evidence_kernel_v2,
         &snapshot.pattern_matches,
         snapshot.readme.as_ref(),
     )?;
     snapshot.route_states = legacy_route_state_views(&snapshot.route_assessments);
+    snapshot.facets = seiri_profiles::evaluate_facets(&snapshot);
+    snapshot.document_consistency = build_document_consistency_report(&snapshot)?;
     snapshot.profile = seiri_profiles::evaluate_profile(&snapshot, profile);
     snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot);
+    snapshot.review_priority = build_review_priority_report(&snapshot.missing_route_priority);
     snapshot.claims = build_content_claims(&snapshot);
     Ok(snapshot)
+}
+
+fn build_coverage_index(
+    fs_scan: &seiri_fs::RepoFsScan,
+    kernel: &seiri_core::EvidenceKernelV2,
+    document_index: &seiri_core::DocumentIndex,
+    github_local_documents: &seiri_core::GithubLocalDocuments,
+) -> Result<seiri_core::CoverageIndex, seiri_core::CoverageIndexError> {
+    let repository_status = if fs_scan.walk_summary.completion.is_complete() {
+        seiri_core::CoverageStatus::Complete
+    } else {
+        seiri_core::CoverageStatus::Partial(seiri_core::CoverageIncompleteReason::LimitExceeded)
+    };
+    let mut entries = vec![
+        (
+            seiri_core::CoverageScope::RepositoryFiles,
+            repository_status,
+        ),
+        (
+            seiri_core::CoverageScope::RootReadme,
+            document_index
+                .coverage_for_role(seiri_core::DocumentRole::RootReadme)
+                .unwrap_or(seiri_core::CoverageStatus::NotRequested),
+        ),
+        (
+            seiri_core::CoverageScope::MarkdownDocuments,
+            markdown_coverage_status(document_index, repository_status),
+        ),
+        (
+            seiri_core::CoverageScope::RemoteMetadata,
+            seiri_core::CoverageStatus::NotRequested,
+        ),
+    ];
+    for coverage in document_index.role_coverage() {
+        entries.push((
+            seiri_core::CoverageScope::DocumentRole(coverage.role),
+            if coverage.role == seiri_core::DocumentRole::GithubConfiguration {
+                github_local_documents.coverage_status(repository_status)
+            } else {
+                coverage.status
+            },
+        ));
+    }
+    for document in document_index.entries() {
+        if let Some(document_id) = document
+            .document_id
+            .or_else(|| kernel.document_id_for_path(&document.path))
+        {
+            let status = if document.role == seiri_core::DocumentRole::GithubConfiguration {
+                github_local_documents.status_for_document(document_id)
+            } else if document.scan.is_some() {
+                Some(document.status.coverage_status())
+            } else {
+                None
+            };
+            if let Some(status) = status {
+                entries.push((seiri_core::CoverageScope::Document(document_id), status));
+            }
+        }
+    }
+    seiri_core::CoverageIndex::try_new(entries)
+}
+
+fn markdown_coverage_status(
+    document_index: &seiri_core::DocumentIndex,
+    repository_status: seiri_core::CoverageStatus,
+) -> seiri_core::CoverageStatus {
+    if repository_status != seiri_core::CoverageStatus::Complete {
+        return repository_status;
+    }
+    document_index
+        .entries()
+        .iter()
+        .filter(|entry| entry.is_markdown())
+        .map(|entry| entry.status.coverage_status())
+        .find(|status| *status != seiri_core::CoverageStatus::Complete)
+        .unwrap_or(seiri_core::CoverageStatus::Complete)
 }
 
 pub fn to_json(snapshot: &RepoSnapshot) -> Result<String, AuditError> {
@@ -219,6 +404,34 @@ pub fn codex_native_repository_with_profile(
     Ok(codex_repository_kernel_with_profile(path, profile)?.native_v2())
 }
 
+pub fn codex_native_v3_query_repository_to_json(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    query: CodexNativeV3QueryKind,
+) -> Result<String, AuditError> {
+    let path = path.as_ref();
+    let snapshot = audit_repository_with_profile(path, profile)?;
+    let plan = seiri_planner::plan_safe_patches(&snapshot);
+    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
+    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, Some(&wording_lint));
+    Ok(serde_json::to_string_pretty(&view.query(query))?)
+}
+
+pub fn codex_native_v3_query_repository_to_markdown(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    query: CodexNativeV3QueryKind,
+) -> Result<String, AuditError> {
+    let path = path.as_ref();
+    let snapshot = audit_repository_with_profile(path, profile)?;
+    let plan = seiri_planner::plan_safe_patches(&snapshot);
+    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
+    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, Some(&wording_lint));
+    Ok(seiri_codex::render_native_v3_query_markdown(
+        &view.query(query),
+    ))
+}
+
 pub fn codex_query_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
@@ -240,7 +453,7 @@ pub fn codex_repository_kernel_with_profile(
 ) -> Result<seiri_codex::CodexReviewKernel, AuditError> {
     let path = path.as_ref();
     let snapshot = audit_repository_with_profile(path, profile)?;
-    let plan = seiri_planner::plan_safe_patches(&snapshot);
+    let plan = seiri_planner::plan_compatibility_safe_patches(&snapshot);
     let wording_lint = wording::lint_repository_with_profile(path, profile)?;
     Ok(seiri_codex::build_review_kernel(
         &snapshot,
@@ -302,6 +515,20 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     out.push_str("# RepoSeiri Calibration Report\n\n");
     out.push_str(&format!("- Schema: `{}`\n", run.schema_version));
     out.push_str(&format!("- Dataset: `{}`\n", run.dataset_id));
+    if let Some(pack) = &run.pattern_pack {
+        out.push_str(&format!(
+            "- Pattern pack: `{}` `{}` / condition `{}` / denominator eligible `{}` excluded `{}`\n",
+            pack.id,
+            pack.version,
+            pack.condition,
+            pack.eligible_records,
+            pack.excluded_records
+        ));
+        out.push_str(&format!(
+            "- Registry fingerprint: `{}`\n",
+            pack.registry_fingerprint
+        ));
+    }
     out.push_str(&format!("- Records: `{}`\n", run.summary.records));
     out.push_str(&format!("- Sources: `{}`\n", run.summary.sources));
     out.push_str(&format!(

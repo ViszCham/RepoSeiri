@@ -1,14 +1,24 @@
 use seiri_core::{
-    stable_id, GateKind, ImportantFileKind, MissingRoutePriority, PatchOperationKind, PatchPlan,
-    PatchPlanBlockedItem, PatchPlanMode, PatchPlanOperation, PatchPlanSafetyPolicy,
-    PatchPlanSource, PatchPlanSummary, PatchPreflightCheck, PatchPreflightCheckKind,
-    PatchPreflightStatus, PatchProposal, PatchProposalDecision, PatchProposalIssueKind,
-    PatchSafetyLevel, PatchTextEdit, ProfilePriority, RepoSnapshot, RouteKind, RouteState,
-    Severity, TextEditSpan, TextEncoding,
+    stable_id, GateKind, ImportantFileKind, MissingRoutePriority, PatchAnalysisRun,
+    PatchBaseDigest, PatchOperationKind, PatchPlan, PatchPlanBlockedItem, PatchPlanMode,
+    PatchPlanOperation, PatchPlanSafetyPolicy, PatchPlanSource, PatchPlanSummary,
+    PatchPreflightCheck, PatchPreflightCheckKind, PatchPreflightStatus, PatchProposal,
+    PatchProposalBinding, PatchProposalDecision, PatchProposalIssueKind, PatchSafetyLevel,
+    PatchTextEdit, ProfilePriority, RepoSnapshot, RouteKind, RouteState, Severity,
+    TextDocumentBase, TextEditSpan, TextEncoding,
 };
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Component, Path};
 
-const PLANNER_VERSION: &str = "safe_patch_planner.v3";
+const LEGACY_PLANNER_VERSION: &str = "safe_patch_planner.v3";
+const PLANNER_VERSION: &str = "safe_patch_planner.v4";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanBindingMode {
+    CompatibilityV3,
+    BoundV4,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanCandidate {
@@ -29,10 +39,21 @@ struct PlanCandidate {
 
 #[must_use]
 pub fn plan_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
+    build_plan(snapshot, PlanBindingMode::BoundV4)
+}
+
+/// Preserves the Q19 Codex compatibility projection without exposing Q34 bindings.
+#[must_use]
+pub fn plan_compatibility_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
+    build_plan(snapshot, PlanBindingMode::CompatibilityV3)
+}
+
+fn build_plan(snapshot: &RepoSnapshot, binding_mode: PlanBindingMode) -> PatchPlan {
     let candidates = plan_candidates(snapshot);
     let candidate_count = candidates.len();
     let mut operations = Vec::new();
     let mut blocked = Vec::new();
+    let analysis_run = (binding_mode == PlanBindingMode::BoundV4).then(|| analysis_run(snapshot));
 
     for candidate in candidates {
         if candidate.route_state == Some(RouteState::UnsafeToInvent) {
@@ -58,8 +79,14 @@ pub fn plan_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
         }
 
         match candidate.gate {
-            GateKind::Safe => match safe_operation(snapshot, &candidate, operations.len() + 1) {
-                SafeDecision::Operation(operation) => operations.push(operation),
+            GateKind::Safe => match safe_operation(
+                snapshot,
+                &candidate,
+                operations.len() + 1,
+                binding_mode,
+                analysis_run.as_ref(),
+            ) {
+                SafeDecision::Operation(operation) => operations.push(*operation),
                 SafeDecision::Blocked {
                     reason,
                     preflight,
@@ -93,19 +120,34 @@ pub fn plan_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
 
     PatchPlan {
         schema_version: seiri_core::SCHEMA_VERSION.to_string(),
-        planner_version: PLANNER_VERSION.to_string(),
+        planner_version: planner_version(binding_mode).to_string(),
         mode: PatchPlanMode::DryRun,
         profile: snapshot.profile.as_ref().map(|profile| profile.profile),
         safety_policy: safety_policy(),
+        analysis_run,
         summary: summarize(candidate_count, &operations, &blocked),
         operations,
         blocked,
-        claim_boundary: "Patch plan is a dry-run planning artifact. RepoSeiri v3 does not write files, invoke patch application, push branches, create PRs, choose policy, or guarantee popularity, trust, security, or quality. Safe operations carry typed proposals and require current-byte preflight before optional in-memory application. The base digest is a deterministic stale-base guard, not a cryptographic integrity or security guarantee.".to_string(),
+        claim_boundary: claim_boundary(binding_mode).to_string(),
+    }
+}
+
+fn planner_version(binding_mode: PlanBindingMode) -> &'static str {
+    match binding_mode {
+        PlanBindingMode::CompatibilityV3 => LEGACY_PLANNER_VERSION,
+        PlanBindingMode::BoundV4 => PLANNER_VERSION,
+    }
+}
+
+fn claim_boundary(binding_mode: PlanBindingMode) -> &'static str {
+    match binding_mode {
+        PlanBindingMode::CompatibilityV3 => "Patch plan is a dry-run compatibility artifact. RepoSeiri does not write files, invoke patch application, push branches, create PRs, choose policy, or guarantee popularity, trust, security, or quality. Safe operations require current-byte preflight before optional in-memory application.",
+        PlanBindingMode::BoundV4 => "Patch plan is a dry-run planning artifact. RepoSeiri does not write files, invoke patch application, push branches, create PRs, choose policy, or guarantee popularity, trust, security, or quality. Each Safe operation is bound to an analysis run, scanner base digest, and bounded anchor context after the current local source is rechecked. The FNV digests are deterministic stale-analysis guards, not cryptographic integrity or security guarantees.",
     }
 }
 
 enum SafeDecision {
-    Operation(PatchPlanOperation),
+    Operation(Box<PatchPlanOperation>),
     Blocked {
         reason: String,
         preflight: Vec<PatchPreflightCheck>,
@@ -197,9 +239,17 @@ fn safe_operation(
     snapshot: &RepoSnapshot,
     candidate: &PlanCandidate,
     operation_index: usize,
+    binding_mode: PlanBindingMode,
+    analysis_run: Option<&PatchAnalysisRun>,
 ) -> SafeDecision {
     match candidate.pattern_id.as_str() {
-        "common.docs.route_present" => plan_docs_route(snapshot, candidate, operation_index),
+        "common.docs.route_present" => plan_docs_route(
+            snapshot,
+            candidate,
+            operation_index,
+            binding_mode,
+            analysis_run,
+        ),
         _ => SafeDecision::Blocked {
             reason: format!(
                 "No Safe Patch Planner v3 operation exists for `{}`.",
@@ -231,6 +281,8 @@ fn plan_docs_route(
     snapshot: &RepoSnapshot,
     candidate: &PlanCandidate,
     operation_index: usize,
+    binding_mode: PlanBindingMode,
+    analysis_run: Option<&PatchAnalysisRun>,
 ) -> SafeDecision {
     let mut preflight = vec![
         check(
@@ -366,7 +418,64 @@ fn plan_docs_route(
         };
     }
 
-    SafeDecision::Operation(PatchPlanOperation {
+    let binding = match binding_mode {
+        PlanBindingMode::CompatibilityV3 => None,
+        PlanBindingMode::BoundV4 => {
+            let Some(analysis_run) = analysis_run else {
+                return SafeDecision::Blocked {
+                    reason: "Bound planner did not retain an analysis run; no patch preview was generated."
+                        .to_string(),
+                    preflight: blocked_analysis_preflight(
+                        preflight,
+                        PatchPreflightCheckKind::AnalysisRunBound,
+                        "Bound planner requires a retained analysis run.",
+                    ),
+                    proposal: None,
+                };
+            };
+            match bind_current_proposal(snapshot, &proposal, analysis_run.clone()) {
+                Ok(binding) => {
+                    preflight.push(check(
+                        PatchPreflightCheckKind::CurrentAnalysisInput,
+                        PatchPreflightStatus::Pass,
+                        "Current repository-local README bytes match the scanner-owned base before planning.",
+                    ));
+                    preflight.push(check(
+                        PatchPreflightCheckKind::AnalysisRunBound,
+                        PatchPreflightStatus::Pass,
+                        format!(
+                            "Proposal is bound to analysis run `{}` with snapshot digest {}.",
+                            binding.analysis_run.id, binding.analysis_run.snapshot_digest
+                        ),
+                    ));
+                    preflight.push(check(
+                        PatchPreflightCheckKind::AnchorContextBound,
+                        PatchPreflightStatus::Pass,
+                        format!(
+                            "Proposal retains {} bounded anchor context(s) without retaining source text.",
+                            binding.anchors.len()
+                        ),
+                    ));
+                    Some(binding)
+                }
+                Err(reason) => {
+                    return SafeDecision::Blocked {
+                        reason: format!(
+                            "Current README bytes could not be bound to this analysis run; no patch preview was generated. {reason}"
+                        ),
+                        preflight: blocked_analysis_preflight(
+                            preflight,
+                            PatchPreflightCheckKind::CurrentAnalysisInput,
+                            &reason,
+                        ),
+                        proposal: None,
+                    };
+                }
+            }
+        }
+    };
+
+    SafeDecision::Operation(Box::new(PatchPlanOperation {
         id: stable_id("patch-op", operation_index),
         gate: GateKind::Safe,
         kind: PatchOperationKind::AddReadmeRoute,
@@ -386,6 +495,7 @@ fn plan_docs_route(
         ),
         planned_change: format!("Append a Documentation section linking to `{target}`."),
         proposal,
+        binding,
         preflight,
         diff_preview: vec![
             format!("--- {}", readme.path),
@@ -396,7 +506,98 @@ fn plan_docs_route(
             "+".to_string(),
             format!("+- [Documentation]({target})"),
         ],
-    })
+    }))
+}
+
+fn blocked_analysis_preflight(
+    mut preflight: Vec<PatchPreflightCheck>,
+    kind: PatchPreflightCheckKind,
+    detail: &str,
+) -> Vec<PatchPreflightCheck> {
+    preflight.push(check(kind, PatchPreflightStatus::Fail, detail));
+    preflight
+}
+
+fn bind_current_proposal(
+    snapshot: &RepoSnapshot,
+    proposal: &PatchProposal,
+    analysis_run: PatchAnalysisRun,
+) -> Result<PatchProposalBinding, String> {
+    let current = read_current_document_bytes(snapshot, &proposal.path)?;
+    let current_base = TextDocumentBase::from_bytes(&current);
+    if current_base != proposal.base {
+        return Err(format!(
+            "Scanner base {} ({} bytes) differs from current source base {} ({} bytes).",
+            proposal.base.digest(),
+            proposal.base.byte_len(),
+            current_base.digest(),
+            current_base.byte_len(),
+        ));
+    }
+    PatchProposalBinding::bind(analysis_run, proposal, &current)
+        .map_err(|error| format!("Binding construction failed: {error}"))
+}
+
+fn read_current_document_bytes(
+    snapshot: &RepoSnapshot,
+    relative_path: &str,
+) -> Result<Vec<u8>, String> {
+    let relative = Path::new(relative_path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err("Planner refused a non-repository-relative document path.".to_string());
+    }
+
+    let root = seiri_fs::RepositoryRoot::resolve(Path::new(&snapshot.repo_root))
+        .map_err(|error| format!("Repository root could not be resolved: {error}"))?;
+    let candidate = root.as_path().join(relative);
+    let canonical = fs::canonicalize(&candidate)
+        .map_err(|error| format!("Current document could not be resolved: {error}"))?;
+    if !canonical.starts_with(root.as_path()) {
+        return Err(
+            "Planner refused a document whose resolved path escapes the repository root."
+                .to_string(),
+        );
+    }
+    let metadata = fs::metadata(&canonical)
+        .map_err(|error| format!("Current document metadata could not be read: {error}"))?;
+    if !metadata.is_file() {
+        return Err(
+            "Planner requires the current document target to be a regular file.".to_string(),
+        );
+    }
+    fs::read(&canonical).map_err(|error| format!("Current document could not be read: {error}"))
+}
+
+fn analysis_run(snapshot: &RepoSnapshot) -> PatchAnalysisRun {
+    let mut material = Vec::with_capacity(snapshot.repo_root.len() + 96);
+    append_run_field(&mut material, &snapshot.schema_version);
+    append_run_field(&mut material, &snapshot.repo_root);
+    append_run_field(&mut material, &snapshot.entry_count.to_string());
+    append_run_field(&mut material, &snapshot.files.len().to_string());
+    append_run_field(&mut material, &snapshot.important_files.len().to_string());
+    append_run_field(&mut material, &snapshot.route_assessments.len().to_string());
+    append_run_field(&mut material, &snapshot.claims.len().to_string());
+    append_run_field(&mut material, &snapshot.findings.len().to_string());
+    if let Some(readme) = &snapshot.readme_document {
+        append_run_field(&mut material, readme.path());
+        append_run_field(&mut material, &readme.base().digest().to_string());
+    }
+    let snapshot_digest = PatchBaseDigest::from_bytes(&material);
+    PatchAnalysisRun::new(
+        format!("analysis-run-{:016x}", snapshot_digest.as_u64()),
+        snapshot_digest,
+    )
+}
+
+fn append_run_field(material: &mut Vec<u8>, value: &str) {
+    let byte_len =
+        u64::try_from(value.len()).expect("usize always fits into u64 on supported targets");
+    material.extend_from_slice(&byte_len.to_le_bytes());
+    material.extend_from_slice(value.as_bytes());
 }
 
 fn docs_target(snapshot: &RepoSnapshot) -> Option<String> {

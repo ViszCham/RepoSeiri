@@ -1,15 +1,17 @@
 use seiri_core::{
-    stable_id, DocumentEvent, DocumentScan, Evidence, EvidenceConfidence, EvidenceDraft,
-    EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel, EvidenceKernelError, EvidenceKind,
-    EvidenceOrigin, EvidenceRecord, EvidenceScanner, EvidenceScope, EvidenceSource, EvidenceSpan,
-    ImportantFileKind, PatternMatch, PatternOutcome, ReadmeRouteAssessment, ReadmeSummary,
-    RouteAssessment, RouteAssessmentError, RouteKind, RouteStateReport,
+    stable_id, DocumentEvent, DocumentIndex, DocumentRole, Evidence, EvidenceConfidence,
+    EvidenceDraft, EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel, EvidenceKernelError,
+    EvidenceKernelV2, EvidenceKind, EvidenceOrigin, EvidenceRecord, EvidenceScanner, EvidenceScope,
+    EvidenceSource, EvidenceSpan, ImportantFileKind, PatternMatch, PatternOutcome,
+    ReadmeRouteAssessment, ReadmeSummary, RouteAssessment, RouteAssessmentError, RouteKind,
+    RouteStateReport, SourceDomain,
 };
 use seiri_fs::RepoFsScan;
+use std::collections::BTreeSet;
 
 pub(crate) fn build_evidence_kernel(
     fs_scan: &RepoFsScan,
-    readme_document: Option<&DocumentScan>,
+    document_index: &DocumentIndex,
 ) -> Result<EvidenceKernel, EvidenceKernelError> {
     let mut drafts = Vec::new();
 
@@ -27,8 +29,26 @@ pub(crate) fn build_evidence_kernel(
         ));
     }
 
-    match readme_document {
-        Some(document) => {
+    for entry in document_index.entries() {
+        drafts.push(evidence_draft(
+            EvidenceKind::FilePresent,
+            Some(entry.path.clone()),
+            None,
+            "indexed document candidate".to_string(),
+            EvidenceOrigin {
+                scanner: EvidenceScanner::FileSystem,
+                event: EvidenceEvent::ImportantFileDetection,
+            },
+            None,
+        ));
+    }
+
+    for entry in document_index.scanned_documents() {
+        let document = entry
+            .scan
+            .as_ref()
+            .expect("scanned document index entries carry a scan payload");
+        if entry.role == DocumentRole::RootReadme {
             drafts.push(evidence_draft(
                 EvidenceKind::ReadmePresent,
                 Some(document.path().to_string()),
@@ -40,82 +60,88 @@ pub(crate) fn build_evidence_kernel(
                 },
                 None,
             ));
-
-            for heading in document.events().iter().filter_map(|event| match event {
-                DocumentEvent::Heading(heading) => Some(heading),
-                _ => None,
-            }) {
-                let route = seiri_markdown::classify_route(&heading.text, None);
-                drafts.push(evidence_draft(
-                    EvidenceKind::MarkdownHeading,
-                    Some(document.path().to_string()),
-                    (route != RouteKind::Unknown).then_some(route),
-                    heading.text.clone(),
-                    EvidenceOrigin {
-                        scanner: EvidenceScanner::Markdown,
-                        event: EvidenceEvent::MarkdownHeading,
-                    },
-                    heading.span,
-                ));
-            }
-
-            for link in document.events().iter().filter_map(|event| match event {
-                DocumentEvent::Link(link) => Some(link),
-                _ => None,
-            }) {
-                drafts.push(evidence_draft(
-                    EvidenceKind::MarkdownLink,
-                    Some(document.path().to_string()),
-                    link.route,
-                    format!("{} -> {}", link.text, link.target),
-                    EvidenceOrigin {
-                        scanner: EvidenceScanner::Markdown,
-                        event: EvidenceEvent::MarkdownLink,
-                    },
-                    link.span,
-                ));
-            }
-
-            for badge in document.events().iter().filter_map(|event| match event {
-                DocumentEvent::Badge(badge) => Some(badge),
-                _ => None,
-            }) {
-                drafts.push(evidence_draft(
-                    EvidenceKind::MarkdownBadge,
-                    Some(document.path().to_string()),
-                    Some(RouteKind::Automation),
-                    format!("{} -> {}", badge.alt, badge.target),
-                    EvidenceOrigin {
-                        scanner: EvidenceScanner::Markdown,
-                        event: EvidenceEvent::MarkdownBadge,
-                    },
-                    badge.span,
-                ));
-            }
-
-            for route in document.events().iter().filter_map(|event| match event {
-                DocumentEvent::RouteCandidate(route) => Some(route),
-                _ => None,
-            }) {
-                drafts.push(evidence_draft(
-                    EvidenceKind::RouteCandidate,
-                    Some(document.path().to_string()),
-                    Some(route.route),
-                    route.target.as_ref().map_or_else(
-                        || route.text.clone(),
-                        |target| format!("{} -> {target}", route.text),
-                    ),
-                    EvidenceOrigin {
-                        scanner: EvidenceScanner::Markdown,
-                        event: EvidenceEvent::RouteCandidate {
-                            source: route.source,
-                        },
-                    },
-                    route.span,
-                ));
-            }
         }
-        None => drafts.push(evidence_draft(
+
+        for heading in document.events().iter().filter_map(|event| match event {
+            DocumentEvent::Heading(heading) => Some(heading),
+            _ => None,
+        }) {
+            let route = seiri_markdown::classify_route(&heading.text, None);
+            drafts.push(evidence_draft(
+                EvidenceKind::MarkdownHeading,
+                Some(document.path().to_string()),
+                (route != RouteKind::Unknown).then_some(route),
+                heading.text.clone(),
+                EvidenceOrigin {
+                    scanner: EvidenceScanner::Markdown,
+                    event: EvidenceEvent::MarkdownHeading,
+                },
+                heading.span,
+            ));
+        }
+
+        for link in document.events().iter().filter_map(|event| match event {
+            DocumentEvent::Link(link) => Some(link),
+            _ => None,
+        }) {
+            drafts.push(evidence_draft(
+                EvidenceKind::MarkdownLink,
+                Some(document.path().to_string()),
+                link.route,
+                format!("{} -> {}", link.text, link.target),
+                EvidenceOrigin {
+                    scanner: EvidenceScanner::Markdown,
+                    event: EvidenceEvent::MarkdownLink,
+                },
+                link.span,
+            ));
+        }
+
+        for badge in document.events().iter().filter_map(|event| match event {
+            DocumentEvent::Badge(badge) => Some(badge),
+            _ => None,
+        }) {
+            drafts.push(evidence_draft(
+                EvidenceKind::MarkdownBadge,
+                Some(document.path().to_string()),
+                Some(RouteKind::Automation),
+                format!("{} -> {}", badge.alt, badge.target),
+                EvidenceOrigin {
+                    scanner: EvidenceScanner::Markdown,
+                    event: EvidenceEvent::MarkdownBadge,
+                },
+                badge.span,
+            ));
+        }
+
+        for route in document.events().iter().filter_map(|event| match event {
+            DocumentEvent::RouteCandidate(route) => Some(route),
+            _ => None,
+        }) {
+            drafts.push(evidence_draft(
+                EvidenceKind::RouteCandidate,
+                Some(document.path().to_string()),
+                Some(route.route),
+                route.target.as_ref().map_or_else(
+                    || route.text.clone(),
+                    |target| format!("{} -> {target}", route.text),
+                ),
+                EvidenceOrigin {
+                    scanner: EvidenceScanner::Markdown,
+                    event: EvidenceEvent::RouteCandidate {
+                        source: route.source,
+                    },
+                },
+                route.span,
+            ));
+        }
+    }
+
+    if !document_index.has_root_readme_candidate()
+        && document_index.coverage_for_role(DocumentRole::RootReadme)
+            == Some(seiri_core::CoverageStatus::Complete)
+    {
+        drafts.push(evidence_draft(
             EvidenceKind::ReadmeMissing,
             None,
             Some(RouteKind::Identity),
@@ -125,10 +151,84 @@ pub(crate) fn build_evidence_kernel(
                 event: EvidenceEvent::ReadmeDiscovery,
             },
             None,
-        )),
+        ));
+    }
+
+    let indexed_paths = document_index
+        .entries()
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut facet_signal_paths = fs_scan
+        .files
+        .iter()
+        .map(|file| file.path.replace('\\', "/"))
+        .filter(|path| is_facet_signal_path(path) && !indexed_paths.contains(path.as_str()))
+        .collect::<Vec<_>>();
+    facet_signal_paths.sort();
+    facet_signal_paths.dedup();
+    for path in facet_signal_paths {
+        drafts.push(evidence_draft(
+            EvidenceKind::FilePresent,
+            Some(path),
+            None,
+            "facet signal file candidate".to_string(),
+            EvidenceOrigin {
+                scanner: EvidenceScanner::FileSystem,
+                event: EvidenceEvent::ImportantFileDetection,
+            },
+            None,
+        ));
     }
 
     EvidenceKernel::from_drafts(drafts)
+}
+
+fn is_facet_signal_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "cargo.toml"
+            | "package.json"
+            | "pyproject.toml"
+            | "go.mod"
+            | "src/main.rs"
+            | "main.go"
+            | "main.py"
+    ) || lower.starts_with("src/bin/")
+        || lower.starts_with("cmd/")
+        || lower.split('/').any(|segment| {
+            matches!(
+                segment,
+                "infra"
+                    | "infrastructure"
+                    | "terraform"
+                    | "k8s"
+                    | "helm"
+                    | "deploy"
+                    | "deployments"
+                    | "ops"
+                    | "research"
+                    | "paper"
+                    | "papers"
+                    | "dataset"
+                    | "datasets"
+                    | "notebook"
+                    | "notebooks"
+                    | "experiment"
+                    | "experiments"
+                    | "template"
+                    | "templates"
+                    | "cookiecutter"
+                    | "scaffold"
+                    | "app"
+                    | "apps"
+                    | "web"
+                    | "frontend"
+                    | "backend"
+                    | "product"
+            )
+        })
 }
 
 pub(crate) fn legacy_evidence_view(kernel: &EvidenceKernel) -> Vec<Evidence> {
@@ -167,12 +267,15 @@ pub(crate) fn legacy_evidence_ledger_view(kernel: &EvidenceKernel) -> Vec<Eviden
 
 pub(crate) fn build_route_assessments(
     evidence_facts: &[EvidenceFact],
+    evidence_v2: &EvidenceKernelV2,
     pattern_matches: &[PatternMatch],
     readme: Option<&ReadmeSummary>,
 ) -> Result<Vec<RouteAssessment>, RouteAssessmentError> {
     route_state_routes()
         .iter()
-        .map(|route| build_route_assessment(*route, evidence_facts, pattern_matches, readme))
+        .map(|route| {
+            build_route_assessment(*route, evidence_facts, evidence_v2, pattern_matches, readme)
+        })
         .collect()
 }
 
@@ -328,6 +431,7 @@ fn route_state_routes() -> &'static [RouteKind] {
 fn build_route_assessment(
     route: RouteKind,
     evidence_facts: &[EvidenceFact],
+    evidence_v2: &EvidenceKernelV2,
     pattern_matches: &[PatternMatch],
     readme: Option<&ReadmeSummary>,
 ) -> Result<RouteAssessment, RouteAssessmentError> {
@@ -335,11 +439,23 @@ fn build_route_assessment(
         fact.scope == EvidenceScope::Root && is_structural_route_evidence(fact.kind)
     });
     let readme_route = route_evidence_ids(evidence_facts, route, |fact| {
-        fact.scope == EvidenceScope::Root && is_readme_route_evidence(fact.kind)
+        fact.scope == EvidenceScope::Root
+            && fact.path.as_deref().is_some_and(is_root_readme_path)
+            && is_readme_route_evidence(fact.kind)
     });
-    let inherited = route_evidence_ids(evidence_facts, route, |fact| {
-        !matches!(fact.scope, EvidenceScope::Root) && fact.route == Some(route)
-    });
+    let inherited = if route == RouteKind::License {
+        Vec::new()
+    } else {
+        evidence_v2
+            .facts()
+            .iter()
+            .filter(|fact| {
+                fact.provenance.domain == SourceDomain::OrganizationInherited
+                    && fact.atom.route() == Some(route)
+            })
+            .map(|fact| fact.id)
+            .collect()
+    };
     let missing_pattern = pattern_matches.iter().any(|pattern_match| {
         pattern_match.route == Some(route) && pattern_match.outcome == PatternOutcome::Missing
     });
@@ -390,6 +506,10 @@ fn is_readme_route_evidence(kind: EvidenceKind) -> bool {
             | EvidenceKind::MarkdownBadge
             | EvidenceKind::RouteCandidate
     )
+}
+
+fn is_root_readme_path(path: &str) -> bool {
+    matches!(path, "README.md" | "Readme.md" | "readme.md" | "README")
 }
 
 fn route_for_important_file(kind: ImportantFileKind) -> Option<RouteKind> {

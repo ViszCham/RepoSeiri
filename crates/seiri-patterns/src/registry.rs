@@ -1,4 +1,7 @@
-use crate::{PatternBoundary, PatternDetector, PatternNegativeFixture};
+use crate::{
+    PatternBoundary, PatternDetector, PatternNegativeFixture, PredicateContext, PredicateProgram,
+    PredicateProgramError,
+};
 use seiri_core::{stable_id, PatternGroup, PatternMatch, PatternOutcome, RepoSnapshot, RouteKind};
 use std::collections::BTreeSet;
 
@@ -11,6 +14,7 @@ pub struct PatternDefinition {
     pub detector: PatternDetector,
     pub adoption_stage: PatternAdoptionStage,
     pub boundary: PatternBoundary,
+    pub predicate: Option<PredicateProgram>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,11 +123,30 @@ impl PatternRegistry {
             .collect()
     }
 
+    #[must_use]
+    pub fn evaluate_predicate(
+        &self,
+        pattern_id: &str,
+        snapshot: &RepoSnapshot,
+    ) -> Option<seiri_core::Observation<()>> {
+        self.definition(pattern_id)
+            .and_then(|definition| definition.predicate.as_ref())
+            .map(|program| program.evaluate(PredicateContext::from_snapshot(snapshot)))
+    }
+
     pub fn validate_complete(&self) -> Result<(), PatternRegistryError> {
         let mut pattern_ids = BTreeSet::new();
         for definition in &self.definitions {
             if !pattern_ids.insert(definition.id) {
                 return Err(PatternRegistryError::DuplicatePatternId(definition.id));
+            }
+            if let Some(predicate) = &definition.predicate {
+                predicate
+                    .validate()
+                    .map_err(|source| PatternRegistryError::InvalidPredicate {
+                        pattern_id: definition.id,
+                        source,
+                    })?;
             }
         }
 
@@ -182,6 +205,10 @@ pub enum PatternRegistryError {
     },
     MissingDetector(PatternGroup),
     MissingNegativeFixture(PatternGroup),
+    InvalidPredicate {
+        pattern_id: &'static str,
+        source: PredicateProgramError,
+    },
 }
 
 impl std::fmt::Display for PatternRegistryError {
@@ -209,6 +236,9 @@ impl std::fmt::Display for PatternRegistryError {
             }
             Self::MissingNegativeFixture(group) => {
                 write!(formatter, "pattern group {group} has no negative fixture")
+            }
+            Self::InvalidPredicate { pattern_id, source } => {
+                write!(formatter, "pattern '{pattern_id}' has an invalid predicate: {source}")
             }
         }
     }

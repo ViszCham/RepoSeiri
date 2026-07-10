@@ -11,6 +11,7 @@ pub use command::{CodexCommand, CodexCommandError};
 
 pub const CODEX_KERNEL_SCHEMA_VERSION: &str = "seiri.codex.kernel.v1";
 pub const CODEX_NATIVE_SCHEMA_VERSION: &str = "seiri.codex.native.v2";
+pub const CODEX_NATIVE_V3_SCHEMA_VERSION: &str = "seiri.codex.native.v3";
 pub const CODEX_QUERY_SCHEMA_VERSION: &str = "seiri.codex.query.v2";
 pub const CODEX_LINTER_CONTEXT_SCHEMA_VERSION: &str = "seiri.codex.linter_context.v2";
 

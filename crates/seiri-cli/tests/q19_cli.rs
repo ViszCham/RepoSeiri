@@ -14,11 +14,25 @@ fn q19_cli_keeps_v1_default_and_routes_native_query_and_linter_views() {
     let root = fixture("safe-plan-repo");
     let default = run_codex(&root, &[]);
     let native = run_codex(&root, &["--schema", "native-v2"]);
+    let native_v3 = run_codex(
+        &root,
+        &[
+            "--schema",
+            "native-v3",
+            "--view",
+            "query",
+            "--query",
+            "patches",
+        ],
+    );
     let query = run_codex(&root, &["--view", "query", "--query", "routes"]);
     let linter = run_codex(&root, &["--view", "linter"]);
 
     assert!(default.contains("\"schema_version\": \"seiri.block_p.v1\""));
     assert!(native.contains("\"schema_version\": \"seiri.codex.native.v2\""));
+    assert!(native_v3.contains("\"schema_version\": \"seiri.codex.native.v3\""));
+    assert!(native_v3.contains("\"analysis_run\""));
+    assert!(native_v3.contains("\"operation_bindings\""));
     assert!(query.contains("\"schema_version\": \"seiri.codex.query.v2\""));
     assert!(query.contains("\"kind\": \"routes\""));
     assert!(linter.contains("\"schema_version\": \"seiri.codex.linter_context.v2\""));

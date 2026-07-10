@@ -2,7 +2,7 @@ use seiri_core::{
     CodexNativeAuditSummary, CodexNativeRouteSummary, RepoSnapshot, RoutePolicyBoundary,
 };
 
-pub(super) fn native_audit_summary(snapshot: &RepoSnapshot) -> CodexNativeAuditSummary {
+pub(crate) fn native_audit_summary(snapshot: &RepoSnapshot) -> CodexNativeAuditSummary {
     CodexNativeAuditSummary {
         entries_scanned: snapshot.entry_count,
         document_events: snapshot
@@ -41,7 +41,7 @@ pub(super) fn native_audit_summary(snapshot: &RepoSnapshot) -> CodexNativeAuditS
     }
 }
 
-pub(super) fn native_route_summary(snapshot: &RepoSnapshot) -> CodexNativeRouteSummary {
+pub(crate) fn native_route_summary(snapshot: &RepoSnapshot) -> CodexNativeRouteSummary {
     CodexNativeRouteSummary {
         assessments: snapshot.route_assessments.len(),
         root_structured_routes: snapshot

@@ -19,7 +19,15 @@ impl PatternDetector {
                 .evidence_kernel
                 .facts()
                 .iter()
-                .filter(|fact| self.matches(fact.scope, fact.kind, fact.route, &fact.value))
+                .filter(|fact| {
+                    self.matches(
+                        fact.scope,
+                        fact.kind,
+                        fact.route,
+                        fact.path.as_deref(),
+                        &fact.value,
+                    )
+                })
                 .map(|fact| fact.id)
                 .collect();
         }
@@ -29,7 +37,13 @@ impl PatternDetector {
                 .evidence_ledger
                 .iter()
                 .filter(|record| {
-                    self.matches(record.scope, record.kind, record.route, &record.value)
+                    self.matches(
+                        record.scope,
+                        record.kind,
+                        record.route,
+                        record.path.as_deref(),
+                        &record.value,
+                    )
                 })
                 .map(|record| record.id)
                 .collect();
@@ -44,6 +58,7 @@ impl PatternDetector {
                     EvidenceScope::Root,
                     evidence.kind,
                     evidence.route,
+                    evidence.path.as_deref(),
                     &evidence.value,
                 )
             })
@@ -76,6 +91,7 @@ impl PatternDetector {
         scope: EvidenceScope,
         kind: EvidenceKind,
         route: Option<RouteKind>,
+        path: Option<&str>,
         value: &str,
     ) -> bool {
         if scope != EvidenceScope::Root {
@@ -85,7 +101,8 @@ impl PatternDetector {
             Self::EvidenceKind(expected) => kind == expected,
             Self::Route(expected) => route == Some(expected),
             Self::ReadmeRoute(expected) => {
-                route == Some(expected)
+                path.is_some_and(is_root_readme_path)
+                    && route == Some(expected)
                     && matches!(
                         kind,
                         EvidenceKind::MarkdownHeading
@@ -98,4 +115,8 @@ impl PatternDetector {
             }
         }
     }
+}
+
+fn is_root_readme_path(path: &str) -> bool {
+    matches!(path, "README.md" | "Readme.md" | "readme.md" | "README")
 }

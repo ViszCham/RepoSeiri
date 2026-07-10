@@ -1,8 +1,8 @@
 use seiri_core::{
     AggregateRepositoryEstimate, BaselineRequirement, BaselineRuleResult, BaselineStatus, FileKind,
     GateKind, MissingRoutePriority, MissingRoutePriorityReport, MissingRoutePrioritySummary,
-    ProfileKind, ProfilePriority, RepoSnapshot, RouteCoOccurrenceGap, RouteKind, RouteState,
-    Severity,
+    ProfileKind, ProfilePriority, RepoSnapshot, ReviewGap, ReviewPriority, ReviewPriorityReport,
+    RouteCoOccurrenceGap, RouteKind, RouteState, Severity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -97,13 +97,14 @@ pub(crate) fn build_missing_route_priority_report(
         priority.rank = index + 1;
     }
 
+    let top_route_gap = priorities.iter().find(|priority| {
+        route_needs_priority(priority.state) || !priority.baseline_pattern_ids.is_empty()
+    });
     let summary = MissingRoutePrioritySummary {
         candidates: priorities.len(),
         co_occurrence_gaps: co_occurrence_gaps.len(),
-        top_route: priorities.first().map(|priority| priority.route),
-        top_priority_x100: priorities
-            .first()
-            .map(|priority| priority.priority_score_x100),
+        top_route: top_route_gap.map(|priority| priority.route),
+        top_priority_x100: top_route_gap.map(|priority| priority.priority_score_x100),
         safe_gated: priorities
             .iter()
             .filter(|priority| priority.gate == GateKind::Safe)
@@ -122,7 +123,61 @@ pub(crate) fn build_missing_route_priority_report(
         summary,
         priorities,
         co_occurrence_gaps,
-        boundary: "Missing route priority is a deterministic routing hint from repository observations, fixed aggregate calibration estimates with a 1,000,000-repository denominator, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
+        boundary: "This compatibility report retains route, candidate-pattern, and co-occurrence review items. Its top_route fields refer only to actual route gaps. The fixed aggregate calibration estimates remain separate from repository observations and do not guarantee popularity, trust, security, quality, or policy outcomes.".to_string(),
+    }
+}
+
+pub(crate) fn build_review_priority_report(
+    compatibility: &MissingRoutePriorityReport,
+) -> ReviewPriorityReport {
+    let mut priorities = Vec::new();
+    for item in &compatibility.priorities {
+        if route_needs_priority(item.state) || !item.baseline_pattern_ids.is_empty() {
+            priorities.push(review_priority(
+                item,
+                ReviewGap::Route {
+                    route: item.route,
+                    state: item.state,
+                    baseline_pattern_ids: item.baseline_pattern_ids.clone(),
+                },
+            ));
+        }
+        if !item.candidate_pattern_ids.is_empty() {
+            priorities.push(review_priority(
+                item,
+                ReviewGap::Content {
+                    route: item.route,
+                    candidate_pattern_ids: item.candidate_pattern_ids.clone(),
+                },
+            ));
+        }
+        if !item.co_occurrence_gap_ids.is_empty() {
+            priorities.push(review_priority(
+                item,
+                ReviewGap::Consistency {
+                    route: Some(item.route),
+                    gap_ids: item.co_occurrence_gap_ids.clone(),
+                },
+            ));
+        }
+    }
+    for (index, priority) in priorities.iter_mut().enumerate() {
+        priority.rank = index + 1;
+    }
+    ReviewPriorityReport::new(priorities)
+}
+
+fn review_priority(item: &MissingRoutePriority, gap: ReviewGap) -> ReviewPriority {
+    ReviewPriority {
+        rank: 0,
+        gap,
+        gate: item.gate,
+        severity: item.severity,
+        priority: item.priority,
+        priority_score_x100: item.priority_score_x100,
+        calibration_estimate: item.calibration_estimate,
+        evidence_ids: item.evidence_ids.clone(),
+        reason: item.reason.clone(),
     }
 }
 
