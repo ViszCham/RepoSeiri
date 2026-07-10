@@ -17,6 +17,8 @@ fn codex_context_uses_audit_and_plan_outputs_for_pr_draft() {
     assert_eq!(context.profile, Some(ProfileKind::Common));
     assert_eq!(context.plan.safe_operations, 1);
     assert_eq!(context.audit.profile_branches, 9);
+    assert!(context.audit.document_events > 0);
+    assert_eq!(context.audit.route_assessments, context.audit.route_states);
     assert!(context.audit.top_profile.is_some());
     assert!(context.audit.top_profile_confidence_x100.is_some());
     assert!(context.audit.missing_route_priorities > 0);
@@ -90,6 +92,8 @@ fn codex_context_renders_user_actions_without_mutation() {
     assert!(markdown.contains("## Wording Lint"));
     assert!(markdown.contains("## Route Meaning Digest"));
     assert!(markdown.contains("## Route Review"));
+    assert!(markdown.contains("Document events"));
+    assert!(markdown.contains("Route assessments"));
     assert!(markdown.contains("## Co-occurrence Gaps"));
     assert!(markdown.contains("## PR Draft"));
     assert!(body.contains("## Claim / Wording / Meaning Digest"));

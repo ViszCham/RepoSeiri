@@ -55,7 +55,7 @@ fn q11_lifecycle_and_verified_security_routes_keep_claim_boundaries() {
     assert!(claim.allowed_meanings.contains(&MeaningAtom::RouteObserved));
     assert!(claim
         .allowed_meanings
-        .contains(&MeaningAtom::RouteTargetPresent));
+        .contains(&MeaningAtom::RepositoryLocalTargetPresent));
     assert!(!claim
         .allowed_meanings
         .contains(&MeaningAtom::HumanReviewRequired));
@@ -70,7 +70,9 @@ fn q11_lifecycle_and_verified_security_routes_keep_claim_boundaries() {
         .contains(&ClaimBoundaryKind::NotTrustGuarantee));
 
     let rule = seiri_core::route_meaning_rule(RouteKind::Security, RouteState::Verified);
-    assert!(rule.indicates.contains(&MeaningAtom::RouteTargetPresent));
+    assert!(rule
+        .indicates
+        .contains(&MeaningAtom::RepositoryLocalTargetPresent));
     assert!(rule
         .does_not_indicate
         .contains(&ClaimBoundaryKind::NotSecurityGuarantee));

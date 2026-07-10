@@ -1,13 +1,20 @@
 use seiri_core::{
-    route_meaning_rule, stable_id, CalibrationRun, CalibrationSourceVisibilitySummary,
-    ClaimBoundaryKind, ClaimId, ClaimRefIndex, ClaimStrength, CodexAuditSummary,
-    CodexBlockedDigest, CodexClaimSummary, CodexCoOccurrenceDigest, CodexFindingDigest,
-    CodexPatchDigest, CodexPrDraft, CodexReviewContext, CodexRouteDigest, CodexRouteMeaningDigest,
-    CodexRouteReviewSummary, CodexUserAction, CodexWordingLintDigest, GateKind, MeaningAtom,
-    PatchPlan, ProfileKind, RepoSnapshot, RouteKind, RouteState, WordingLintReport,
-    WordingRuleKind, SCHEMA_VERSION, TOOL_NAME,
+    route_meaning_rule, CalibrationRun, CalibrationSourceVisibilitySummary, ClaimBoundaryKind,
+    ClaimId, ClaimRefIndex, ClaimStrength, CodexAuditSummary, CodexBlockedDigest,
+    CodexClaimSummary, CodexCoOccurrenceDigest, CodexFindingDigest, CodexPatchDigest, CodexPrDraft,
+    CodexReviewContext, CodexRouteDigest, CodexRouteMeaningDigest, CodexRouteReviewSummary,
+    CodexUserAction, CodexWordingLintDigest, GateKind, MeaningAtom, PatchPlan, ProfileKind,
+    RepoSnapshot, RouteKind, RouteState, WordingLintReport, WordingRuleKind, SCHEMA_VERSION,
+    TOOL_NAME,
 };
 use std::collections::BTreeSet;
+
+mod v4;
+
+pub use v4::{
+    render_linter_context_markdown, render_native_context_markdown, render_query_view_markdown,
+    CodexReviewKernel,
+};
 
 #[must_use]
 pub fn build_calibration_source_summary(
@@ -18,7 +25,7 @@ pub fn build_calibration_source_summary(
 
 #[must_use]
 pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexReviewContext {
-    build_review_context_with_wording(snapshot, plan, None)
+    build_review_kernel(snapshot, plan, None).compatibility_v1()
 }
 
 #[must_use]
@@ -27,6 +34,22 @@ pub fn build_review_context_with_wording(
     plan: &PatchPlan,
     wording_lint: Option<&WordingLintReport>,
 ) -> CodexReviewContext {
+    build_review_kernel(snapshot, plan, wording_lint).compatibility_v1()
+}
+
+#[must_use]
+pub fn build_review_kernel(
+    snapshot: &RepoSnapshot,
+    plan: &PatchPlan,
+    wording_lint: Option<&WordingLintReport>,
+) -> CodexReviewKernel {
+    CodexReviewKernel::new(snapshot, plan, wording_lint)
+}
+
+fn build_compatibility_view(kernel: &CodexReviewKernel) -> CodexReviewContext {
+    let snapshot = &kernel.snapshot;
+    let plan = &kernel.plan;
+    let wording_lint = kernel.wording_lint.as_ref();
     let audit = audit_summary(snapshot);
     let findings = snapshot
         .findings
@@ -96,7 +119,18 @@ pub fn build_review_context_with_wording(
         &wording_lint,
         &route_meanings,
     );
-    let user_actions = build_user_actions(snapshot, profile);
+    let user_actions = kernel
+        .actions
+        .iter()
+        .map(|action| CodexUserAction {
+            id: action.id.clone(),
+            label: action.label.clone(),
+            command: action.command.render_powershell(),
+            mutates_files: action.mutates_files,
+            requires_confirmation: action.requires_confirmation,
+            detail: action.detail.clone(),
+        })
+        .collect();
 
     CodexReviewContext {
         schema_version: SCHEMA_VERSION.to_string(),
@@ -170,8 +204,20 @@ pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
         context.route_review.manual_decisions
     ));
     out.push_str(&format!(
+        "- Document events: `{}` / diagnostics `{}`\n",
+        context.audit.document_events, context.audit.document_diagnostics
+    ));
+    out.push_str(&format!(
+        "- Evidence kernel facts: `{}`\n",
+        context.audit.evidence_kernel_facts
+    ));
+    out.push_str(&format!(
         "- Evidence ledger records: `{}`\n",
         context.audit.evidence_ledger_records
+    ));
+    out.push_str(&format!(
+        "- Route assessments: `{}`\n",
+        context.audit.route_assessments
     ));
     out.push_str(&format!(
         "- Route states: `{}`\n",
@@ -422,8 +468,18 @@ fn audit_summary(snapshot: &RepoSnapshot) -> CodexAuditSummary {
         .count();
     CodexAuditSummary {
         entries_scanned: snapshot.entry_count,
+        document_events: snapshot
+            .readme_document
+            .as_ref()
+            .map_or(0, |document| document.events().len()),
+        document_diagnostics: snapshot
+            .readme_document
+            .as_ref()
+            .map_or(0, |document| document.diagnostics().len()),
+        evidence_kernel_facts: snapshot.evidence_kernel.len(),
         evidence_items: snapshot.evidence.len(),
         evidence_ledger_records: snapshot.evidence_ledger.len(),
+        route_assessments: snapshot.route_assessments.len(),
         route_states: snapshot.route_states.len(),
         content_claims: snapshot.claims.len(),
         strong_routes,
@@ -476,8 +532,19 @@ fn build_pr_draft(
     body.push_str("## Summary\n\n");
     body.push_str("- Generated from RepoSeiri Rust core audit and dry-run plan output.\n");
     body.push_str(&format!(
-        "- Scanned `{}` entries and collected `{}` evidence items / `{}` ledger records.\n",
-        audit.entries_scanned, audit.evidence_items, audit.evidence_ledger_records
+        "- README document events: `{}` / diagnostics `{}`.\n",
+        audit.document_events, audit.document_diagnostics
+    ));
+    body.push_str(&format!(
+        "- Scanned `{}` entries and collected `{}` canonical evidence facts / `{}` compatibility evidence items / `{}` compatibility ledger records.\n",
+        audit.entries_scanned,
+        audit.evidence_kernel_facts,
+        audit.evidence_items,
+        audit.evidence_ledger_records
+    ));
+    body.push_str(&format!(
+        "- Canonical route assessments emitted: `{}`.\n",
+        audit.route_assessments
     ));
     body.push_str(&format!(
         "- Route states emitted: `{}`.\n",
@@ -767,48 +834,4 @@ fn route_strength(state: RouteState) -> RouteStrength {
         | RouteState::Overloaded
         | RouteState::Stale => RouteStrength::Weak,
     }
-}
-
-fn build_user_actions(
-    snapshot: &RepoSnapshot,
-    profile: Option<ProfileKind>,
-) -> Vec<CodexUserAction> {
-    let selected_profile = profile.unwrap_or(ProfileKind::Common);
-    let path = shell_quote(&snapshot.repo_root);
-    vec![
-        CodexUserAction {
-            id: stable_id("codex-action", 1),
-            label: "Render audit report".to_string(),
-            command: format!(
-                "cargo run --quiet -p seiri-cli -- audit --path {path} --profile {selected_profile} --format markdown"
-            ),
-            mutates_files: false,
-            requires_confirmation: false,
-            detail: "Re-run the Rust core audit and inspect evidence, baseline, profile, and findings.".to_string(),
-        },
-        CodexUserAction {
-            id: stable_id("codex-action", 2),
-            label: "Render dry-run patch plan".to_string(),
-            command: format!(
-                "cargo run --quiet -p seiri-cli -- plan --path {path} --profile {selected_profile} --format markdown"
-            ),
-            mutates_files: false,
-            requires_confirmation: false,
-            detail: "Show safe operations and guarded/manual blocked items without writing files.".to_string(),
-        },
-        CodexUserAction {
-            id: stable_id("codex-action", 3),
-            label: "Render Codex PR draft context".to_string(),
-            command: format!(
-                "cargo run --quiet -p seiri-cli -- codex --path {path} --profile {selected_profile} --format markdown"
-            ),
-            mutates_files: false,
-            requires_confirmation: false,
-            detail: "Generate the Codex-facing review context and draft PR body from Rust core outputs.".to_string(),
-        },
-    ]
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\\\""))
 }

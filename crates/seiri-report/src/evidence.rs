@@ -1,44 +1,220 @@
 use seiri_core::{
-    stable_id, Evidence, EvidenceConfidence, EvidenceKind, EvidenceRecord, EvidenceScope,
-    EvidenceSource, EvidenceSpan, ImportantFileKind, PatternMatch, PatternOutcome, ReadmeSummary,
-    RouteKind, RouteState, RouteStateReport,
+    stable_id, DocumentEvent, DocumentScan, Evidence, EvidenceConfidence, EvidenceDraft,
+    EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel, EvidenceKernelError, EvidenceKind,
+    EvidenceOrigin, EvidenceRecord, EvidenceScanner, EvidenceScope, EvidenceSource, EvidenceSpan,
+    ImportantFileKind, PatternMatch, PatternOutcome, ReadmeRouteAssessment, ReadmeSummary,
+    RouteAssessment, RouteAssessmentError, RouteKind, RouteStateReport,
 };
+use seiri_fs::RepoFsScan;
 
-pub(crate) fn build_evidence_ledger(evidence: &[Evidence]) -> Vec<EvidenceRecord> {
-    evidence
+pub(crate) fn build_evidence_kernel(
+    fs_scan: &RepoFsScan,
+    readme_document: Option<&DocumentScan>,
+) -> Result<EvidenceKernel, EvidenceKernelError> {
+    let mut drafts = Vec::new();
+
+    for important in &fs_scan.important_files {
+        drafts.push(evidence_draft(
+            EvidenceKind::ImportantFile,
+            Some(important.path.clone()),
+            route_for_important_file(important.kind),
+            format!("{:?}", important.kind),
+            EvidenceOrigin {
+                scanner: EvidenceScanner::FileSystem,
+                event: EvidenceEvent::ImportantFileDetection,
+            },
+            None,
+        ));
+    }
+
+    match readme_document {
+        Some(document) => {
+            drafts.push(evidence_draft(
+                EvidenceKind::ReadmePresent,
+                Some(document.path().to_string()),
+                Some(RouteKind::Identity),
+                "README detected".to_string(),
+                EvidenceOrigin {
+                    scanner: EvidenceScanner::Markdown,
+                    event: EvidenceEvent::ReadmeDiscovery,
+                },
+                None,
+            ));
+
+            for heading in document.events().iter().filter_map(|event| match event {
+                DocumentEvent::Heading(heading) => Some(heading),
+                _ => None,
+            }) {
+                let route = seiri_markdown::classify_route(&heading.text, None);
+                drafts.push(evidence_draft(
+                    EvidenceKind::MarkdownHeading,
+                    Some(document.path().to_string()),
+                    (route != RouteKind::Unknown).then_some(route),
+                    heading.text.clone(),
+                    EvidenceOrigin {
+                        scanner: EvidenceScanner::Markdown,
+                        event: EvidenceEvent::MarkdownHeading,
+                    },
+                    heading.span,
+                ));
+            }
+
+            for link in document.events().iter().filter_map(|event| match event {
+                DocumentEvent::Link(link) => Some(link),
+                _ => None,
+            }) {
+                drafts.push(evidence_draft(
+                    EvidenceKind::MarkdownLink,
+                    Some(document.path().to_string()),
+                    link.route,
+                    format!("{} -> {}", link.text, link.target),
+                    EvidenceOrigin {
+                        scanner: EvidenceScanner::Markdown,
+                        event: EvidenceEvent::MarkdownLink,
+                    },
+                    link.span,
+                ));
+            }
+
+            for badge in document.events().iter().filter_map(|event| match event {
+                DocumentEvent::Badge(badge) => Some(badge),
+                _ => None,
+            }) {
+                drafts.push(evidence_draft(
+                    EvidenceKind::MarkdownBadge,
+                    Some(document.path().to_string()),
+                    Some(RouteKind::Automation),
+                    format!("{} -> {}", badge.alt, badge.target),
+                    EvidenceOrigin {
+                        scanner: EvidenceScanner::Markdown,
+                        event: EvidenceEvent::MarkdownBadge,
+                    },
+                    badge.span,
+                ));
+            }
+
+            for route in document.events().iter().filter_map(|event| match event {
+                DocumentEvent::RouteCandidate(route) => Some(route),
+                _ => None,
+            }) {
+                drafts.push(evidence_draft(
+                    EvidenceKind::RouteCandidate,
+                    Some(document.path().to_string()),
+                    Some(route.route),
+                    route.target.as_ref().map_or_else(
+                        || route.text.clone(),
+                        |target| format!("{} -> {target}", route.text),
+                    ),
+                    EvidenceOrigin {
+                        scanner: EvidenceScanner::Markdown,
+                        event: EvidenceEvent::RouteCandidate {
+                            source: route.source,
+                        },
+                    },
+                    route.span,
+                ));
+            }
+        }
+        None => drafts.push(evidence_draft(
+            EvidenceKind::ReadmeMissing,
+            None,
+            Some(RouteKind::Identity),
+            "README not detected".to_string(),
+            EvidenceOrigin {
+                scanner: EvidenceScanner::Markdown,
+                event: EvidenceEvent::ReadmeDiscovery,
+            },
+            None,
+        )),
+    }
+
+    EvidenceKernel::from_drafts(drafts)
+}
+
+pub(crate) fn legacy_evidence_view(kernel: &EvidenceKernel) -> Vec<Evidence> {
+    kernel
+        .facts()
         .iter()
-        .enumerate()
-        .map(|(index, legacy)| {
-            let scope = evidence_scope(legacy);
-            EvidenceRecord {
-                id: stable_id("evrec", index + 1),
-                legacy_evidence_id: Some(legacy.id.clone()),
-                kind: legacy.kind,
-                path: legacy.path.clone(),
-                route: legacy.route,
-                value: legacy.value.clone(),
-                source: legacy.source.clone(),
-                scope,
-                confidence: evidence_confidence(legacy, scope),
-                span: evidence_span(&legacy.source),
+        .map(|fact| Evidence {
+            id: legacy_evidence_id(fact),
+            kind: fact.kind,
+            path: fact.path.clone(),
+            route: fact.route,
+            value: fact.value.clone(),
+            source: compatibility_source(fact),
+        })
+        .collect()
+}
+
+pub(crate) fn legacy_evidence_ledger_view(kernel: &EvidenceKernel) -> Vec<EvidenceRecord> {
+    kernel
+        .facts()
+        .iter()
+        .map(|fact| EvidenceRecord {
+            id: fact.id,
+            legacy_evidence_id: Some(legacy_evidence_id(fact)),
+            kind: fact.kind,
+            path: fact.path.clone(),
+            route: fact.route,
+            value: fact.value.clone(),
+            source: compatibility_source(fact),
+            scope: fact.scope,
+            confidence: fact.confidence,
+            span: fact.span.map(EvidenceSpan::from),
+        })
+        .collect()
+}
+
+pub(crate) fn build_route_assessments(
+    evidence_facts: &[EvidenceFact],
+    pattern_matches: &[PatternMatch],
+    readme: Option<&ReadmeSummary>,
+) -> Result<Vec<RouteAssessment>, RouteAssessmentError> {
+    route_state_routes()
+        .iter()
+        .map(|route| build_route_assessment(*route, evidence_facts, pattern_matches, readme))
+        .collect()
+}
+
+pub(crate) fn legacy_route_state_views(assessments: &[RouteAssessment]) -> Vec<RouteStateReport> {
+    assessments
+        .iter()
+        .map(|assessment| {
+            let projection = assessment.legacy_projection();
+            RouteStateReport {
+                route: assessment.route(),
+                state: projection.state,
+                evidence_ids: assessment.legacy_evidence_ids(),
+                confidence: projection.confidence,
+                reason: projection.reason.to_string(),
             }
         })
         .collect()
 }
 
-pub(crate) fn build_route_states(
-    evidence_ledger: &[EvidenceRecord],
-    pattern_matches: &[PatternMatch],
-    readme: Option<&ReadmeSummary>,
-) -> Vec<RouteStateReport> {
-    route_state_routes()
-        .iter()
-        .map(|route| build_route_state(*route, evidence_ledger, pattern_matches, readme))
-        .collect()
+fn evidence_draft(
+    kind: EvidenceKind,
+    path: Option<String>,
+    route: Option<RouteKind>,
+    value: String,
+    origin: EvidenceOrigin,
+    span: Option<seiri_core::SourceSpan>,
+) -> EvidenceDraft {
+    let scope = evidence_scope(kind, path.as_deref(), &value);
+    EvidenceDraft {
+        kind,
+        path,
+        route,
+        value,
+        origin,
+        scope,
+        confidence: evidence_confidence(kind, scope),
+        span,
+    }
 }
 
-fn evidence_scope(evidence: &Evidence) -> EvidenceScope {
-    let Some(path) = evidence.path.as_deref() else {
+fn evidence_scope(kind: EvidenceKind, path: Option<&str>, value: &str) -> EvidenceScope {
+    let Some(path) = path else {
         return EvidenceScope::Root;
     };
     let normalized = path.replace('\\', "/");
@@ -60,13 +236,12 @@ fn evidence_scope(evidence: &Evidence) -> EvidenceScope {
     if !lower.contains('/')
         || lower == "docs"
         || (lower.starts_with(".github/workflows/")
-            && evidence.kind == EvidenceKind::ImportantFile
-            && evidence.value == "Workflow")
+            && kind == EvidenceKind::ImportantFile
+            && value == "Workflow")
         || (lower == ".github/codeowners"
-            && evidence.kind == EvidenceKind::ImportantFile
-            && evidence.value == "Codeowners")
-        || (evidence.kind == EvidenceKind::ImportantFile
-            && root_github_operational_file(&lower, &evidence.value))
+            && kind == EvidenceKind::ImportantFile
+            && value == "Codeowners")
+        || (kind == EvidenceKind::ImportantFile && root_github_operational_file(&lower, value))
     {
         return EvidenceScope::Root;
     }
@@ -74,34 +249,61 @@ fn evidence_scope(evidence: &Evidence) -> EvidenceScope {
     EvidenceScope::Nested
 }
 
-fn evidence_confidence(evidence: &Evidence, scope: EvidenceScope) -> EvidenceConfidence {
+fn evidence_confidence(kind: EvidenceKind, scope: EvidenceScope) -> EvidenceConfidence {
     if !matches!(scope, EvidenceScope::Root) {
         return EvidenceConfidence::Low;
     }
 
-    match evidence.kind {
+    match kind {
         EvidenceKind::FilePresent
         | EvidenceKind::ImportantFile
         | EvidenceKind::ReadmePresent
         | EvidenceKind::ReadmeMissing => EvidenceConfidence::High,
         EvidenceKind::MarkdownHeading
         | EvidenceKind::MarkdownLink
-        | EvidenceKind::MarkdownBadge => EvidenceConfidence::Medium,
-        EvidenceKind::RouteCandidate => EvidenceConfidence::Medium,
+        | EvidenceKind::MarkdownBadge
+        | EvidenceKind::RouteCandidate => EvidenceConfidence::Medium,
     }
 }
 
-fn evidence_span(source: &EvidenceSource) -> Option<EvidenceSpan> {
-    let (_, tail) = source.detail.rsplit_once("line ")?;
-    let digits = tail
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>();
-    let line = digits.parse::<usize>().ok()?;
-    Some(EvidenceSpan {
-        start_line: line,
-        end_line: line,
-    })
+fn legacy_evidence_id(fact: &EvidenceFact) -> String {
+    let prefix = match fact.kind {
+        EvidenceKind::ImportantFile => "ev-important-file",
+        EvidenceKind::ReadmePresent => "ev-readme-present",
+        EvidenceKind::ReadmeMissing => "ev-readme-missing",
+        EvidenceKind::MarkdownHeading => "ev-heading",
+        EvidenceKind::MarkdownLink => "ev-link",
+        EvidenceKind::MarkdownBadge => "ev-badge",
+        EvidenceKind::RouteCandidate => "ev-route",
+        EvidenceKind::FilePresent => "ev-file-present",
+    };
+    stable_id(prefix, fact.id.ordinal() as usize)
+}
+
+fn compatibility_source(fact: &EvidenceFact) -> EvidenceSource {
+    let scanner = match fact.origin.scanner {
+        EvidenceScanner::FileSystem => "seiri-fs",
+        EvidenceScanner::Markdown => "seiri-markdown",
+    };
+    let line = fact.span.map(|span| span.line);
+    let detail = match fact.origin.event {
+        EvidenceEvent::ImportantFileDetection => "important file detection".to_string(),
+        EvidenceEvent::ReadmeDiscovery => "readme discovery".to_string(),
+        EvidenceEvent::MarkdownHeading => compatibility_line_detail("heading", line),
+        EvidenceEvent::MarkdownLink => compatibility_line_detail("link", line),
+        EvidenceEvent::MarkdownBadge => compatibility_line_detail("badge", line),
+        EvidenceEvent::RouteCandidate { source } => {
+            compatibility_line_detail(&format!("{source:?}"), line)
+        }
+    };
+    EvidenceSource {
+        scanner: scanner.to_string(),
+        detail,
+    }
+}
+
+fn compatibility_line_detail(label: &str, line: Option<usize>) -> String {
+    line.map_or_else(|| label.to_string(), |line| format!("{label} line {line}"))
 }
 
 fn route_state_routes() -> &'static [RouteKind] {
@@ -123,25 +325,25 @@ fn route_state_routes() -> &'static [RouteKind] {
     ]
 }
 
-fn build_route_state(
+fn build_route_assessment(
     route: RouteKind,
-    evidence_ledger: &[EvidenceRecord],
+    evidence_facts: &[EvidenceFact],
     pattern_matches: &[PatternMatch],
     readme: Option<&ReadmeSummary>,
-) -> RouteStateReport {
-    let root_structural = route_evidence_ids(evidence_ledger, route, |record| {
-        record.scope == EvidenceScope::Root && is_structural_route_evidence(record.kind)
+) -> Result<RouteAssessment, RouteAssessmentError> {
+    let root_structural = route_evidence_ids(evidence_facts, route, |fact| {
+        fact.scope == EvidenceScope::Root && is_structural_route_evidence(fact.kind)
     });
-    let readme_route = route_evidence_ids(evidence_ledger, route, |record| {
-        record.scope == EvidenceScope::Root && is_readme_route_evidence(record.kind)
+    let readme_route = route_evidence_ids(evidence_facts, route, |fact| {
+        fact.scope == EvidenceScope::Root && is_readme_route_evidence(fact.kind)
     });
-    let inherited = route_evidence_ids(evidence_ledger, route, |record| {
-        !matches!(record.scope, EvidenceScope::Root) && record.route == Some(route)
+    let inherited = route_evidence_ids(evidence_facts, route, |fact| {
+        !matches!(fact.scope, EvidenceScope::Root) && fact.route == Some(route)
     });
     let missing_pattern = pattern_matches.iter().any(|pattern_match| {
         pattern_match.route == Some(route) && pattern_match.outcome == PatternOutcome::Missing
     });
-    let readme_map_state = readme
+    let readme_assessment = readme
         .and_then(|readme| {
             readme
                 .route_map
@@ -149,83 +351,27 @@ fn build_route_state(
                 .iter()
                 .find(|entry| entry.route == route)
         })
-        .map(|entry| (entry.state, entry.reason.as_str()));
+        .map_or_else(ReadmeRouteAssessment::default, |entry| entry.assessment);
 
-    let mut evidence_ids = Vec::new();
-    evidence_ids.extend(root_structural.iter().cloned());
-    evidence_ids.extend(readme_route.iter().cloned());
-    evidence_ids.sort();
-    evidence_ids.dedup();
-
-    let (state, confidence, reason) = if let Some((RouteState::Stale, reason)) = readme_map_state {
-        (RouteState::Stale, EvidenceConfidence::Medium, reason)
-    } else if let Some((RouteState::Conflicting, reason)) = readme_map_state {
-        (RouteState::Conflicting, EvidenceConfidence::Medium, reason)
-    } else if let Some((RouteState::Overloaded, reason)) = readme_map_state {
-        (RouteState::Overloaded, EvidenceConfidence::Medium, reason)
-    } else if root_structural.is_empty() && matches!(readme_map_state, Some((RouteState::Weak, _)))
-    {
-        let reason = readme_map_state
-            .map(|(_, reason)| reason)
-            .unwrap_or("README route evidence is weak.");
-        (RouteState::Weak, EvidenceConfidence::Low, reason)
-    } else if !root_structural.is_empty() && !readme_route.is_empty() {
-        (
-            RouteState::Verified,
-            EvidenceConfidence::High,
-            "Root structured evidence and README routing evidence agree.",
-        )
-    } else if !root_structural.is_empty() {
-        (
-            RouteState::Structured,
-            EvidenceConfidence::High,
-            "Root structured evidence is present, but README routing is not explicit.",
-        )
-    } else if !readme_route.is_empty() {
-        (
-            RouteState::Routed,
-            EvidenceConfidence::Medium,
-            "README routing evidence is present.",
-        )
-    } else if !inherited.is_empty() {
-        evidence_ids = inherited;
-        (
-            RouteState::Inherited,
-            EvidenceConfidence::Low,
-            "Only non-root or fixture evidence was observed; it is not credited as a root route.",
-        )
-    } else if missing_pattern && unsafe_to_invent_route(route) {
-        (
-            RouteState::UnsafeToInvent,
-            EvidenceConfidence::Medium,
-            "The route is missing and requires a maintainer policy or content decision.",
-        )
-    } else {
-        (
-            RouteState::Absent,
-            EvidenceConfidence::Low,
-            "No root route evidence was observed.",
-        )
-    };
-
-    RouteStateReport {
+    RouteAssessment::new(
         route,
-        state,
-        evidence_ids,
-        confidence,
-        reason: reason.to_string(),
-    }
+        readme_assessment,
+        missing_pattern,
+        root_structural,
+        readme_route,
+        inherited,
+    )
 }
 
 fn route_evidence_ids(
-    evidence_ledger: &[EvidenceRecord],
+    evidence_facts: &[EvidenceFact],
     route: RouteKind,
-    predicate: impl Fn(&EvidenceRecord) -> bool,
-) -> Vec<String> {
-    evidence_ledger
+    predicate: impl Fn(&EvidenceFact) -> bool,
+) -> Vec<EvidenceId> {
+    evidence_facts
         .iter()
-        .filter(|record| record.route == Some(route) && predicate(record))
-        .map(|record| record.id.clone())
+        .filter(|fact| fact.route == Some(route) && predicate(fact))
+        .map(|fact| fact.id)
         .collect()
 }
 
@@ -246,15 +392,28 @@ fn is_readme_route_evidence(kind: EvidenceKind) -> bool {
     )
 }
 
-fn unsafe_to_invent_route(route: RouteKind) -> bool {
-    matches!(
-        route,
-        RouteKind::License
-            | RouteKind::Security
-            | RouteKind::Lifecycle
-            | RouteKind::Governance
-            | RouteKind::Ownership
-    )
+fn route_for_important_file(kind: ImportantFileKind) -> Option<RouteKind> {
+    match kind {
+        ImportantFileKind::Readme => Some(RouteKind::Identity),
+        ImportantFileKind::License => Some(RouteKind::License),
+        ImportantFileKind::Contributing => Some(RouteKind::Contributing),
+        ImportantFileKind::Security => Some(RouteKind::Security),
+        ImportantFileKind::Support => Some(RouteKind::Support),
+        ImportantFileKind::IssueTemplate
+        | ImportantFileKind::IssueForm
+        | ImportantFileKind::PullRequestTemplate => Some(RouteKind::Intake),
+        ImportantFileKind::Changelog => Some(RouteKind::Release),
+        ImportantFileKind::Codeowners => Some(RouteKind::Ownership),
+        ImportantFileKind::CargoToml => Some(RouteKind::Identity),
+        ImportantFileKind::DocsDirectory => Some(RouteKind::Docs),
+        ImportantFileKind::Workflow => Some(RouteKind::Automation),
+        ImportantFileKind::DependencyBot | ImportantFileKind::SecurityAutomation => {
+            Some(RouteKind::Automation)
+        }
+        ImportantFileKind::Gitignore
+        | ImportantFileKind::Gitattributes
+        | ImportantFileKind::EditorConfig => Some(RouteKind::Hygiene),
+    }
 }
 
 fn root_github_operational_file(path: &str, value: &str) -> bool {

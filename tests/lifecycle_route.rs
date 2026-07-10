@@ -67,7 +67,7 @@ fn q3_lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
         baseline.adoption_stage,
         seiri_patterns::PatternAdoptionStage::CommonBaseline
     );
-    assert_eq!(baseline.missing_gate, GateKind::Manual);
+    assert_eq!(baseline.boundary.missing_gate, GateKind::Manual);
 
     let lifecycle = registry
         .definitions()
@@ -81,7 +81,7 @@ fn q3_lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
         lifecycle.adoption_stage,
         seiri_patterns::PatternAdoptionStage::Candidate
     );
-    assert_eq!(lifecycle.missing_gate, GateKind::Manual);
+    assert_eq!(lifecycle.boundary.missing_gate, GateKind::Manual);
     assert!(registry
         .evaluation_definitions()
         .iter()
@@ -111,7 +111,7 @@ fn q3_lifecycle_route_state_is_manual_when_missing() {
         .find(|priority| priority.route == RouteKind::Lifecycle)
         .expect("lifecycle priority");
     assert_eq!(priority.gate, GateKind::Manual);
-    assert_eq!(priority.observed_missing_repositories, None);
+    assert_eq!(priority.calibration_estimate, None);
     assert!(priority
         .baseline_pattern_ids
         .contains(&"common.lifecycle.route_present".to_string()));

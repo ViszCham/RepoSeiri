@@ -1,6 +1,7 @@
 use seiri_core::{
-    GateKind, PatchOperationKind, PatchPlanSource, PatchPreflightCheckKind, PatchPreflightStatus,
-    PatchSafetyLevel, ProfileKind, ProfilePriority, RepoSnapshot, RouteKind, RouteState, Severity,
+    AggregateRepositoryEstimate, GateKind, PatchOperationKind, PatchPlanSource,
+    PatchPreflightCheckKind, PatchPreflightStatus, PatchSafetyLevel, ProfileKind, ProfilePriority,
+    RepoSnapshot, RouteKind, RouteState, Severity,
 };
 use std::path::{Path, PathBuf};
 
@@ -18,7 +19,7 @@ fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
     let plan = seiri_planner::plan_safe_patches(&snapshot);
 
     assert_eq!(plan.mode, seiri_core::PatchPlanMode::DryRun);
-    assert_eq!(plan.planner_version, "safe_patch_planner.v2");
+    assert_eq!(plan.planner_version, "safe_patch_planner.v3");
     assert!(!plan.safety_policy.writes_files);
     assert!(!plan.safety_policy.applies_patches);
     assert!(plan.safety_policy.safe_gate_only);
@@ -39,6 +40,14 @@ fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
     assert!(plan.operations[0].requires_confirmation);
     assert_eq!(plan.operations[0].path, "README.md");
     assert_eq!(plan.operations[0].pattern_id, "common.docs.route_present");
+    assert_eq!(
+        plan.operations[0].proposal.schema_version,
+        seiri_core::PATCH_PROPOSAL_SCHEMA_VERSION
+    );
+    assert_eq!(
+        plan.operations[0].proposal.preflight_structure().decision,
+        seiri_core::PatchProposalDecision::Ready
+    );
     assert!(plan.operations[0].preflight.iter().any(|check| {
         check.kind == PatchPreflightCheckKind::ExistingReadme
             && check.status == PatchPreflightStatus::Pass
@@ -89,12 +98,14 @@ fn patch_plan_report_renders_json_and_markdown() {
     let markdown = seiri_report::plan_to_markdown(&plan);
 
     assert!(json.contains("\"mode\": \"dry_run\""));
-    assert!(json.contains("\"planner_version\": \"safe_patch_planner.v2\""));
+    assert!(json.contains("\"planner_version\": \"safe_patch_planner.v3\""));
+    assert!(json.contains("\"schema_version\": \"seiri.patch_proposal.v1\""));
     assert!(json.contains("\"safety_policy\""));
     assert!(json.contains("\"preflight\""));
     assert!(json.contains("\"operations\""));
     assert!(markdown.contains("# RepoSeiri Patch Plan"));
-    assert!(markdown.contains("Planner: `safe_patch_planner.v2`"));
+    assert!(markdown.contains("Planner: `safe_patch_planner.v3`"));
+    assert!(markdown.contains("Patch Proposal IR:"));
     assert!(markdown.contains("Preflight:"));
     assert!(markdown.contains("## Safe Fixes"));
     assert!(markdown.contains("## Guarded Drafts"));
@@ -138,8 +149,7 @@ fn patch_plan_v2_always_blocks_unsafe_to_invent_routes() {
             severity: Severity::High,
             priority: ProfilePriority::Critical,
             priority_score_x100: 99,
-            observed_missing_repositories: Some(558_000),
-            observed_missing_x1000: Some(558),
+            calibration_estimate: Some(AggregateRepositoryEstimate::fixed(558_000, 1_000_000)),
             baseline_pattern_ids: vec!["common.security.route_present".to_string()],
             candidate_pattern_ids: Vec::new(),
             co_occurrence_gap_ids: Vec::new(),
@@ -273,8 +283,7 @@ fn push_priority(snapshot: &mut RepoSnapshot, route: RouteKind, gate: GateKind, 
             severity: Severity::Info,
             priority: ProfilePriority::Normal,
             priority_score_x100: 50,
-            observed_missing_repositories: None,
-            observed_missing_x1000: None,
+            calibration_estimate: None,
             baseline_pattern_ids: vec![pattern_id.to_string()],
             candidate_pattern_ids: Vec::new(),
             co_occurrence_gap_ids: Vec::new(),

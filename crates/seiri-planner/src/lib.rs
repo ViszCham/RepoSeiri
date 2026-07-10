@@ -2,12 +2,13 @@ use seiri_core::{
     stable_id, GateKind, ImportantFileKind, MissingRoutePriority, PatchOperationKind, PatchPlan,
     PatchPlanBlockedItem, PatchPlanMode, PatchPlanOperation, PatchPlanSafetyPolicy,
     PatchPlanSource, PatchPlanSummary, PatchPreflightCheck, PatchPreflightCheckKind,
-    PatchPreflightStatus, PatchSafetyLevel, ProfilePriority, RepoSnapshot, RouteKind, RouteState,
-    Severity,
+    PatchPreflightStatus, PatchProposal, PatchProposalDecision, PatchProposalIssueKind,
+    PatchSafetyLevel, PatchTextEdit, ProfilePriority, RepoSnapshot, RouteKind, RouteState,
+    Severity, TextEditSpan, TextEncoding,
 };
 use std::collections::BTreeSet;
 
-const PLANNER_VERSION: &str = "safe_patch_planner.v2";
+const PLANNER_VERSION: &str = "safe_patch_planner.v3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanCandidate {
@@ -59,8 +60,18 @@ pub fn plan_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
         match candidate.gate {
             GateKind::Safe => match safe_operation(snapshot, &candidate, operations.len() + 1) {
                 SafeDecision::Operation(operation) => operations.push(operation),
-                SafeDecision::Blocked { reason, preflight } => {
-                    blocked.push(blocked_item(blocked.len() + 1, &candidate, reason, preflight));
+                SafeDecision::Blocked {
+                    reason,
+                    preflight,
+                    proposal,
+                } => {
+                    blocked.push(blocked_item_with_proposal(
+                        blocked.len() + 1,
+                        &candidate,
+                        reason,
+                        preflight,
+                        proposal,
+                    ));
                 }
             },
             GateKind::Guarded => blocked.push(blocked_item(
@@ -89,7 +100,7 @@ pub fn plan_safe_patches(snapshot: &RepoSnapshot) -> PatchPlan {
         summary: summarize(candidate_count, &operations, &blocked),
         operations,
         blocked,
-        claim_boundary: "Patch plan is a dry-run planning artifact. RepoSeiri v2 does not write files, apply patches, push branches, create PRs, choose policy, or guarantee popularity, trust, security, or quality. Safe operations are preview-only and require existing targets.".to_string(),
+        claim_boundary: "Patch plan is a dry-run planning artifact. RepoSeiri v3 does not write files, invoke patch application, push branches, create PRs, choose policy, or guarantee popularity, trust, security, or quality. Safe operations carry typed proposals and require current-byte preflight before optional in-memory application. The base digest is a deterministic stale-base guard, not a cryptographic integrity or security guarantee.".to_string(),
     }
 }
 
@@ -98,6 +109,7 @@ enum SafeDecision {
     Blocked {
         reason: String,
         preflight: Vec<PatchPreflightCheck>,
+        proposal: Option<PatchProposal>,
     },
 }
 
@@ -190,7 +202,7 @@ fn safe_operation(
         "common.docs.route_present" => plan_docs_route(snapshot, candidate, operation_index),
         _ => SafeDecision::Blocked {
             reason: format!(
-                "No Safe Patch Planner v2 operation exists for `{}`.",
+                "No Safe Patch Planner v3 operation exists for `{}`.",
                 candidate.pattern_id
             ),
             preflight: vec![
@@ -210,6 +222,7 @@ fn safe_operation(
                     unsupported_operation_detail(candidate),
                 ),
             ],
+            proposal: None,
         },
     }
 }
@@ -247,6 +260,7 @@ fn plan_docs_route(
             reason: "A safe README route patch requires an existing README. Creating README content is manual."
                 .to_string(),
             preflight,
+            proposal: None,
         };
     };
     preflight.push(check(
@@ -254,6 +268,24 @@ fn plan_docs_route(
         PatchPreflightStatus::Pass,
         "Existing README was detected.",
     ));
+
+    let Some(document) = snapshot
+        .readme_document
+        .as_ref()
+        .filter(|document| document.path() == readme.path)
+    else {
+        preflight.push(check(
+            PatchPreflightCheckKind::BaseDigestBound,
+            PatchPreflightStatus::Fail,
+            "README scanner metadata is unavailable or does not match the summarized path.",
+        ));
+        return SafeDecision::Blocked {
+            reason: "A typed patch proposal requires scanner-owned README base metadata."
+                .to_string(),
+            preflight,
+            proposal: None,
+        };
+    };
 
     if readme
         .route_candidates
@@ -269,6 +301,7 @@ fn plan_docs_route(
             reason: "README already exposes a docs route; no safe routing patch is needed."
                 .to_string(),
             preflight,
+            proposal: None,
         };
     }
     preflight.push(check(
@@ -287,6 +320,7 @@ fn plan_docs_route(
             reason: "A safe docs route patch requires an existing docs directory. Creating documentation content is guarded."
                 .to_string(),
             preflight,
+            proposal: None,
         };
     };
     preflight.push(check(
@@ -299,6 +333,38 @@ fn plan_docs_route(
         PatchPreflightStatus::Pass,
         "Operation only adds a route to existing content and does not invent policy text.",
     ));
+
+    let base = document.base().clone();
+    let eol = base.line_ending().sequence().unwrap_or("\n");
+    let leading = if base.ends_with_line_ending() {
+        eol.to_string()
+    } else {
+        format!("{eol}{eol}")
+    };
+    let replacement =
+        format!("{leading}## Documentation{eol}{eol}- [Documentation]({target}){eol}");
+    let proposal = PatchProposal::new(
+        stable_id("patch-proposal", operation_index),
+        readme.path.clone(),
+        base.clone(),
+        vec![PatchTextEdit::literal(
+            stable_id("text-edit", operation_index),
+            TextEditSpan::insertion(base.byte_len()),
+            replacement,
+        )],
+    );
+    let proposal_preflight = proposal.preflight_structure();
+    preflight.extend(proposal_preflight_checks(&proposal));
+    if proposal_preflight.decision != PatchProposalDecision::Ready {
+        return SafeDecision::Blocked {
+            reason: format!(
+                "Typed patch proposal is {:?}; review its encoding, EOL, span, and policy-slot preflight before application.",
+                proposal_preflight.decision
+            ),
+            preflight,
+            proposal: Some(proposal),
+        };
+    }
 
     SafeDecision::Operation(PatchPlanOperation {
         id: stable_id("patch-op", operation_index),
@@ -319,6 +385,7 @@ fn plan_docs_route(
             candidate.reason
         ),
         planned_change: format!("Append a Documentation section linking to `{target}`."),
+        proposal,
         preflight,
         diff_preview: vec![
             format!("--- {}", readme.path),
@@ -340,11 +407,93 @@ fn docs_target(snapshot: &RepoSnapshot) -> Option<String> {
         .map(|file| format!("{}/", file.path.trim_end_matches('/')))
 }
 
+fn proposal_preflight_checks(proposal: &PatchProposal) -> Vec<PatchPreflightCheck> {
+    let result = proposal.preflight_structure();
+    let encoding_status = if proposal.base.encoding() == TextEncoding::Unknown {
+        PatchPreflightStatus::Fail
+    } else {
+        PatchPreflightStatus::Pass
+    };
+    let eol_held = result.has_issue(PatchProposalIssueKind::MixedLineEndings)
+        || result.has_issue(PatchProposalIssueKind::MissingLineEndingConvention);
+    let span_failed = result.has_issue(PatchProposalIssueKind::SpanOutOfBounds)
+        || result.has_issue(PatchProposalIssueKind::OverlappingSpans)
+        || result.has_issue(PatchProposalIssueKind::OutputLengthOverflow);
+    let policy_held = result.has_issue(PatchProposalIssueKind::UnresolvedPolicySlot);
+    let ready_status = match result.decision {
+        PatchProposalDecision::Ready => PatchPreflightStatus::Pass,
+        PatchProposalDecision::Hold => PatchPreflightStatus::Blocked,
+        PatchProposalDecision::Reject => PatchPreflightStatus::Fail,
+    };
+
+    vec![
+        check(
+            PatchPreflightCheckKind::BaseDigestBound,
+            PatchPreflightStatus::Pass,
+            format!(
+                "Proposal is bound to base digest {} and {} bytes; current bytes must be rechecked before application.",
+                proposal.base.digest(),
+                proposal.base.byte_len()
+            ),
+        ),
+        check(
+            PatchPreflightCheckKind::EncodingKnown,
+            encoding_status,
+            format!("Base encoding is {:?}.", proposal.base.encoding()),
+        ),
+        check(
+            PatchPreflightCheckKind::LineEndingBound,
+            if eol_held {
+                PatchPreflightStatus::Blocked
+            } else {
+                PatchPreflightStatus::Pass
+            },
+            format!("Base line ending is {:?}.", proposal.base.line_ending()),
+        ),
+        check(
+            PatchPreflightCheckKind::NonOverlappingSpans,
+            if span_failed {
+                PatchPreflightStatus::Fail
+            } else {
+                PatchPreflightStatus::Pass
+            },
+            "Text edit spans are checked for bounds, overlap, and output length overflow.",
+        ),
+        check(
+            PatchPreflightCheckKind::PolicySlotsResolved,
+            if policy_held {
+                PatchPreflightStatus::Blocked
+            } else {
+                PatchPreflightStatus::Pass
+            },
+            "Unresolved policy slots hold a proposal before application.",
+        ),
+        check(
+            PatchPreflightCheckKind::ProposalReady,
+            ready_status,
+            format!(
+                "Structural patch proposal decision is {:?}; stale-base and UTF-8 boundary checks run against current bytes before application.",
+                result.decision
+            ),
+        ),
+    ]
+}
+
 fn blocked_item(
     index: usize,
     candidate: &PlanCandidate,
     reason: String,
     preflight: Vec<PatchPreflightCheck>,
+) -> PatchPlanBlockedItem {
+    blocked_item_with_proposal(index, candidate, reason, preflight, None)
+}
+
+fn blocked_item_with_proposal(
+    index: usize,
+    candidate: &PlanCandidate,
+    reason: String,
+    preflight: Vec<PatchPreflightCheck>,
+    proposal: Option<PatchProposal>,
 ) -> PatchPlanBlockedItem {
     PatchPlanBlockedItem {
         id: stable_id("patch-blocked", index),
@@ -358,6 +507,7 @@ fn blocked_item(
         finding_id: candidate.finding_id.clone(),
         pattern_id: candidate.pattern_id.clone(),
         suggested_kind: candidate.suggested_kind,
+        proposal,
         reason,
         preflight,
     }
