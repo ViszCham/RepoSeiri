@@ -28,7 +28,9 @@ fn q2_registry_covers_every_route_and_major_state_pair() {
 fn q2_verified_security_route_does_not_become_a_guarantee() {
     let rule = route_meaning_rule(RouteKind::Security, RouteState::Verified);
     assert!(rule.indicates.contains(&MeaningAtom::RouteObserved));
-    assert!(rule.indicates.contains(&MeaningAtom::RouteTargetPresent));
+    assert!(rule
+        .indicates
+        .contains(&MeaningAtom::RepositoryLocalTargetPresent));
 
     for boundary in [
         ClaimBoundaryKind::NotPopularityGuarantee,
@@ -54,7 +56,8 @@ fn q2_state_meanings_keep_missing_weak_and_verified_separate() {
         &[MeaningAtom::RouteMissing]
     );
     assert!(route_state_indicates(RouteState::Weak).contains(&MeaningAtom::HumanReviewRequired));
-    assert!(route_state_indicates(RouteState::Verified).contains(&MeaningAtom::RouteTargetPresent));
+    assert!(route_state_indicates(RouteState::Verified)
+        .contains(&MeaningAtom::RepositoryLocalTargetPresent));
     assert!(
         !route_state_indicates(RouteState::Verified).contains(&MeaningAtom::HumanReviewRequired)
     );
@@ -80,4 +83,15 @@ fn q2_non_claim_boundaries_are_available_from_route_state_pair() {
     assert!(boundaries.contains(&ClaimBoundaryKind::NotLegalAdvice));
     assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticPolicyAdoption));
     assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticWeightAdoption));
+}
+
+#[test]
+fn q12_route_target_meaning_uses_local_name_and_reads_legacy_name() {
+    let atom: MeaningAtom =
+        serde_json::from_str("\"route_target_present\"").expect("legacy meaning atom");
+    assert_eq!(atom, MeaningAtom::RepositoryLocalTargetPresent);
+    assert_eq!(
+        serde_json::to_string(&atom).expect("native meaning atom"),
+        "\"repository_local_target_present\""
+    );
 }
