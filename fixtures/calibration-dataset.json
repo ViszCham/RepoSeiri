@@ -1,5 +1,5 @@
 {
-  "schema_version": "seiri.block_p.v1",
+  "schema_version": "seiri.calibration.v1",
   "dataset_id": "fixture-calibration-0001",
   "name": "Fixture Calibration Dataset",
   "collected_at": "2026-07-09",
@@ -14,29 +14,27 @@
       "scale": "tiny",
       "metadata_sources": ["fixture"],
       "extraction_conditions": [
-        "Small deterministic fixture for Block O calibration ingest v2."
+        "Small deterministic fixture for canonical calibration ingest."
       ],
       "limitations": [
         "This fixture is not statistical evidence and must not be used to adopt runtime rules."
       ],
       "evidence_schema": {
-        "schema_version": "seiri.block_p.v1",
-        "compatible_from": "seiri.block_a.v1",
-        "note": "Fixture data exercises calibration schema compatibility only."
+        "schema_version": "seiri.evidence.v1",
+        "note": "Fixture data exercises the canonical evidence schema only."
       },
       "review_status": "pending_review"
     }
   ],
   "extraction_conditions": [
-    "Small deterministic fixture for Block O calibration ingest v2."
+    "Small deterministic fixture for canonical calibration ingest."
   ],
   "limitations": [
     "This fixture is not statistical evidence and must not be used to adopt runtime rules."
   ],
   "evidence_schema": {
-    "schema_version": "seiri.block_p.v1",
-    "compatible_from": "seiri.block_a.v1",
-    "note": "Fixture data exercises calibration schema compatibility only."
+    "schema_version": "seiri.evidence.v1",
+    "note": "Fixture data exercises the canonical evidence schema only."
   },
   "records": [
     {

@@ -1,6 +1,7 @@
 use seiri_core::{
     CalibrationReviewStatus, CalibrationScale, CalibrationSource, CalibrationSourceKind,
-    CalibrationSourceVisibility, ProfileKind, RouteKind, SCHEMA_VERSION,
+    CalibrationSourceVisibility, ProfileKind, RouteKind, CALIBRATION_SCHEMA_VERSION,
+    EVIDENCE_SCHEMA_VERSION,
 };
 use std::path::{Path, PathBuf};
 
@@ -14,10 +15,10 @@ fn fixture(name: &str) -> PathBuf {
 fn calibration_ingests_dataset_and_keeps_unmapped_patterns_pending() {
     let dataset =
         seiri_calibration::load_dataset(fixture("calibration-dataset.json")).expect("load dataset");
-    let run = seiri_calibration::calibrate_dataset(&dataset);
+    let run = seiri_calibration::calibrate_dataset(&dataset).expect("calibrate dataset");
 
-    assert_eq!(dataset.schema_version, SCHEMA_VERSION);
-    assert_eq!(run.schema_version, SCHEMA_VERSION);
+    assert_eq!(dataset.schema_version, CALIBRATION_SCHEMA_VERSION);
+    assert_eq!(run.schema_version, CALIBRATION_SCHEMA_VERSION);
     assert_eq!(run.summary.records, 4);
     assert_eq!(run.summary.sources, 1);
     assert_eq!(run.sources[0].kind, CalibrationSourceKind::Fixture);
@@ -78,10 +79,40 @@ fn calibration_ingests_dataset_and_keeps_unmapped_patterns_pending() {
 }
 
 #[test]
+fn calibration_rejects_noncanonical_dataset_and_evidence_schemas() {
+    let dataset =
+        seiri_calibration::load_dataset(fixture("calibration-dataset.json")).expect("load dataset");
+
+    let mut wrong_dataset = dataset.clone();
+    wrong_dataset.schema_version = "seiri.calibration.invalid".to_string();
+    assert!(matches!(
+        seiri_calibration::calibrate_dataset(&wrong_dataset),
+        Err(seiri_calibration::CalibrationError::SchemaMismatch {
+            domain: "calibration dataset",
+            ..
+        })
+    ));
+
+    let mut wrong_evidence = dataset.clone();
+    wrong_evidence.evidence_schema.schema_version = "seiri.evidence.invalid".to_string();
+    assert!(matches!(
+        seiri_calibration::calibrate_dataset(&wrong_evidence),
+        Err(seiri_calibration::CalibrationError::SchemaMismatch {
+            domain: "calibration evidence",
+            ..
+        })
+    ));
+
+    let mut removed_metadata = serde_json::to_value(dataset).expect("dataset JSON");
+    removed_metadata["evidence_schema"]["compatible_from"] = serde_json::json!("seiri.evidence.v1");
+    assert!(serde_json::from_value::<seiri_core::BenchmarkDataset>(removed_metadata).is_err());
+}
+
+#[test]
 fn calibration_uses_profile_hints_for_weight_suggestions() {
     let dataset =
         seiri_calibration::load_dataset(fixture("calibration-dataset.json")).expect("load dataset");
-    let run = seiri_calibration::calibrate_dataset(&dataset);
+    let run = seiri_calibration::calibrate_dataset(&dataset).expect("calibrate dataset");
 
     let library_docs = run
         .weight_suggestions
@@ -106,7 +137,7 @@ fn calibration_uses_profile_hints_for_weight_suggestions() {
 fn calibration_jsonl_loader_wraps_records_with_dataset_metadata() {
     let dataset =
         seiri_calibration::load_dataset(fixture("calibration-records.jsonl")).expect("load jsonl");
-    let run = seiri_calibration::calibrate_dataset(&dataset);
+    let run = seiri_calibration::calibrate_dataset(&dataset).expect("calibrate dataset");
 
     assert_eq!(dataset.dataset_id, "calibration-records");
     assert_eq!(dataset.records.len(), 2);
@@ -119,7 +150,10 @@ fn calibration_jsonl_loader_wraps_records_with_dataset_metadata() {
         dataset.calibration_sources[0].visibility,
         CalibrationSourceVisibility::LocalOnly
     );
-    assert_eq!(dataset.evidence_schema.schema_version, SCHEMA_VERSION);
+    assert_eq!(
+        dataset.evidence_schema.schema_version,
+        EVIDENCE_SCHEMA_VERSION
+    );
     assert!(run
         .pending_patterns
         .iter()
@@ -131,7 +165,7 @@ fn calibration_jsonl_loader_wraps_records_with_dataset_metadata() {
 }
 
 #[test]
-fn q12_omitted_calibration_visibility_fails_closed() {
+fn omitted_calibration_visibility_fails_closed() {
     let source: CalibrationSource = serde_json::from_value(serde_json::json!({
         "id": "source-without-visibility",
         "kind": "aggregate_analysis",
@@ -157,7 +191,7 @@ fn calibration_report_renders_json_and_markdown() {
     let json = seiri_report::calibration_to_json(&run).expect("render calibration JSON");
     let markdown = seiri_report::calibration_to_markdown(&run);
 
-    assert!(json.contains("\"schema_version\": \"seiri.block_p.v1\""));
+    assert!(json.contains("\"schema_version\": \"seiri.calibration.v1\""));
     assert!(json.contains("\"sources\""));
     assert!(json.contains("\"route_requirements\""));
     assert!(json.contains("\"profile_branches\""));
@@ -173,10 +207,10 @@ fn calibration_report_renders_json_and_markdown() {
 }
 
 #[test]
-fn q9_public_calibration_outputs_redact_local_only_sources() {
+fn public_calibration_outputs_redact_local_only_sources() {
     let dataset = seiri_calibration::load_dataset(fixture("calibration-local-only-dataset.json"))
         .expect("load local-only fixture");
-    let run = seiri_calibration::calibrate_dataset(&dataset);
+    let run = seiri_calibration::calibrate_dataset(&dataset).expect("calibrate dataset");
 
     assert_eq!(
         run.sources[1].visibility,
@@ -204,12 +238,7 @@ fn q9_public_calibration_outputs_redact_local_only_sources() {
 
     let json = seiri_report::calibration_to_json(&run).expect("render redacted JSON");
     let markdown = seiri_report::calibration_to_markdown(&run);
-    let codex_summary = seiri_codex::build_calibration_source_summary(&run);
-    let codex_json = serde_json::to_string(&codex_summary).expect("render codex summary");
 
-    assert_eq!(codex_summary.public_sources, 1);
-    assert_eq!(codex_summary.local_only_sources, 1);
-    assert_eq!(codex_summary.redacted_sources, 0);
     assert!(json.contains("\"visibility\": \"redacted\""));
     assert!(json.contains("redacted-calibration-source-0002"));
     assert!(markdown.contains("Source visibility: public `1` / local_only `1` / redacted `0`"));
@@ -217,7 +246,6 @@ fn q9_public_calibration_outputs_redact_local_only_sources() {
 
     assert_no_synthetic_local_details(&json);
     assert_no_synthetic_local_details(&markdown);
-    assert_no_synthetic_local_details(&codex_json);
 }
 
 fn assert_no_synthetic_local_details(output: &str) {

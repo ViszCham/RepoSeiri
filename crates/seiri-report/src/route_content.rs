@@ -1,63 +1,33 @@
 use seiri_core::{
-    route_content_contract_v2, BilingualStructuralPair, ClaimBoundaryKind, ContentObservation,
-    ContentSlotAssessment, ContentSlotSpec, CoverageIndex, DocumentConsistencyReport,
-    DocumentDiagnosticKind, DocumentEvent, DocumentIndex, EvidenceFact, EvidenceId, EvidenceKernel,
-    EvidenceKind, FacetReport, ImportantFileKind, MeaningAtomSet, Observation,
-    PolicySensitivityWire, RouteContentAssessment, RouteContentAtom, RouteContentAtomAssessment,
-    RouteContentReportV2, RouteKind, SourceSpan, UnknownReason,
+    route_content_contract, BilingualStructuralPair, ClaimBoundaryKind, ContentSlotAssessment,
+    ContentSlotSpec, CoverageIndex, DocumentConsistencyReport, DocumentDiagnosticKind,
+    DocumentEvent, DocumentIndex, EvidenceAtom, EvidenceId, EvidenceKernel, FacetReport,
+    MarkdownEvidenceKind, MeaningAtomSet, Observation, PolicySensitivityWire, RouteContentReport,
+    SourceSpan, UnknownReason,
 };
 use std::collections::BTreeSet;
 
 pub(crate) fn build_route_content(
     kernel: &EvidenceKernel,
     coverage: &CoverageIndex,
-) -> Vec<RouteContentAssessment> {
-    route_content_routes()
-        .iter()
-        .map(|route| RouteContentAssessment {
-            route: *route,
-            atoms: RouteContentAtom::ALL
-                .into_iter()
-                .filter(|atom| atom.route() == *route)
-                .map(|atom| RouteContentAtomAssessment {
-                    atom,
-                    observation: observe_legacy_atom(atom, kernel.facts(), coverage),
-                })
-                .collect(),
-        })
-        .collect()
-}
-
-pub(crate) fn build_route_content_v2(
-    kernel: &EvidenceKernel,
-    coverage: &CoverageIndex,
     documents: &DocumentIndex,
     facets: &FacetReport,
     consistency: &DocumentConsistencyReport,
-) -> RouteContentReportV2 {
-    let assessments = route_content_contract_v2()
+) -> RouteContentReport {
+    let assessments = route_content_contract()
         .iter()
-        .map(|spec| {
-            assess_slot(
-                spec,
-                kernel.facts(),
-                coverage,
-                documents,
-                facets,
-                consistency,
-            )
-        })
+        .map(|spec| assess_slot(spec, kernel, coverage, documents, facets, consistency))
         .collect();
-    RouteContentReportV2 {
+    RouteContentReport {
         assessments,
-        structural_pairs: structural_pairs(documents, kernel.facts()),
-        ..RouteContentReportV2::default()
+        structural_pairs: structural_pairs(documents, kernel),
+        ..RouteContentReport::default()
     }
 }
 
 fn assess_slot(
     spec: &ContentSlotSpec,
-    facts: &[EvidenceFact],
+    kernel: &EvidenceKernel,
     coverage: &CoverageIndex,
     documents: &DocumentIndex,
     facets: &FacetReport,
@@ -65,7 +35,7 @@ fn assess_slot(
 ) -> ContentSlotAssessment {
     let enabled = slot_enabled(spec, facets);
     let evidence = if enabled {
-        matching_evidence(spec, facts)
+        matching_evidence(spec, kernel, documents)
     } else {
         Vec::new()
     };
@@ -156,108 +126,71 @@ fn diagnostic_unknown_reason(
     })
 }
 
-fn matching_evidence(spec: &ContentSlotSpec, facts: &[EvidenceFact]) -> Vec<EvidenceId> {
-    let mut evidence = facts
+fn matching_evidence(
+    spec: &ContentSlotSpec,
+    kernel: &EvidenceKernel,
+    documents: &DocumentIndex,
+) -> Vec<EvidenceId> {
+    let mut evidence = kernel
+        .facts()
         .iter()
-        .filter(|fact| fact_matches_spec(fact, spec))
-        .map(|fact| fact.id)
+        .filter_map(|fact| match fact.atom {
+            EvidenceAtom::ImportantFile(kind) if spec.important_files.contains(&kind) => {
+                Some(fact.id)
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>();
+
+    for entry in documents.scanned_documents() {
+        let Some(scan) = entry.scan.as_ref() else {
+            continue;
+        };
+        for event in scan.events() {
+            let Some((kind, span, searchable)) = searchable_event(event) else {
+                continue;
+            };
+            if contains_any_normalized(&searchable, spec.markers) {
+                evidence.extend(evidence_for_event(kernel, &entry.path, kind, span));
+            }
+        }
+    }
     evidence.sort_unstable();
     evidence.dedup();
     evidence
 }
 
-fn fact_matches_spec(fact: &EvidenceFact, spec: &ContentSlotSpec) -> bool {
-    if fact.kind == EvidenceKind::ImportantFile {
-        return spec
-            .important_files
-            .iter()
-            .any(|kind| important_file_value(*kind) == fact.value);
+fn searchable_event(event: &DocumentEvent) -> Option<(MarkdownEvidenceKind, SourceSpan, String)> {
+    match event {
+        DocumentEvent::Heading(value) => Some((
+            MarkdownEvidenceKind::Heading,
+            value.span?,
+            value.text.clone(),
+        )),
+        DocumentEvent::Link(value) => Some((
+            MarkdownEvidenceKind::Link,
+            value.span?,
+            format!("{} {}", value.text, value.target),
+        )),
+        DocumentEvent::Badge(value) => Some((
+            MarkdownEvidenceKind::Badge,
+            value.span?,
+            format!("{} {}", value.alt, value.target),
+        )),
+        DocumentEvent::RouteCandidate(value) => Some((
+            MarkdownEvidenceKind::RouteCandidate,
+            value.span?,
+            value.target.as_ref().map_or_else(
+                || value.text.clone(),
+                |target| format!("{} {target}", value.text),
+            ),
+        )),
     }
-    is_markdown_content_fact(fact.kind) && contains_any_normalized(&fact.value, spec.markers)
-}
-
-fn observe_legacy_atom(
-    atom: RouteContentAtom,
-    facts: &[EvidenceFact],
-    coverage: &CoverageIndex,
-) -> ContentObservation {
-    let mut evidence = route_content_contract_v2()
-        .iter()
-        .filter(|spec| spec.legacy_atom == Some(atom))
-        .flat_map(|spec| matching_legacy_evidence(spec, facts))
-        .collect::<Vec<_>>();
-    if atom == RouteContentAtom::AutomationStatusSignal {
-        evidence.extend(
-            facts
-                .iter()
-                .filter(|fact| fact.kind == EvidenceKind::MarkdownBadge)
-                .map(|fact| fact.id),
-        );
-    }
-    evidence.sort_unstable();
-    evidence.dedup();
-    if evidence.is_empty() {
-        return ContentObservation::from(
-            coverage.observe_absence::<()>(seiri_core::CoverageScope::MarkdownDocuments),
-        );
-    }
-    ContentObservation::from(
-        Observation::present((), evidence)
-            .expect("matched route content atoms always retain evidence identifiers"),
-    )
-}
-
-fn matching_legacy_evidence(spec: &ContentSlotSpec, facts: &[EvidenceFact]) -> Vec<EvidenceId> {
-    facts
-        .iter()
-        .filter(|fact| {
-            if fact.kind == EvidenceKind::ImportantFile {
-                return spec
-                    .legacy_important_files
-                    .iter()
-                    .any(|kind| important_file_value(*kind) == fact.value);
-            }
-            is_markdown_content_fact(fact.kind)
-                && contains_any_normalized(&fact.value, spec.legacy_markers)
-        })
-        .map(|fact| fact.id)
-        .collect()
-}
-
-fn is_markdown_content_fact(kind: EvidenceKind) -> bool {
-    matches!(
-        kind,
-        EvidenceKind::MarkdownHeading | EvidenceKind::MarkdownLink | EvidenceKind::RouteCandidate
-    )
 }
 
 fn contains_any_normalized(value: &str, markers: &[&str]) -> bool {
     let lower = value.to_ascii_lowercase();
     markers.iter().any(|marker| lower.contains(marker))
-}
-
-fn important_file_value(kind: ImportantFileKind) -> &'static str {
-    match kind {
-        ImportantFileKind::Readme => "Readme",
-        ImportantFileKind::License => "License",
-        ImportantFileKind::Contributing => "Contributing",
-        ImportantFileKind::Security => "Security",
-        ImportantFileKind::Support => "Support",
-        ImportantFileKind::IssueTemplate => "IssueTemplate",
-        ImportantFileKind::IssueForm => "IssueForm",
-        ImportantFileKind::PullRequestTemplate => "PullRequestTemplate",
-        ImportantFileKind::Changelog => "Changelog",
-        ImportantFileKind::Codeowners => "Codeowners",
-        ImportantFileKind::CargoToml => "CargoToml",
-        ImportantFileKind::DocsDirectory => "DocsDirectory",
-        ImportantFileKind::Workflow => "Workflow",
-        ImportantFileKind::DependencyBot => "DependencyBot",
-        ImportantFileKind::SecurityAutomation => "SecurityAutomation",
-        ImportantFileKind::Gitignore => "Gitignore",
-        ImportantFileKind::Gitattributes => "Gitattributes",
-        ImportantFileKind::EditorConfig => "EditorConfig",
-    }
 }
 
 #[derive(Debug)]
@@ -278,14 +211,14 @@ enum HeadingLanguage {
 
 fn structural_pairs(
     documents: &DocumentIndex,
-    facts: &[EvidenceFact],
+    kernel: &EvidenceKernel,
 ) -> Vec<BilingualStructuralPair> {
     let mut pairs = Vec::new();
     for entry in documents.scanned_documents() {
         let Some(scan) = entry.scan.as_ref() else {
             continue;
         };
-        let sections = heading_sections(scan.events(), &entry.path, facts);
+        let sections = heading_sections(scan.events(), &entry.path, kernel);
         for adjacent in sections.windows(2) {
             let [left, right] = adjacent else { continue };
             if left.level != right.level
@@ -327,7 +260,7 @@ fn structural_pairs(
 fn heading_sections(
     events: &[DocumentEvent],
     path: &str,
-    facts: &[EvidenceFact],
+    kernel: &EvidenceKernel,
 ) -> Vec<HeadingSection> {
     let headings = events
         .iter()
@@ -348,7 +281,8 @@ fn heading_sections(
                 .and_then(|next| next.span)
                 .map_or(usize::MAX, |next| next.byte_start);
             let mut targets = BTreeSet::new();
-            let mut evidence_ids = evidence_for_span(path, span, facts);
+            let mut evidence_ids =
+                evidence_for_event(kernel, path, MarkdownEvidenceKind::Heading, span);
             for event in events {
                 let DocumentEvent::Link(link) = event else {
                     continue;
@@ -356,7 +290,12 @@ fn heading_sections(
                 let Some(link_span) = link.span else { continue };
                 if link_span.byte_start > span.byte_start && link_span.byte_start < end {
                     targets.insert(normalize_target(&link.target));
-                    evidence_ids.extend(evidence_for_span(path, link_span, facts));
+                    evidence_ids.extend(evidence_for_event(
+                        kernel,
+                        path,
+                        MarkdownEvidenceKind::Link,
+                        link_span,
+                    ));
                 }
             }
             evidence_ids.sort_unstable();
@@ -372,12 +311,32 @@ fn heading_sections(
         .collect()
 }
 
-fn evidence_for_span(path: &str, span: SourceSpan, facts: &[EvidenceFact]) -> Vec<EvidenceId> {
-    facts
+fn evidence_for_event(
+    kernel: &EvidenceKernel,
+    path: &str,
+    event: MarkdownEvidenceKind,
+    span: SourceSpan,
+) -> Vec<EvidenceId> {
+    kernel
+        .facts()
         .iter()
-        .filter(|fact| fact.path.as_deref() == Some(path) && fact.span == Some(span))
+        .filter(|fact| {
+            kernel.path_for_fact(fact) == Some(path)
+                && matches!(fact.atom, EvidenceAtom::Markdown { event: actual, .. } if actual == event)
+                && fact
+                    .provenance
+                    .span
+                    .is_some_and(|actual| span_matches(actual, span))
+        })
         .map(|fact| fact.id)
         .collect()
+}
+
+fn span_matches(actual: seiri_core::EvidenceSourceSpan, expected: SourceSpan) -> bool {
+    actual.line.get() == u32::try_from(expected.line).unwrap_or(u32::MAX)
+        && actual.column.get() == u32::try_from(expected.column).unwrap_or(u32::MAX)
+        && actual.byte_start.get() == u32::try_from(expected.byte_start).unwrap_or(u32::MAX)
+        && actual.byte_end.get() == u32::try_from(expected.byte_end).unwrap_or(u32::MAX)
 }
 
 fn normalize_target(target: &str) -> String {
@@ -401,28 +360,9 @@ fn heading_language(text: &str) -> HeadingLanguage {
     }
 }
 
-fn route_content_routes() -> &'static [RouteKind] {
-    &[
-        RouteKind::Identity,
-        RouteKind::Docs,
-        RouteKind::Quickstart,
-        RouteKind::Support,
-        RouteKind::Intake,
-        RouteKind::Contributing,
-        RouteKind::Security,
-        RouteKind::Release,
-        RouteKind::Lifecycle,
-        RouteKind::Governance,
-        RouteKind::License,
-        RouteKind::Automation,
-        RouteKind::Ownership,
-        RouteKind::Hygiene,
-    ]
-}
-
 #[must_use]
-pub(crate) fn render_route_content_contract_markdown(report: &RouteContentReportV2) -> String {
-    let mut out = String::from("## Route Content Contract v2\n\n");
+pub(crate) fn render_route_content_contract_markdown(report: &RouteContentReport) -> String {
+    let mut out = String::from("## Route Content Contract\n\n");
     for assessment in &report.assessments {
         let state = match &assessment.observation {
             Observation::Present { .. } => "present",

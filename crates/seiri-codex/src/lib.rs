@@ -1,846 +1,458 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
-    route_meaning_rule, CalibrationRun, CalibrationSourceVisibilitySummary, ClaimBoundaryKind,
-    ClaimId, ClaimRefIndex, ClaimStrength, CodexAuditSummary, CodexBlockedDigest,
-    CodexClaimSummary, CodexCoOccurrenceDigest, CodexFindingDigest, CodexPatchDigest, CodexPrDraft,
-    CodexReviewContext, CodexRouteDigest, CodexRouteMeaningDigest, CodexRouteReviewSummary,
-    CodexUserAction, CodexWordingLintDigest, GateKind, MeaningAtom, PatchPlan, ProfileKind,
-    RepoSnapshot, RouteKind, RouteState, WordingLintReport, WordingRuleKind, SCHEMA_VERSION,
-    TOOL_NAME,
+    stable_id, CodexAction, CodexCommand, ContentClaim, CoverageIndex, DocumentConsistencyReport,
+    DocumentIndex, EvidenceKernel, FacetReport, FreshnessReport, GithubLocalDocuments,
+    GithubSemanticsReport, MissingRoutePriorityReport, PatchPlan, ProfileKind,
+    RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport, RouteAssessment,
+    RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
 };
-use std::collections::BTreeSet;
+use serde::Serialize;
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
-mod v4;
-mod v5;
-
-pub use v4::{
-    render_linter_context_markdown, render_native_context_markdown, render_query_view_markdown,
-    CodexReviewKernel,
-};
-pub use v5::{
-    render_native_v3_query_markdown, CodexNativeV3DocumentsQuery, CodexNativeV3EvidenceQuery,
-    CodexNativeV3GovernanceQuery, CodexNativeV3PatchQuery, CodexNativeV3Query,
-    CodexNativeV3QueryKind, CodexNativeV3QueryParseError, CodexNativeV3QueryView,
-    CodexNativeV3RoutesQuery, CodexNativeV3Summary, CodexNativeV3View,
-};
-
-#[must_use]
-pub fn build_calibration_source_summary(
-    run: &CalibrationRun,
-) -> CalibrationSourceVisibilitySummary {
-    run.source_visibility_summary()
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexQueryKind {
+    Summary,
+    Routes,
+    Evidence,
+    Documents,
+    Governance,
+    Patches,
+    Linter,
+    Actions,
+    Remote,
+    PrBody,
 }
 
-#[must_use]
-pub fn build_review_context(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexReviewContext {
-    build_review_kernel(snapshot, plan, None).compatibility_v1()
-}
+impl CodexQueryKind {
+    pub const ALL: [Self; 10] = [
+        Self::Summary,
+        Self::Routes,
+        Self::Evidence,
+        Self::Documents,
+        Self::Governance,
+        Self::Patches,
+        Self::Linter,
+        Self::Actions,
+        Self::Remote,
+        Self::PrBody,
+    ];
 
-#[must_use]
-pub fn build_review_context_with_wording(
-    snapshot: &RepoSnapshot,
-    plan: &PatchPlan,
-    wording_lint: Option<&WordingLintReport>,
-) -> CodexReviewContext {
-    build_review_kernel(snapshot, plan, wording_lint).compatibility_v1()
-}
-
-#[must_use]
-pub fn build_review_kernel(
-    snapshot: &RepoSnapshot,
-    plan: &PatchPlan,
-    wording_lint: Option<&WordingLintReport>,
-) -> CodexReviewKernel {
-    CodexReviewKernel::new(snapshot, plan, wording_lint)
-}
-
-fn build_compatibility_view(kernel: &CodexReviewKernel) -> CodexReviewContext {
-    let snapshot = &kernel.snapshot;
-    let plan = &kernel.plan;
-    let wording_lint = kernel.wording_lint.as_ref();
-    let audit = audit_summary(snapshot);
-    let findings = snapshot
-        .findings
-        .iter()
-        .filter(|finding| match finding.recommendation.as_ref() {
-            Some(recommendation) => recommendation.gate != GateKind::Manual,
-            None => true,
-        })
-        .map(|finding| CodexFindingDigest {
-            id: finding.id.clone(),
-            severity: finding.severity,
-            title: finding.title.clone(),
-            gate: finding
-                .recommendation
-                .as_ref()
-                .map(|recommendation| recommendation.gate),
-            recommendation: finding
-                .recommendation
-                .as_ref()
-                .map(|recommendation| recommendation.message.clone()),
-        })
-        .collect::<Vec<_>>();
-    let safe_operations = plan
-        .operations
-        .iter()
-        .map(|operation| CodexPatchDigest {
-            id: operation.id.clone(),
-            gate: operation.gate,
-            kind: operation.kind,
-            safety: operation.safety,
-            preview_only: operation.preview_only,
-            requires_confirmation: operation.requires_confirmation,
-            path: operation.path.clone(),
-            title: operation.title.clone(),
-            planned_change: operation.planned_change.clone(),
-        })
-        .collect::<Vec<_>>();
-    let blocked_items = plan
-        .blocked
-        .iter()
-        .filter(|item| item.gate == GateKind::Guarded)
-        .map(|item| CodexBlockedDigest {
-            id: item.id.clone(),
-            gate: item.gate,
-            source: item.source,
-            safety: item.safety,
-            route: item.route,
-            priority: item.priority,
-            pattern_id: item.pattern_id.clone(),
-            title: item.title.clone(),
-            reason: item.reason.clone(),
-        })
-        .collect::<Vec<_>>();
-    let route_review = route_review_summary(snapshot, plan);
-    let claims = claim_summary(snapshot);
-    let wording_lint = wording_lint_digest(wording_lint);
-    let route_meanings = route_meaning_digests(snapshot);
-    let routes = route_digests(snapshot);
-    let co_occurrence_gaps = co_occurrence_digests(snapshot);
-    let profile = snapshot.profile.as_ref().map(|profile| profile.profile);
-    let pr_draft = build_pr_draft(
-        snapshot,
-        plan,
-        &audit,
-        &route_review,
-        &claims,
-        &wording_lint,
-        &route_meanings,
-    );
-    let user_actions = kernel
-        .actions
-        .iter()
-        .map(|action| CodexUserAction {
-            id: action.id.clone(),
-            label: action.label.clone(),
-            command: action.command.render_powershell(),
-            mutates_files: action.mutates_files,
-            requires_confirmation: action.requires_confirmation,
-            detail: action.detail.clone(),
-        })
-        .collect();
-
-    CodexReviewContext {
-        schema_version: SCHEMA_VERSION.to_string(),
-        tool: TOOL_NAME.to_string(),
-        repo_root: snapshot.repo_root.clone(),
-        profile,
-        audit,
-        route_review,
-        claims,
-        wording_lint,
-        route_meanings,
-        routes,
-        co_occurrence_gaps,
-        plan: plan.summary,
-        findings,
-        safe_operations,
-        blocked_items,
-        user_actions,
-        pr_draft,
-        calibration_sources: CalibrationSourceVisibilitySummary::default(),
-        claim_boundary: "Codex context is a draft review artifact generated from RepoSeiri Rust core outputs. Detailed claim boundaries are referenced by claim id; this context does not create branches, write files, call GitHub, open PRs, adopt policies, or guarantee popularity, trust, security, or quality.".to_string(),
-    }
-}
-
-#[must_use]
-pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
-    let mut out = String::new();
-    out.push_str("# RepoSeiri Codex Review Context\n\n");
-    out.push_str(&format!("- Schema: `{}`\n", context.schema_version));
-    out.push_str(&format!("- Repository: `{}`\n", context.repo_root));
-    match context.profile {
-        Some(profile) => out.push_str(&format!("- Profile: `{profile}`\n")),
-        None => out.push_str("- Profile: not selected\n"),
-    }
-    if let Some(score) = context.audit.profile_score_x100 {
-        out.push_str(&format!(
-            "- Profile fit view: `{score}` / `100` (legacy `profile_score_x100` projection)\n"
-        ));
-    }
-    if let (Some(profile), Some(confidence)) = (
-        context.audit.top_profile,
-        context.audit.top_profile_confidence_x100,
-    ) {
-        out.push_str(&format!(
-            "- Top profile branch: `{profile}` rank_score `{confidence}` / `100` across `{}` candidates\n",
-            context.audit.profile_branches
-        ));
-    }
-    if let (Some(route), Some(priority)) = (
-        context.audit.top_missing_route,
-        context.audit.top_missing_route_priority_x100,
-    ) {
-        out.push_str(&format!(
-            "- Top missing route: `{:?}` priority `{priority}` / `100` across `{}` candidates\n",
-            route, context.audit.missing_route_priorities
-        ));
-    }
-    out.push_str(&format!(
-        "- Co-occurrence gaps: `{}`\n",
-        context.audit.co_occurrence_gaps
-    ));
-    out.push_str(&format!("- Findings: `{}`\n", context.audit.findings));
-    out.push_str(&format!(
-        "- Route review: strong `{}` / weak `{}` / missing `{}`\n",
-        context.route_review.strong_routes,
-        context.route_review.weak_routes,
-        context.route_review.missing_routes
-    ));
-    out.push_str(&format!(
-        "- Codex actions: safe fixes `{}` / guarded drafts `{}` / manual decisions withheld `{}`\n",
-        context.route_review.safe_fixes,
-        context.route_review.guarded_drafts,
-        context.route_review.manual_decisions
-    ));
-    out.push_str(&format!(
-        "- Document events: `{}` / diagnostics `{}`\n",
-        context.audit.document_events, context.audit.document_diagnostics
-    ));
-    out.push_str(&format!(
-        "- Evidence kernel facts: `{}`\n",
-        context.audit.evidence_kernel_facts
-    ));
-    out.push_str(&format!(
-        "- Evidence ledger records: `{}`\n",
-        context.audit.evidence_ledger_records
-    ));
-    out.push_str(&format!(
-        "- Route assessments: `{}`\n",
-        context.audit.route_assessments
-    ));
-    out.push_str(&format!(
-        "- Route states: `{}`\n",
-        context.audit.route_states
-    ));
-    out.push_str(&format!(
-        "- Content claims: `{}`\n",
-        context.audit.content_claims
-    ));
-    out.push_str(&format!(
-        "- Wording lint findings: `{}`\n",
-        context.wording_lint.findings
-    ));
-    out.push_str(&format!(
-        "- Route meaning digests: `{}`\n",
-        context.route_meanings.len()
-    ));
-    if context.calibration_sources.total > 0 {
-        out.push_str(&format!(
-            "- Calibration sources: public `{}` / local_only `{}` / redacted `{}` / pending_review `{}`\n",
-            context.calibration_sources.public_sources,
-            context.calibration_sources.local_only_sources,
-            context.calibration_sources.redacted_sources,
-            context.calibration_sources.pending_review
-        ));
-    }
-    out.push_str(&format!(
-        "- Safe operations: `{}`\n",
-        context.plan.safe_operations
-    ));
-    out.push_str(&format!(
-        "- Guarded drafts: `{}`\n",
-        context.blocked_items.len()
-    ));
-    out.push_str(&format!("- Boundary: {}\n\n", context.claim_boundary));
-
-    out.push_str("## Claim Summary\n\n");
-    out.push_str(&format!(
-        "- Total `{}` / observed `{}` / inferred `{}` / suggested `{}` / blocked `{}`\n",
-        context.claims.total,
-        context.claims.observed,
-        context.claims.inferred,
-        context.claims.suggested,
-        context.claims.blocked
-    ));
-    out.push_str(&format!(
-        "- Routes with claims `{}` / evidence-linked claims `{}`\n",
-        context.claims.routes_with_claims, context.claims.evidence_linked_claims
-    ));
-    out.push_str(&format!(
-        "- Boundary kinds: {}\n\n",
-        debug_values_or_none(&context.claims.boundary_kinds)
-    ));
-
-    out.push_str("## Wording Lint\n\n");
-    out.push_str(&format!(
-        "- Available: `{}`\n",
-        context.wording_lint.available
-    ));
-    out.push_str(&format!(
-        "- Files scanned `{}` / generated surfaces `{}` / findings `{}` / suppressed boundary exceptions `{}`\n",
-        context.wording_lint.files_scanned,
-        context.wording_lint.generated_surfaces,
-        context.wording_lint.findings,
-        context.wording_lint.suppressed_boundary_exceptions
-    ));
-    out.push_str(&format!(
-        "- Rules: {}\n",
-        debug_values_or_none(&context.wording_lint.rules)
-    ));
-    out.push_str(&format!(
-        "- Boundary kinds: {}\n\n",
-        debug_values_or_none(&context.wording_lint.boundary_kinds)
-    ));
-
-    out.push_str("## Route Meaning Digest\n\n");
-    if context.route_meanings.is_empty() {
-        out.push_str("- No route meaning digests emitted.\n\n");
-    } else {
-        for digest in &context.route_meanings {
-            out.push_str(&format!(
-                "- `{:?}` `{:?}` indicates {} / does_not_indicate {}\n",
-                digest.route,
-                digest.state,
-                debug_values_or_none(&digest.indicates),
-                debug_values_or_none(&digest.does_not_indicate)
-            ));
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Routes => "routes",
+            Self::Evidence => "evidence",
+            Self::Documents => "documents",
+            Self::Governance => "governance",
+            Self::Patches => "patches",
+            Self::Linter => "linter",
+            Self::Actions => "actions",
+            Self::Remote => "remote",
+            Self::PrBody => "pr-body",
         }
-        out.push('\n');
     }
+}
 
-    out.push_str("## Route Review\n\n");
-    for digest in &context.routes {
-        out.push_str(&format!(
-            "- `{:?}` `{:?}` confidence `{:?}` priority `{}` gate `{}` claims {} boundary_kinds `{}`: {}\n",
-            digest.route,
-            digest.state,
-            digest.confidence,
-            digest
-                .priority_score_x100
-                .map_or_else(|| "n/a".to_string(), |score| score.to_string()),
-            digest
-                .gate
-                .map_or_else(|| "n/a".to_string(), |gate| format!("{gate:?}")),
-            claim_ids_or_none(&digest.claim_ids),
-            digest.boundary_kinds.len(),
-            digest.reason
-        ));
+impl Display for CodexQueryKind {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.slug())
     }
-    out.push('\n');
+}
 
-    out.push_str("## Co-occurrence Gaps\n\n");
-    if context.co_occurrence_gaps.is_empty() {
-        out.push_str("- No co-occurrence gaps emitted.\n\n");
-    } else {
-        for gap in &context.co_occurrence_gaps {
-            out.push_str(&format!(
-                "- `{}` `{:?}` gate `{:?}` missing_routes `{:?}` missing_signals `{}`: {}\n",
-                gap.id,
-                gap.priority,
-                gap.gate,
-                gap.missing_routes,
-                gap.missing_signals.join(", "),
-                gap.title
-            ));
+impl FromStr for CodexQueryKind {
+    type Err = CodexQueryParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.slug() == value)
+            .ok_or_else(|| CodexQueryParseError {
+                value: value.to_string(),
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexQueryParseError {
+    value: String,
+}
+
+impl Display for CodexQueryParseError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "unknown Codex query `{}`; expected one of: {}",
+            self.value,
+            CodexQueryKind::ALL
+                .iter()
+                .map(|kind| kind.slug())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+impl std::error::Error for CodexQueryParseError {}
+
+#[derive(Debug)]
+pub struct CodexView<'a> {
+    analysis: &'a RepositoryAnalysis,
+    plan: &'a PatchPlan,
+    wording_lint: Option<&'a WordingLintReport>,
+}
+
+impl<'a> CodexView<'a> {
+    #[must_use]
+    pub const fn new(
+        analysis: &'a RepositoryAnalysis,
+        plan: &'a PatchPlan,
+        wording_lint: Option<&'a WordingLintReport>,
+    ) -> Self {
+        Self {
+            analysis,
+            plan,
+            wording_lint,
         }
-        out.push('\n');
     }
 
-    out.push_str("## User Actions\n\n");
-    for action in &context.user_actions {
-        out.push_str(&format!("### {}\n\n", action.label));
-        out.push_str(&format!("- Mutates files: `{}`\n", action.mutates_files));
-        out.push_str(&format!(
-            "- Requires confirmation: `{}`\n",
-            action.requires_confirmation
-        ));
-        out.push_str(&format!("- Detail: {}\n", action.detail));
-        out.push_str("```powershell\n");
-        out.push_str(&action.command);
-        out.push('\n');
-        out.push_str("```\n\n");
-    }
-
-    out.push_str("## PR Draft\n\n");
-    out.push_str(&format!("- Title: {}\n", context.pr_draft.title));
-    out.push_str(&format!("- Draft: `{}`\n", context.pr_draft.draft));
-    out.push_str(&format!(
-        "- Labels: `{}`\n\n",
-        context.pr_draft.labels.join("`, `")
-    ));
-    out.push_str(&context.pr_draft.body);
-    out.push('\n');
-
-    out
-}
-
-#[must_use]
-pub fn render_pr_body(context: &CodexReviewContext) -> String {
-    context.pr_draft.body.clone()
-}
-
-fn claim_summary(snapshot: &RepoSnapshot) -> CodexClaimSummary {
-    let claim_index = ClaimRefIndex::new(&snapshot.claims);
-    let routes_with_claims = snapshot
-        .claims
-        .iter()
-        .map(|claim| claim.route)
-        .collect::<BTreeSet<RouteKind>>()
-        .len();
-    let evidence_linked_claims = snapshot
-        .claims
-        .iter()
-        .filter(|claim| !claim.evidence_ids.is_empty())
-        .count();
-
-    CodexClaimSummary {
-        total: snapshot.claims.len(),
-        observed: claim_index.strength_count(ClaimStrength::Observed),
-        inferred: claim_index.strength_count(ClaimStrength::Inferred),
-        suggested: claim_index.strength_count(ClaimStrength::Suggested),
-        blocked: claim_index.strength_count(ClaimStrength::Blocked),
-        routes_with_claims,
-        evidence_linked_claims,
-        boundary_kinds: claim_index.boundary_kinds(),
+    #[must_use]
+    pub fn query(&self, kind: CodexQueryKind) -> CodexQueryView<'_> {
+        let query = match kind {
+            CodexQueryKind::Summary => CodexQuery::Summary(summary(self.analysis, self.plan)),
+            CodexQueryKind::Routes => CodexQuery::Routes(CodexRoutesQuery {
+                assessments: &self.analysis.route_assessments,
+                priorities: &self.analysis.missing_route_priority,
+            }),
+            CodexQueryKind::Evidence => CodexQuery::Evidence(CodexEvidenceQuery {
+                kernel: &self.analysis.evidence_kernel,
+                coverage: &self.analysis.coverage,
+            }),
+            CodexQueryKind::Documents => CodexQuery::Documents(CodexDocumentsQuery {
+                index: &self.analysis.document_index,
+                github: &self.analysis.github_local_documents,
+            }),
+            CodexQueryKind::Governance => CodexQuery::Governance(CodexGovernanceQuery {
+                facets: &self.analysis.facets,
+                route_content: &self.analysis.route_content,
+                consistency: &self.analysis.document_consistency,
+                github: &self.analysis.github_semantics,
+                scope: &self.analysis.repository_scope,
+                freshness: &self.analysis.freshness,
+                claims: &self.analysis.claims,
+            }),
+            CodexQueryKind::Patches => CodexQuery::Patches(self.plan),
+            CodexQueryKind::Linter => CodexQuery::Linter(CodexLinterQuery {
+                report: self.wording_lint,
+                boundary: linter_boundary(),
+            }),
+            CodexQueryKind::Actions => CodexQuery::Actions(build_actions(self.analysis)),
+            CodexQueryKind::Remote => CodexQuery::Remote(&self.analysis.remote_evidence),
+            CodexQueryKind::PrBody => CodexQuery::PrBody(build_pr_body(self.analysis, self.plan)),
+        };
+        CodexQueryView {
+            schema_version: CODEX_SCHEMA_VERSION,
+            repo_root: &self.analysis.repo_root,
+            profile: self.analysis.profile.as_ref().map(|profile| profile.profile),
+            query,
+            boundary: "Codex queries are bounded projections of canonical local analysis. They do not write files, execute commands, call GitHub, adopt policy, or guarantee popularity, trust, security, quality, or publication readiness.",
+        }
     }
 }
 
-fn wording_lint_digest(report: Option<&WordingLintReport>) -> CodexWordingLintDigest {
-    let Some(report) = report else {
-        return CodexWordingLintDigest::default();
-    };
-    CodexWordingLintDigest {
-        available: true,
-        files_scanned: report.summary.files_scanned,
-        generated_surfaces: report.summary.generated_surfaces,
-        findings: report.summary.findings,
-        suppressed_boundary_exceptions: report.summary.suppressed_boundary_exceptions,
-        rules: report
-            .findings
-            .iter()
-            .map(|finding| finding.rule)
-            .collect::<BTreeSet<WordingRuleKind>>()
-            .into_iter()
-            .collect(),
-        boundary_kinds: report
-            .findings
-            .iter()
-            .map(|finding| finding.boundary)
-            .collect::<BTreeSet<ClaimBoundaryKind>>()
-            .into_iter()
-            .collect(),
-    }
+#[derive(Debug, Serialize)]
+pub struct CodexQueryView<'a> {
+    pub schema_version: &'static str,
+    pub repo_root: &'a str,
+    pub profile: Option<ProfileKind>,
+    pub query: CodexQuery<'a>,
+    pub boundary: &'static str,
 }
 
-fn route_meaning_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteMeaningDigest> {
-    snapshot
-        .route_states
-        .iter()
-        .map(|state| {
-            let rule = route_meaning_rule(state.route, state.state);
-            CodexRouteMeaningDigest {
-                route: state.route,
-                state: state.state,
-                indicates: rule.indicates.to_vec(),
-                does_not_indicate: rule.does_not_indicate.to_vec(),
-            }
-        })
-        .collect()
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum CodexQuery<'a> {
+    Summary(CodexSummary),
+    Routes(CodexRoutesQuery<'a>),
+    Evidence(CodexEvidenceQuery<'a>),
+    Documents(CodexDocumentsQuery<'a>),
+    Governance(CodexGovernanceQuery<'a>),
+    Patches(&'a PatchPlan),
+    Linter(CodexLinterQuery<'a>),
+    Actions(Vec<CodexAction>),
+    Remote(&'a RemoteEvidenceReport),
+    PrBody(CodexPrBody),
 }
 
-fn audit_summary(snapshot: &RepoSnapshot) -> CodexAuditSummary {
-    let baseline = snapshot.baseline.as_ref();
-    let strong_routes = snapshot
-        .route_states
-        .iter()
-        .filter(|route| route_strength(route.state) == RouteStrength::Strong)
-        .count();
-    let weak_routes = snapshot
-        .route_states
-        .iter()
-        .filter(|route| route_strength(route.state) == RouteStrength::Weak)
-        .count();
-    let missing_routes = snapshot
-        .route_states
-        .iter()
-        .filter(|route| route_strength(route.state) == RouteStrength::Missing)
-        .count();
-    CodexAuditSummary {
-        entries_scanned: snapshot.entry_count,
-        document_events: snapshot
-            .readme_document
-            .as_ref()
-            .map_or(0, |document| document.events().len()),
-        document_diagnostics: snapshot
-            .readme_document
-            .as_ref()
-            .map_or(0, |document| document.diagnostics().len()),
-        evidence_kernel_facts: snapshot.evidence_kernel.len(),
-        evidence_items: snapshot.evidence.len(),
-        evidence_ledger_records: snapshot.evidence_ledger.len(),
-        route_assessments: snapshot.route_assessments.len(),
-        route_states: snapshot.route_states.len(),
-        content_claims: snapshot.claims.len(),
-        strong_routes,
-        weak_routes,
-        missing_routes,
-        findings: snapshot.findings.len(),
-        pattern_matches: snapshot.pattern_matches.len(),
-        profile_score_x100: snapshot
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CodexSummary {
+    pub entries_scanned: usize,
+    pub document_events: usize,
+    pub document_diagnostics: usize,
+    pub evidence_facts: usize,
+    pub route_assessments: usize,
+    pub route_content_slots: usize,
+    pub claims: usize,
+    pub findings: usize,
+    pub pattern_matches: usize,
+    pub profile_fit_score_x100: Option<u8>,
+    pub profile_branches: usize,
+    pub top_profile: Option<ProfileKind>,
+    pub top_profile_rank_score_x100: Option<u8>,
+    pub missing_route_priorities: usize,
+    pub patch_operations: usize,
+    pub patch_holds: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexRoutesQuery<'a> {
+    pub assessments: &'a [RouteAssessment],
+    pub priorities: &'a MissingRoutePriorityReport,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexEvidenceQuery<'a> {
+    pub kernel: &'a EvidenceKernel,
+    pub coverage: &'a CoverageIndex,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexDocumentsQuery<'a> {
+    pub index: &'a DocumentIndex,
+    pub github: &'a GithubLocalDocuments,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexGovernanceQuery<'a> {
+    pub facets: &'a FacetReport,
+    pub route_content: &'a RouteContentReport,
+    pub consistency: &'a DocumentConsistencyReport,
+    pub github: &'a GithubSemanticsReport,
+    pub scope: &'a RepositoryScopeReport,
+    pub freshness: &'a FreshnessReport,
+    pub claims: &'a [ContentClaim],
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexLinterQuery<'a> {
+    pub report: Option<&'a WordingLintReport>,
+    pub boundary: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CodexPrBody {
+    pub title: String,
+    pub body: String,
+    pub draft: bool,
+}
+
+fn summary(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexSummary {
+    let (document_events, document_diagnostics) = analysis
+        .document_index
+        .scanned_documents()
+        .filter_map(|entry| entry.scan.as_ref())
+        .fold((0usize, 0usize), |(events, diagnostics), document| {
+            (
+                events.saturating_add(document.events().len()),
+                diagnostics.saturating_add(document.diagnostics().len()),
+            )
+        });
+    CodexSummary {
+        entries_scanned: analysis.entry_count,
+        document_events,
+        document_diagnostics,
+        evidence_facts: analysis.evidence_kernel.len(),
+        route_assessments: analysis.route_assessments.len(),
+        route_content_slots: analysis.route_content.assessments.len(),
+        claims: analysis.claims.len(),
+        findings: analysis.findings.len(),
+        pattern_matches: analysis.pattern_matches.len(),
+        profile_fit_score_x100: analysis
             .profile
             .as_ref()
             .map(|profile| profile.score.score_x100),
-        profile_branches: snapshot
+        profile_branches: analysis
             .profile
             .as_ref()
             .map_or(0, |profile| profile.branches.len()),
-        top_profile: snapshot
+        top_profile: analysis
             .profile
             .as_ref()
             .and_then(|profile| profile.branch_summary.top_profile),
-        top_profile_confidence_x100: snapshot
+        top_profile_rank_score_x100: analysis
             .profile
             .as_ref()
-            .and_then(|profile| profile.branch_summary.top_confidence_x100),
-        missing_route_priorities: snapshot.missing_route_priority.priorities.len(),
-        co_occurrence_gaps: snapshot
-            .missing_route_priority
-            .co_occurrence_gaps
-            .iter()
-            .filter(|gap| gap.gate != GateKind::Manual)
-            .count(),
-        top_missing_route: snapshot.missing_route_priority.summary.top_route,
-        top_missing_route_priority_x100: snapshot.missing_route_priority.summary.top_priority_x100,
-        required_present: baseline.map(|baseline| baseline.summary.required_present),
-        required_missing: baseline.map(|baseline| baseline.summary.required_missing),
-        optional_present: baseline.map(|baseline| baseline.summary.optional_present),
-        optional_missing: baseline.map(|baseline| baseline.summary.optional_missing),
+            .and_then(|profile| profile.branch_summary.top_rank_score_x100),
+        missing_route_priorities: analysis.missing_route_priority.priorities.len(),
+        patch_operations: plan.operations.len(),
+        patch_holds: plan.held.len(),
     }
 }
 
-fn build_pr_draft(
-    snapshot: &RepoSnapshot,
-    plan: &PatchPlan,
-    audit: &CodexAuditSummary,
-    route_review: &CodexRouteReviewSummary,
-    claims: &CodexClaimSummary,
-    wording_lint: &CodexWordingLintDigest,
-    route_meanings: &[CodexRouteMeaningDigest],
-) -> CodexPrDraft {
-    let mut body = String::new();
-    body.push_str("## Summary\n\n");
-    body.push_str("- Generated from RepoSeiri Rust core audit and dry-run plan output.\n");
-    body.push_str(&format!(
-        "- README document events: `{}` / diagnostics `{}`.\n",
-        audit.document_events, audit.document_diagnostics
-    ));
-    body.push_str(&format!(
-        "- Scanned `{}` entries and collected `{}` canonical evidence facts / `{}` compatibility evidence items / `{}` compatibility ledger records.\n",
-        audit.entries_scanned,
-        audit.evidence_kernel_facts,
-        audit.evidence_items,
-        audit.evidence_ledger_records
-    ));
-    body.push_str(&format!(
-        "- Canonical route assessments emitted: `{}`.\n",
-        audit.route_assessments
-    ));
-    body.push_str(&format!(
-        "- Route states emitted: `{}`.\n",
-        audit.route_states
-    ));
-    body.push_str(&format!(
-        "- Content claims emitted: `{}`; route details reference claim ids where available.\n",
-        audit.content_claims
-    ));
-    body.push_str(&format!(
-        "- Claim digest: observed `{}` / inferred `{}` / suggested `{}` / blocked `{}` across `{}` routes.\n",
-        claims.observed, claims.inferred, claims.suggested, claims.blocked, claims.routes_with_claims
-    ));
-    body.push_str(&format!(
-        "- Wording lint digest: available `{}` / findings `{}` / suppressed boundary exceptions `{}`.\n",
-        wording_lint.available,
-        wording_lint.findings,
-        wording_lint.suppressed_boundary_exceptions
-    ));
-    body.push_str(&format!(
-        "- Route meaning digests emitted: `{}`.\n",
-        route_meanings.len()
-    ));
-    body.push_str(&format!(
-        "- Route review: strong `{}` / weak `{}` / missing `{}`.\n",
-        route_review.strong_routes, route_review.weak_routes, route_review.missing_routes
-    ));
-    if let (Some(route), Some(priority)) = (
-        audit.top_missing_route,
-        audit.top_missing_route_priority_x100,
-    ) {
-        body.push_str(&format!(
-            "- Top missing route priority: `{:?}` at `{priority}` / `100` across `{}` candidates.\n",
-            route, audit.missing_route_priorities
-        ));
-    }
-    body.push_str(&format!(
-        "- Co-occurrence gaps emitted: `{}`.\n",
-        audit.co_occurrence_gaps
-    ));
-    body.push_str(&format!("- Findings: `{}`.\n", audit.findings));
-    body.push_str(&format!(
-        "- Safe fixes `{}` and guarded drafts `{}` are included for Codex review; manual decisions `{}` are withheld from actionable context.\n\n",
-        route_review.safe_fixes, route_review.guarded_drafts, route_review.manual_decisions
-    ));
-
-    body.push_str("## Route Review\n\n");
-    let claim_index = ClaimRefIndex::new(&snapshot.claims);
-    for state in &snapshot.route_states {
-        if matches!(
-            state.state,
-            RouteState::Verified
-                | RouteState::Structured
-                | RouteState::Routed
-                | RouteState::Weak
-                | RouteState::Absent
-                | RouteState::UnsafeToInvent
-        ) {
-            body.push_str(&format!(
-                "- `{:?}` `{:?}` confidence `{:?}` claims {}: {}\n",
-                state.route,
-                state.state,
-                state.confidence,
-                claim_ids_or_none(&claim_index.claim_ids_for_route_state(state.route, state.state)),
-                state.reason
-            ));
-        }
-    }
-    body.push('\n');
-
-    body.push_str("## Claim / Wording / Meaning Digest\n\n");
-    body.push_str(&format!(
-        "- Claim boundaries: {}\n",
-        debug_values_or_none(&claims.boundary_kinds)
-    ));
-    body.push_str(&format!(
-        "- Wording rules: {}\n",
-        debug_values_or_none(&wording_lint.rules)
-    ));
-    let human_review_routes = route_meanings
-        .iter()
-        .filter(|digest| digest.indicates.contains(&MeaningAtom::HumanReviewRequired))
-        .count();
-    body.push_str(&format!(
-        "- Route meanings requiring human review: `{human_review_routes}`.\n\n"
-    ));
-
-    body.push_str("## Safe Fixes\n\n");
-    if plan.operations.is_empty() {
-        body.push_str("- No safe operations were generated.\n\n");
-    } else {
-        for operation in &plan.operations {
-            body.push_str(&format!(
-                "- `{}` `{}` preview-only `{}` confirmation `{}`: {}\n",
-                operation.id,
-                operation.path,
-                operation.preview_only,
-                operation.requires_confirmation,
-                operation.planned_change
-            ));
-        }
-        body.push('\n');
-    }
-
-    body.push_str("## Guarded Drafts\n\n");
-    let guarded_items = plan
-        .blocked
-        .iter()
-        .filter(|item| item.gate == GateKind::Guarded)
-        .collect::<Vec<_>>();
-    if guarded_items.is_empty() {
-        body.push_str("- No reviewable guarded drafts are included in this plan.\n\n");
-    } else {
-        for item in guarded_items {
-            let kind = item
-                .suggested_kind
-                .map_or_else(|| "none".to_string(), |kind| format!("{kind:?}"));
-            body.push_str(&format!(
-                "- `{}` `{:?}` kind `{}` `{}`: {}\n",
-                item.id, item.gate, kind, item.pattern_id, item.reason
-            ));
-        }
-        body.push('\n');
-    }
-
-    let manual_decisions = plan
-        .blocked
-        .iter()
-        .filter(|item| item.gate == GateKind::Manual)
-        .count();
-    body.push_str("## Manual Decisions\n\n");
-    body.push_str(&format!(
-        "- `{manual_decisions}` manual decisions were withheld from Codex actionable context and must stay with maintainers.\n\n"
-    ));
-
-    body.push_str("## Verification\n\n");
-    body.push_str("- [ ] Review generated safe operations before applying them.\n");
-    body.push_str("- [ ] Confirm guarded drafts with maintainers before writing content.\n");
-    body.push_str("- [ ] Keep manual policy, legal, security, and ownership decisions outside automated Codex action.\n");
-    body.push_str("- [ ] Run `cargo test --workspace` after any applied changes.\n\n");
-
-    body.push_str("## Boundary\n\n");
-    body.push_str("- Claim details and blocked guarantee boundaries are referenced through claim ids in this draft.\n");
-    body.push_str("- This PR body is a draft generated by RepoSeiri. It does not claim popularity, trust, security, quality, or external validation outcomes.\n");
-    body.push_str("- RepoSeiri did not create this PR, push a branch, call GitHub, or mutate repository files while generating this context.\n");
-
-    let profile = snapshot
+fn build_actions(analysis: &RepositoryAnalysis) -> Vec<CodexAction> {
+    let profile = analysis
         .profile
         .as_ref()
-        .map_or(ProfileKind::Common, |profile| profile.profile);
-    CodexPrDraft {
-        title: format!("RepoSeiri: review repository trust routes for {profile}"),
+        .map_or(ProfileKind::Common, |profile| profile.profile)
+        .to_string();
+    [
+        ("Render audit report", "audit", None),
+        ("Render dry-run patch plan", "plan", None),
+        ("Render Codex PR body", "codex", Some("pr-body")),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (label, subcommand, query))| {
+        let mut args = vec![
+            "run".to_string(),
+            "--quiet".to_string(),
+            "-p".to_string(),
+            "seiri-cli".to_string(),
+            "--".to_string(),
+            subcommand.to_string(),
+            "--path".to_string(),
+            analysis.repo_root.clone(),
+            "--profile".to_string(),
+            profile.clone(),
+            "--format".to_string(),
+            "markdown".to_string(),
+        ];
+        if let Some(query) = query {
+            args.extend(["--query".to_string(), query.to_string()]);
+        }
+        CodexAction {
+            id: stable_id("codex-action", index + 1),
+            label: label.to_string(),
+            command: CodexCommand::new("cargo", args).expect("built-in argv is valid"),
+            mutates_files: false,
+            requires_confirmation: false,
+            detail: "Review command only; RepoSeiri does not execute this argv.".to_string(),
+        }
+    })
+    .collect()
+}
+
+fn build_pr_body(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexPrBody {
+    let summary = summary(analysis, plan);
+    let body = format!(
+        "## Summary\n\n- Reviewed {} repository entries and {} typed evidence facts.\n- Recorded {} route assessments and {} content slots.\n- Prepared {} dry-run patch operations; {} items remain held.\n\n## Boundaries\n\nRepoSeiri did not write files, execute commands, call GitHub, create policy text, or establish popularity, trust, security, quality, or publication readiness.\n",
+        summary.entries_scanned,
+        summary.evidence_facts,
+        summary.route_assessments,
+        summary.route_content_slots,
+        summary.patch_operations,
+        summary.patch_holds,
+    );
+    CodexPrBody {
+        title: "Organize repository routes with RepoSeiri".to_string(),
         body,
-        labels: vec![
-            "reposeiri".to_string(),
-            "repository-quality".to_string(),
-            "draft".to_string(),
-        ],
         draft: true,
     }
 }
 
-fn route_review_summary(snapshot: &RepoSnapshot, plan: &PatchPlan) -> CodexRouteReviewSummary {
-    CodexRouteReviewSummary {
-        strong_routes: snapshot
-            .route_states
-            .iter()
-            .filter(|route| route_strength(route.state) == RouteStrength::Strong)
-            .count(),
-        weak_routes: snapshot
-            .route_states
-            .iter()
-            .filter(|route| route_strength(route.state) == RouteStrength::Weak)
-            .count(),
-        missing_routes: snapshot
-            .route_states
-            .iter()
-            .filter(|route| route_strength(route.state) == RouteStrength::Missing)
-            .count(),
-        co_occurrence_gaps: snapshot.missing_route_priority.co_occurrence_gaps.len(),
-        safe_fixes: plan.operations.len(),
-        guarded_drafts: plan
-            .blocked
-            .iter()
-            .filter(|item| item.gate == GateKind::Guarded)
-            .count(),
-        manual_decisions: plan
-            .blocked
-            .iter()
-            .filter(|item| item.gate == GateKind::Manual)
-            .count(),
-    }
+fn linter_boundary() -> &'static str {
+    "Wording findings are evidence-scoped review hints, not legal, security, quality, trust, or publication-readiness judgments."
 }
 
-fn route_digests(snapshot: &RepoSnapshot) -> Vec<CodexRouteDigest> {
-    let claim_index = ClaimRefIndex::new(&snapshot.claims);
-    snapshot
-        .route_states
-        .iter()
-        .map(|state| {
-            let priority = snapshot
-                .missing_route_priority
-                .priorities
-                .iter()
-                .find(|priority| priority.route == state.route);
-            CodexRouteDigest {
-                route: state.route,
-                state: state.state,
-                confidence: state.confidence,
-                evidence_ids: state.evidence_ids.clone(),
-                claim_ids: claim_index.claim_ids_for_route_state(state.route, state.state),
-                boundary_kinds: claim_index
-                    .boundary_kinds_for_route_state(state.route, state.state),
-                priority_score_x100: priority.map(|priority| priority.priority_score_x100),
-                gate: priority.and_then(|priority| {
-                    if priority.gate == GateKind::Manual {
-                        None
-                    } else {
-                        Some(priority.gate)
-                    }
-                }),
-                reason: state.reason.clone(),
+#[must_use]
+pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
+    let mut out = format!(
+        "# RepoSeiri Codex Query\n\n- Schema: `{}`\n- Repository: `{}`\n- Query: `{}`\n",
+        view.schema_version,
+        view.repo_root,
+        query_kind(&view.query).slug(),
+    );
+    match &view.query {
+        CodexQuery::Summary(summary) => {
+            out.push_str(&format!(
+                "\n- Entries: `{}`\n- Evidence facts: `{}`\n- Route assessments: `{}`\n- Content slots: `{}`\n- Findings: `{}`\n- Patch operations: `{}`\n- Patch holds: `{}`\n",
+                summary.entries_scanned,
+                summary.evidence_facts,
+                summary.route_assessments,
+                summary.route_content_slots,
+                summary.findings,
+                summary.patch_operations,
+                summary.patch_holds,
+            ));
+        }
+        CodexQuery::Routes(routes) => {
+            out.push_str("\n## Routes\n");
+            for assessment in routes.assessments {
+                let state = assessment.summary_projection();
+                out.push_str(&format!(
+                    "- `{:?}`: `{:?}`; root={}, readme={}, inherited={}\n",
+                    assessment.route(),
+                    state.state,
+                    assessment.presence().root_structured(),
+                    assessment.readme().routing().is_present(),
+                    assessment.presence().inherited(),
+                ));
             }
-        })
-        .collect()
-}
-
-fn claim_ids_or_none(ids: &[ClaimId]) -> String {
-    if ids.is_empty() {
-        "none".to_string()
-    } else {
-        ids.iter()
-            .map(|id| format!("`{id}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        }
+        CodexQuery::Evidence(evidence) => out.push_str(&format!(
+            "\n- Documents: `{}`\n- Facts: `{}`\n",
+            evidence.kernel.documents().len(),
+            evidence.kernel.facts().len(),
+        )),
+        CodexQuery::Documents(documents) => out.push_str(&format!(
+            "\n- Indexed documents: `{}`\n- Structured GitHub documents: `{}`\n",
+            documents.index.entries().len(),
+            documents.github.documents().len(),
+        )),
+        CodexQuery::Governance(governance) => out.push_str(&format!(
+            "\n- Facets: `{}`\n- Content slots: `{}`\n- Conflicts: `{}`\n- Claims: `{}`\n",
+            governance.facets.facets.len(),
+            governance.route_content.assessments.len(),
+            governance.consistency.conflicts.len(),
+            governance.claims.len(),
+        )),
+        CodexQuery::Patches(plan) => out.push_str(&format!(
+            "\n- Dry-run operations: `{}`\n- Held items: `{}`\n- Writes files: `{}`\n",
+            plan.operations.len(),
+            plan.held.len(),
+            plan.writes_files,
+        )),
+        CodexQuery::Linter(linter) => out.push_str(&format!(
+            "\n- Available: `{}`\n- Findings: `{}`\n",
+            linter.report.is_some(),
+            linter.report.map_or(0, |report| report.findings.len()),
+        )),
+        CodexQuery::Actions(actions) => {
+            out.push_str("\n## Review Commands\n");
+            for action in actions {
+                out.push_str(&format!(
+                    "- `{}` {:?}\n",
+                    action.command.program(),
+                    action.command.args(),
+                ));
+            }
+        }
+        CodexQuery::Remote(remote) => {
+            out.push_str(&format!("\n- Remote status: `{:?}`\n", remote.status));
+        }
+        CodexQuery::PrBody(pr) => {
+            out.push('\n');
+            out.push_str(&pr.body);
+        }
     }
+    out.push_str(&format!("\n- Boundary: {}\n", view.boundary));
+    out
 }
 
-fn debug_values_or_none<T: std::fmt::Debug>(values: &[T]) -> String {
-    if values.is_empty() {
-        "none".to_string()
-    } else {
-        values
-            .iter()
-            .map(|value| format!("`{value:?}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
-fn co_occurrence_digests(snapshot: &RepoSnapshot) -> Vec<CodexCoOccurrenceDigest> {
-    snapshot
-        .missing_route_priority
-        .co_occurrence_gaps
-        .iter()
-        .filter(|gap| gap.gate != GateKind::Manual)
-        .map(|gap| CodexCoOccurrenceDigest {
-            id: gap.id.clone(),
-            title: gap.title.clone(),
-            gate: gap.gate,
-            priority: gap.priority,
-            present_routes: gap.present_routes.clone(),
-            missing_routes: gap.missing_routes.clone(),
-            missing_signals: gap.missing_signals.clone(),
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RouteStrength {
-    Strong,
-    Weak,
-    Missing,
-}
-
-fn route_strength(state: RouteState) -> RouteStrength {
-    match state {
-        RouteState::Routed
-        | RouteState::Structured
-        | RouteState::Verified
-        | RouteState::Overridden => RouteStrength::Strong,
-        RouteState::Absent | RouteState::UnsafeToInvent => RouteStrength::Missing,
-        RouteState::Implicit
-        | RouteState::Weak
-        | RouteState::Inherited
-        | RouteState::Conflicting
-        | RouteState::Overloaded
-        | RouteState::Stale => RouteStrength::Weak,
+const fn query_kind(query: &CodexQuery<'_>) -> CodexQueryKind {
+    match query {
+        CodexQuery::Summary(_) => CodexQueryKind::Summary,
+        CodexQuery::Routes(_) => CodexQueryKind::Routes,
+        CodexQuery::Evidence(_) => CodexQueryKind::Evidence,
+        CodexQuery::Documents(_) => CodexQueryKind::Documents,
+        CodexQuery::Governance(_) => CodexQueryKind::Governance,
+        CodexQuery::Patches(_) => CodexQueryKind::Patches,
+        CodexQuery::Linter(_) => CodexQueryKind::Linter,
+        CodexQuery::Actions(_) => CodexQueryKind::Actions,
+        CodexQuery::Remote(_) => CodexQueryKind::Remote,
+        CodexQuery::PrBody(_) => CodexQueryKind::PrBody,
     }
 }

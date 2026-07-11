@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, DocumentEvent, DocumentIndex, DocumentRole,
     DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus, FileKind,
@@ -48,7 +50,7 @@ impl Default for DocumentScanOptions {
 }
 
 impl DocumentScanOptions {
-    fn compatibility(source_bytes: usize) -> Self {
+    fn derived_for_source(source_bytes: usize) -> Self {
         Self {
             max_source_bytes: source_bytes,
             max_events: source_bytes.saturating_mul(2).saturating_add(1),
@@ -300,9 +302,12 @@ pub fn analyze_readme(repo_root: impl AsRef<Path>) -> Result<Option<ReadmeSummar
 }
 
 pub fn parse_readme(path: impl Into<String>, text: &str) -> ReadmeSummary {
-    let document =
-        scan_document_with_options(path, text, &DocumentScanOptions::compatibility(text.len()))
-            .expect("in-memory compatibility limits are derived from the supplied source");
+    let document = scan_document_with_options(
+        path,
+        text,
+        &DocumentScanOptions::derived_for_source(text.len()),
+    )
+    .expect("in-memory limits are derived from the supplied source");
     summarize_readme_document(&document, None)
 }
 

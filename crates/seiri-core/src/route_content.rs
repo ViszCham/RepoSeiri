@@ -1,4 +1,4 @@
-use crate::{CoverageId, EvidenceSet, Observation, RouteKind, UnknownReason};
+use crate::RouteKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -94,47 +94,5 @@ impl RouteContentAtom {
                 RouteKind::Hygiene
             }
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", content = "data", rename_all = "snake_case")]
-pub enum ContentObservation {
-    Present { evidence: EvidenceSet },
-    Absent { coverage: CoverageId },
-    Unknown(UnknownReason),
-    Conflict { alternatives: EvidenceSet },
-}
-
-impl From<Observation<()>> for ContentObservation {
-    fn from(value: Observation<()>) -> Self {
-        match value {
-            Observation::Present { evidence, .. } => Self::Present { evidence },
-            Observation::Absent { coverage } => Self::Absent { coverage },
-            Observation::Unknown(reason) => Self::Unknown(reason),
-            Observation::Conflict { alternatives } => Self::Conflict { alternatives },
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteContentAtomAssessment {
-    pub atom: RouteContentAtom,
-    pub observation: ContentObservation,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteContentAssessment {
-    pub route: RouteKind,
-    pub atoms: Vec<RouteContentAtomAssessment>,
-}
-
-impl RouteContentAssessment {
-    #[must_use]
-    pub fn observation(&self, atom: RouteContentAtom) -> Option<&ContentObservation> {
-        self.atoms
-            .iter()
-            .find(|assessment| assessment.atom == atom)
-            .map(|assessment| &assessment.observation)
     }
 }

@@ -261,8 +261,8 @@ fn generated_report_targets(
     profile: ProfileKind,
 ) -> Result<Vec<WordingTextTarget>, AuditError> {
     let snapshot = audit_repository_with_profile(path.as_ref(), profile)?;
-    let plan = seiri_planner::plan_safe_patches(&snapshot);
-    let context = seiri_codex::build_review_context(&snapshot, &plan);
+    let plan = seiri_planner::plan_patches(&snapshot);
+    let view = seiri_codex::CodexView::new(&snapshot, &plan, None);
 
     Ok(vec![
         WordingTextTarget {
@@ -278,7 +278,9 @@ fn generated_report_targets(
         WordingTextTarget {
             source: WordingLintSourceKind::GeneratedReport,
             path: "generated/codex.md".to_string(),
-            text: seiri_codex::render_review_context_markdown(&context),
+            text: seiri_codex::render_query_markdown(
+                &view.query(seiri_codex::CodexQueryKind::Summary),
+            ),
         },
     ])
 }

@@ -1,13 +1,13 @@
 use seiri_core::{
     route_meaning_rule, ClaimStrength, ContentClaim, EvidenceId, MeaningAtom, MissingRoutePriority,
-    RepoSnapshot, RouteState, RouteStateReport,
+    RepositoryAnalysis, RouteAssessment, RouteState,
 };
 
-pub(crate) fn build_content_claims(snapshot: &RepoSnapshot) -> Vec<ContentClaim> {
+pub(crate) fn build_content_claims(snapshot: &RepositoryAnalysis) -> Vec<ContentClaim> {
     let mut claims = Vec::new();
 
-    for route_state in &snapshot.route_states {
-        push_route_state_claim(&mut claims, route_state);
+    for assessment in &snapshot.route_assessments {
+        push_route_claim(&mut claims, assessment);
     }
 
     for priority in &snapshot.missing_route_priority.priorities {
@@ -17,19 +17,20 @@ pub(crate) fn build_content_claims(snapshot: &RepoSnapshot) -> Vec<ContentClaim>
     claims
 }
 
-fn push_route_state_claim(claims: &mut Vec<ContentClaim>, route_state: &RouteStateReport) {
-    let evidence_ids = normalized_evidence_ids(&route_state.evidence_ids);
+fn push_route_claim(claims: &mut Vec<ContentClaim>, assessment: &RouteAssessment) {
+    let summary = assessment.summary_projection();
+    let evidence_ids = normalized_evidence_ids(&assessment.summary_evidence_ids());
     if evidence_ids.is_empty() {
         return;
     }
 
-    let rule = route_meaning_rule(route_state.route, route_state.state);
+    let rule = route_meaning_rule(assessment.route(), summary.state);
     let index = claims.len() + 1;
     claims.push(ContentClaim::new(
         index,
-        route_state.route,
-        route_state.state,
-        route_state_strength(route_state.state),
+        assessment.route(),
+        summary.state,
+        route_state_strength(summary.state),
         evidence_ids,
         rule.indicates.to_vec(),
         rule.does_not_indicate.to_vec(),

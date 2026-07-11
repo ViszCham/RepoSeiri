@@ -2,7 +2,9 @@ use crate::{
     PatternBoundary, PatternDetector, PatternNegativeFixture, PredicateContext, PredicateProgram,
     PredicateProgramError,
 };
-use seiri_core::{stable_id, PatternGroup, PatternMatch, PatternOutcome, RepoSnapshot, RouteKind};
+use seiri_core::{
+    stable_id, PatternGroup, PatternMatch, PatternOutcome, RepositoryAnalysis, RouteKind,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -102,7 +104,7 @@ impl PatternRegistry {
     }
 
     #[must_use]
-    pub fn evaluate_patterns(&self, snapshot: &RepoSnapshot) -> Vec<PatternMatch> {
+    pub fn evaluate_patterns(&self, snapshot: &RepositoryAnalysis) -> Vec<PatternMatch> {
         self.evaluation_definitions()
             .into_iter()
             .enumerate()
@@ -129,7 +131,7 @@ impl PatternRegistry {
     pub fn evaluate_predicate(
         &self,
         pattern_id: &str,
-        snapshot: &RepoSnapshot,
+        snapshot: &RepositoryAnalysis,
     ) -> Option<seiri_core::Observation<()>> {
         self.definition(pattern_id)
             .and_then(|definition| definition.predicate.as_ref())

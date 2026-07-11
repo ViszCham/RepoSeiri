@@ -9,7 +9,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn q4_route_state_claims_are_evidence_linked() {
+fn route_state_claims_are_evidence_linked() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
         .expect("audit fixture");
 
@@ -42,7 +42,7 @@ fn q4_route_state_claims_are_evidence_linked() {
 }
 
 #[test]
-fn q4_missing_route_priority_can_emit_suggested_claims_with_evidence() {
+fn missing_route_priority_can_emit_suggested_claims_with_evidence() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
         .expect("audit fixture");
 
@@ -73,17 +73,20 @@ fn q4_missing_route_priority_can_emit_suggested_claims_with_evidence() {
 }
 
 #[test]
-fn q4_builder_skips_claims_without_evidence() {
+fn builder_skips_claims_without_evidence() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
         .expect("audit fixture");
 
-    let security_state = snapshot
-        .route_states
+    let security = snapshot
+        .route_assessments
         .iter()
-        .find(|state| state.route == RouteKind::Security)
-        .expect("security route state");
-    assert_eq!(security_state.state, RouteState::UnsafeToInvent);
-    assert!(security_state.evidence_ids.is_empty());
+        .find(|assessment| assessment.route() == RouteKind::Security)
+        .expect("security route assessment");
+    assert_eq!(
+        security.summary_projection().state,
+        RouteState::UnsafeToInvent
+    );
+    assert!(security.summary_evidence_ids().is_empty());
 
     assert!(!snapshot.claims.iter().any(|claim| {
         claim.route == RouteKind::Security && claim.state == RouteState::UnsafeToInvent
@@ -95,7 +98,7 @@ fn q4_builder_skips_claims_without_evidence() {
 }
 
 #[test]
-fn q4_json_and_markdown_expose_content_claims() {
+fn json_and_markdown_expose_content_claims() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
         .expect("audit fixture");
 
@@ -115,7 +118,7 @@ fn q4_json_and_markdown_expose_content_claims() {
 }
 
 #[test]
-fn q5_markdown_report_binds_routes_and_priorities_to_claims() {
+fn markdown_report_binds_routes_and_priorities_to_claims() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
         .expect("audit fixture");
 

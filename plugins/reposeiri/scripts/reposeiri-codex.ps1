@@ -3,14 +3,12 @@ param(
     [string] $Profile = "common",
     [ValidateSet("json", "markdown")]
     [string] $Format = "markdown",
-    [ValidateSet("context", "pr-body", "query", "linter")]
-    [string] $View = "context",
-    [ValidateSet("compatibility-v1", "native-v2")]
-    [string] $Schema = "compatibility-v1",
-    [ValidateSet("summary", "routes", "patches", "linter", "actions")]
+    [ValidateSet("repository", "workspace", "subtree")]
+    [string] $Scope = "repository",
+    [ValidateSet("summary", "routes", "evidence", "documents", "governance", "patches", "linter", "actions", "remote", "pr-body")]
     [string] $Query = "summary"
 )
 
 $ErrorActionPreference = "Stop"
 
-cargo run --quiet -p seiri-cli -- codex --path $Path --profile $Profile --format $Format --view $View --schema $Schema --query $Query
+cargo run --quiet -p seiri-cli -- codex --path $Path --profile $Profile --scope $Scope --query $Query --format $Format

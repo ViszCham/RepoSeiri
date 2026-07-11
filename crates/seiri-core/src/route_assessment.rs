@@ -239,7 +239,7 @@ impl ReadmeRouteAssessment {
     }
 
     #[must_use]
-    pub fn legacy_state(self, route: RouteKind) -> RouteState {
+    pub fn summary_state(self, route: RouteKind) -> RouteState {
         if !self.routing.is_present() {
             RouteState::Absent
         } else if matches!(
@@ -261,8 +261,8 @@ impl ReadmeRouteAssessment {
     }
 
     #[must_use]
-    pub fn legacy_reason(self, route: RouteKind) -> &'static str {
-        match self.legacy_state(route) {
+    pub fn summary_reason(self, route: RouteKind) -> &'static str {
+        match self.summary_state(route) {
             RouteState::Absent => "No README evidence was observed for this route.",
             RouteState::Weak => "README route evidence is visible but does not expose a target.",
             RouteState::Conflicting => {
@@ -490,44 +490,44 @@ impl RouteAssessment {
     }
 
     #[must_use]
-    pub fn legacy_projection(&self) -> LegacyRouteProjection {
-        let readme_state = self.readme.legacy_state(self.route);
+    pub fn summary_projection(&self) -> RouteSummaryProjection {
+        let readme_state = self.readme.summary_state(self.route);
         let identity_verified = self.route == RouteKind::Identity
             && self.presence.root_structured
             && self.readme.routing.is_present();
 
         if matches!(readme_state, RouteState::Stale) {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Stale,
                 EvidenceConfidence::Medium,
-                self.readme.legacy_reason(self.route),
+                self.readme.summary_reason(self.route),
             );
         }
         if matches!(readme_state, RouteState::Conflicting) {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Conflicting,
                 EvidenceConfidence::Medium,
-                self.readme.legacy_reason(self.route),
+                self.readme.summary_reason(self.route),
             );
         }
         if matches!(readme_state, RouteState::Overloaded) {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Overloaded,
                 EvidenceConfidence::Medium,
-                self.readme.legacy_reason(self.route),
+                self.readme.summary_reason(self.route),
             );
         }
         if !self.presence.root_structured && readme_state == RouteState::Weak {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Weak,
                 EvidenceConfidence::Low,
-                self.readme.legacy_reason(self.route),
+                self.readme.summary_reason(self.route),
             );
         }
         if self.presence.root_structured
             && (self.readme.target_reachability.repository_local_present > 0 || identity_verified)
         {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Verified,
                 EvidenceConfidence::High,
                 if identity_verified {
@@ -538,41 +538,41 @@ impl RouteAssessment {
             );
         }
         if self.presence.root_structured && self.readme.routing.is_present() {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Structured,
                 EvidenceConfidence::High,
                 "Root structured evidence is present, but the README route has no existence-checked repository-local target.",
             );
         }
         if self.presence.root_structured {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Structured,
                 EvidenceConfidence::High,
                 "Root structured evidence is present, but README routing is not explicit.",
             );
         }
         if self.readme.routing.is_present() {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Routed,
                 EvidenceConfidence::Medium,
                 "README routing evidence is present.",
             );
         }
         if self.presence.inherited {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::Inherited,
                 EvidenceConfidence::Low,
                 "Only non-root or fixture evidence was observed; it is not credited as a root route.",
             );
         }
         if self.missing_pattern && self.policy == RoutePolicyBoundary::MaintainerDecisionRequired {
-            return LegacyRouteProjection::new(
+            return RouteSummaryProjection::new(
                 RouteState::UnsafeToInvent,
                 EvidenceConfidence::Medium,
                 "The route is missing and requires a maintainer policy or content decision.",
             );
         }
-        LegacyRouteProjection::new(
+        RouteSummaryProjection::new(
             RouteState::Absent,
             EvidenceConfidence::Low,
             "No root route evidence was observed.",
@@ -580,8 +580,8 @@ impl RouteAssessment {
     }
 
     #[must_use]
-    pub fn legacy_evidence_ids(&self) -> Vec<EvidenceId> {
-        let projection = self.legacy_projection();
+    pub fn summary_evidence_ids(&self) -> Vec<EvidenceId> {
+        let projection = self.summary_projection();
         let mut ids = if projection.state == RouteState::Inherited {
             self.evidence.inherited.clone()
         } else {
@@ -669,13 +669,13 @@ impl<'de> Deserialize<'de> for RouteAssessment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LegacyRouteProjection {
+pub struct RouteSummaryProjection {
     pub state: RouteState,
     pub confidence: EvidenceConfidence,
     pub reason: &'static str,
 }
 
-impl LegacyRouteProjection {
+impl RouteSummaryProjection {
     const fn new(state: RouteState, confidence: EvidenceConfidence, reason: &'static str) -> Self {
         Self {
             state,

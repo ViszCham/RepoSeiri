@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::{Parser, Subcommand, ValueEnum};
 use seiri_core::ProfileKind;
 use std::path::PathBuf;
@@ -5,8 +7,8 @@ use std::process::ExitCode;
 
 mod codex;
 
-use codex::{CodexError, CodexSchema, CodexView};
-use seiri_report::CodexNativeV3QueryKind;
+use codex::CodexError;
+use seiri_report::CodexQueryKind;
 
 #[derive(Debug, Parser)]
 #[command(name = "seiri")]
@@ -31,16 +33,6 @@ enum Command {
         format: OutputFormat,
     },
     Plan {
-        #[arg(long, default_value = ".")]
-        path: PathBuf,
-        #[arg(long, default_value = "common", value_parser = parse_profile)]
-        profile: ProfileKind,
-        #[arg(long)]
-        calibration_priors: Option<PathBuf>,
-        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
-        format: OutputFormat,
-    },
-    PlanV5 {
         #[arg(long, default_value = ".")]
         path: PathBuf,
         #[arg(long, default_value = "common", value_parser = parse_profile)]
@@ -95,12 +87,10 @@ enum Command {
         profile: ProfileKind,
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
-        #[arg(long, value_enum, default_value_t = CodexView::Context)]
-        view: CodexView,
-        #[arg(long, value_enum, default_value_t = CodexSchema::CompatibilityV1)]
-        schema: CodexSchema,
+        #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
+        scope: ScopeArg,
         #[arg(long, default_value = "summary", value_parser = parse_codex_query)]
-        query: CodexNativeV3QueryKind,
+        query: CodexQueryKind,
     },
 }
 
@@ -168,38 +158,21 @@ fn run() -> Result<String, CodexError> {
             path,
             profile,
             calibration_priors,
-            format,
-        } => {
-            let plan = match calibration_priors {
-                Some(priors) => {
-                    seiri_report::plan_repository_with_local_calibration(path, profile, priors)?
-                }
-                None => seiri_report::plan_repository_with_profile(path, profile)?,
-            };
-            match format {
-                OutputFormat::Json => Ok(seiri_report::plan_to_json(&plan)?),
-                OutputFormat::Markdown => Ok(seiri_report::plan_to_markdown(&plan)),
-            }
-        }
-        Command::PlanV5 {
-            path,
-            profile,
-            calibration_priors,
             scope,
             format,
         } => {
             let plan = match calibration_priors {
-                Some(priors) => seiri_report::plan_repository_v5_with_local_calibration(
+                Some(priors) => seiri_report::plan_repository_with_local_calibration_and_scope(
                     path,
                     profile,
                     priors,
                     scope.into(),
                 )?,
-                None => seiri_report::plan_repository_v5(path, profile, scope.into())?,
+                None => seiri_report::plan_repository_with_scope(path, profile, scope.into())?,
             };
             match format {
-                OutputFormat::Json => Ok(seiri_report::planner_v5_to_json(&plan)?),
-                OutputFormat::Markdown => Ok(seiri_report::planner_v5_to_markdown(&plan)),
+                OutputFormat::Json => Ok(seiri_report::plan_to_json(&plan)?),
+                OutputFormat::Markdown => Ok(seiri_report::plan_to_markdown(&plan)),
             }
         }
         Command::Diff {
@@ -266,10 +239,9 @@ fn run() -> Result<String, CodexError> {
             path,
             profile,
             format,
-            view,
-            schema,
+            scope,
             query,
-        } => codex::render(path, profile, format, view, schema, query),
+        } => codex::render(path, profile, scope.into(), format, query),
     }
 }
 
@@ -281,8 +253,8 @@ fn parse_profile(value: &str) -> Result<ProfileKind, String> {
     })
 }
 
-fn parse_codex_query(value: &str) -> Result<CodexNativeV3QueryKind, String> {
+fn parse_codex_query(value: &str) -> Result<CodexQueryKind, String> {
     value
-        .parse::<CodexNativeV3QueryKind>()
+        .parse::<CodexQueryKind>()
         .map_err(|error| error.to_string())
 }

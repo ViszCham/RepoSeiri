@@ -5,7 +5,7 @@ use seiri_core::{
 use serde_json::Value;
 
 #[test]
-fn q1_content_claim_core_schema_roundtrips_through_json() {
+fn content_claim_core_schema_roundtrips_through_json() {
     let claim = ContentClaim::new(
         7,
         RouteKind::Security,
@@ -44,7 +44,7 @@ fn q1_content_claim_core_schema_roundtrips_through_json() {
 }
 
 #[test]
-fn q1_claim_boundary_keeps_existing_compatibility_surface() {
+fn claim_boundary_keeps_canonical_review_surface() {
     let boundary = ClaimBoundary {
         summary: "Calibration output is candidate evidence for human review.".to_string(),
         review_required: true,
@@ -68,7 +68,7 @@ fn q1_claim_boundary_keeps_existing_compatibility_surface() {
 }
 
 #[test]
-fn q1_claim_boundary_kind_covers_required_public_claim_blocks() {
+fn claim_boundary_kind_covers_required_public_claim_blocks() {
     let required = [
         ClaimBoundaryKind::NotPopularityGuarantee,
         ClaimBoundaryKind::NotTrustGuarantee,
@@ -87,7 +87,7 @@ fn q1_claim_boundary_kind_covers_required_public_claim_blocks() {
 }
 
 #[test]
-fn q5_claim_ref_index_groups_ids_and_deduplicates_boundaries() {
+fn claim_ref_index_groups_ids_and_deduplicates_boundaries() {
     let claims = vec![
         ContentClaim::new(
             1,

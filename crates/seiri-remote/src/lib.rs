@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
     RemoteEvidenceReport, RemoteRepositoryMetadata, RemoteRepositoryReference,
     RemoteUnavailableReason,

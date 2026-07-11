@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod local_prior;
 mod private_overlay;
 mod streaming;
@@ -23,7 +25,8 @@ use seiri_core::{
     CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence,
     PatternStats, PendingPatternCandidate, ProfileBranch, ProfileBranchSemantics,
     ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePatternCorrelation, ProfilePriority,
-    ProfileRankScore, RouteKind, RouteRequirement, WeightSuggestion, SCHEMA_VERSION,
+    ProfileRankScore, RouteKind, RouteRequirement, WeightSuggestion, CALIBRATION_SCHEMA_VERSION,
+    EVIDENCE_SCHEMA_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -55,6 +58,11 @@ pub enum CalibrationError {
     PatternCatalogTooLarge {
         patterns: usize,
     },
+    SchemaMismatch {
+        domain: &'static str,
+        expected: &'static str,
+        actual: String,
+    },
 }
 
 impl Display for CalibrationError {
@@ -85,6 +93,14 @@ impl Display for CalibrationError {
                 "pattern catalog has {patterns} entries; streaming slots support at most {}",
                 u16::MAX
             ),
+            Self::SchemaMismatch {
+                domain,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{domain} schema mismatch: expected `{expected}`, received `{actual}`"
+            ),
         }
     }
 }
@@ -98,7 +114,8 @@ impl std::error::Error for CalibrationError {
             Self::InvalidUtf8 { .. }
             | Self::StreamingLimitExceeded { .. }
             | Self::CounterOverflow { .. }
-            | Self::PatternCatalogTooLarge { .. } => None,
+            | Self::PatternCatalogTooLarge { .. }
+            | Self::SchemaMismatch { .. } => None,
         }
     }
 }
@@ -118,8 +135,7 @@ impl From<serde_json::Error> for CalibrationError {
 #[must_use]
 pub fn default_evidence_schema() -> EvidenceSchemaVersion {
     EvidenceSchemaVersion {
-        schema_version: SCHEMA_VERSION.to_string(),
-        compatible_from: "seiri.block_a.v1".to_string(),
+        schema_version: EVIDENCE_SCHEMA_VERSION.to_string(),
         note: "Calibration input is evidence-derived and must not be treated as proof or automatic rule adoption.".to_string(),
     }
 }
@@ -136,8 +152,45 @@ pub fn load_dataset(path: impl AsRef<Path>) -> Result<BenchmarkDataset, Calibrat
         let records = read_jsonl_records(reader)?;
         Ok(dataset_from_records(path, records))
     } else {
-        Ok(serde_json::from_reader(reader)?)
+        let dataset = serde_json::from_reader(reader)?;
+        validate_dataset_schema(&dataset)?;
+        Ok(dataset)
     }
+}
+
+fn validate_dataset_schema(dataset: &BenchmarkDataset) -> Result<(), CalibrationError> {
+    if dataset.schema_version != CALIBRATION_SCHEMA_VERSION {
+        return Err(CalibrationError::SchemaMismatch {
+            domain: "calibration dataset",
+            expected: CALIBRATION_SCHEMA_VERSION,
+            actual: dataset.schema_version.clone(),
+        });
+    }
+    if dataset.evidence_schema.schema_version != EVIDENCE_SCHEMA_VERSION {
+        return Err(CalibrationError::SchemaMismatch {
+            domain: "calibration evidence",
+            expected: EVIDENCE_SCHEMA_VERSION,
+            actual: dataset.evidence_schema.schema_version.clone(),
+        });
+    }
+    if let Some(source) = dataset.calibration_sources.iter().find(|source| {
+        source
+            .evidence_schema
+            .as_ref()
+            .is_some_and(|schema| schema.schema_version != EVIDENCE_SCHEMA_VERSION)
+    }) {
+        return Err(CalibrationError::SchemaMismatch {
+            domain: "calibration source evidence",
+            expected: EVIDENCE_SCHEMA_VERSION,
+            actual: source
+                .evidence_schema
+                .as_ref()
+                .expect("source was selected by evidence schema mismatch")
+                .schema_version
+                .clone(),
+        });
+    }
+    Ok(())
 }
 
 pub fn read_jsonl_records<R: BufRead>(
@@ -161,17 +214,16 @@ pub fn read_jsonl_records<R: BufRead>(
     Ok(records)
 }
 
-#[must_use]
-pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> CalibrationRun {
+pub fn calibrate_dataset(dataset: &BenchmarkDataset) -> Result<CalibrationRun, CalibrationError> {
     let pack = seiri_patterns::common_pattern_pack();
     calibrate_dataset_with_pattern_pack(dataset, &pack)
 }
 
-#[must_use]
 pub fn calibrate_dataset_with_pattern_pack(
     dataset: &BenchmarkDataset,
     pack: &seiri_patterns::PatternPack,
-) -> CalibrationRun {
+) -> Result<CalibrationRun, CalibrationError> {
+    validate_dataset_schema(dataset)?;
     let selected_records = dataset
         .records
         .iter()
@@ -259,8 +311,8 @@ pub fn calibrate_dataset_with_pattern_pack(
         &source_ids,
     );
 
-    CalibrationRun {
-        schema_version: SCHEMA_VERSION.to_string(),
+    Ok(CalibrationRun {
+        schema_version: CALIBRATION_SCHEMA_VERSION.to_string(),
         run_id: stable_id("calibration-run", 1),
         dataset_id: dataset.dataset_id.clone(),
         pattern_pack: Some(
@@ -283,14 +335,13 @@ pub fn calibrate_dataset_with_pattern_pack(
         weight_suggestions,
         resource_trace,
         claim_boundary: default_claim_boundary(),
-    }
+    })
 }
 
-#[must_use]
 pub fn calibrate_local_dataset_with_pattern_pack(
     dataset: &BenchmarkDataset,
     pack: &seiri_patterns::PatternPack,
-) -> CalibrationRun {
+) -> Result<CalibrationRun, CalibrationError> {
     let mut local_dataset = dataset.clone();
     for source in &mut local_dataset.calibration_sources {
         source.visibility = CalibrationSourceVisibility::LocalOnly;
@@ -343,7 +394,7 @@ fn materialized_resource_trace(
         .len();
 
     CalibrationResourceTrace {
-        aggregation_mode: CalibrationAggregationMode::MaterializedCompatibility,
+        aggregation_mode: CalibrationAggregationMode::MaterializedDataset,
         record_identity: CalibrationRecordIdentity::RepositoryIdDeduplicated,
         records_seen: records.len(),
         max_buffered_line_bytes: 0,
@@ -400,7 +451,7 @@ fn dataset_from_records(path: &Path, records: Vec<BenchmarkRepoRecord>) -> Bench
         .unwrap_or("jsonl-dataset")
         .to_string();
     BenchmarkDataset {
-        schema_version: SCHEMA_VERSION.to_string(),
+        schema_version: CALIBRATION_SCHEMA_VERSION.to_string(),
         dataset_id: dataset_id.clone(),
         name: dataset_id.clone(),
         collected_at: "unknown".to_string(),
@@ -703,20 +754,16 @@ fn build_profile_branches(
         .iter()
         .map(|(profile, repositories)| {
             let prior_x1000 = ratio_x1000(*repositories, total_records);
-            let confidence_x100 = confidence_x100_for(total_records, *repositories);
+            let rank_score_x100 = rank_score_x100_for(total_records, *repositories);
             ProfileBranch {
                 rank: 0,
                 profile: *profile,
-                prior_x1000,
-                confidence_x100,
-                evidence_score_x100: (prior_x1000 / 10).min(100) as u8,
-                score_x100: confidence_x100,
                 semantics: ProfileBranchSemantics {
-                    fit: ProfileFit::from_bounded(confidence_x100),
+                    fit: ProfileFit::from_bounded(rank_score_x100),
                     evidence_match: ProfileEvidenceMatch::from_bounded(
                         (prior_x1000 / 10).min(100) as u8,
                     ),
-                    rank_score: ProfileRankScore::from_bounded(confidence_x100),
+                    rank_score: ProfileRankScore::from_bounded(rank_score_x100),
                     calibration_prior: CalibrationPriorState::AppliedRedacted,
                 },
                 matched_signals: vec![
@@ -730,9 +777,17 @@ fn build_profile_branches(
         .collect::<Vec<_>>();
     branches.sort_by(|left, right| {
         right
-            .score_x100
-            .cmp(&left.score_x100)
-            .then_with(|| right.prior_x1000.cmp(&left.prior_x1000))
+            .semantics
+            .rank_score
+            .get()
+            .cmp(&left.semantics.rank_score.get())
+            .then_with(|| {
+                right
+                    .semantics
+                    .evidence_match
+                    .get()
+                    .cmp(&left.semantics.evidence_match.get())
+            })
             .then_with(|| left.profile.cmp(&right.profile))
     });
     for (index, branch) in branches.iter_mut().enumerate() {
@@ -826,7 +881,7 @@ fn ratio_x1000(numerator: usize, denominator: usize) -> u16 {
         .min(1000) as u16
 }
 
-fn confidence_x100_for(total_records: usize, repositories: usize) -> u8 {
+fn rank_score_x100_for(total_records: usize, repositories: usize) -> u8 {
     if total_records == 0 {
         return 0;
     }

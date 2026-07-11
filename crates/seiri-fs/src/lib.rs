@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{FileRecord, IgnoredShallowRecord, ImportantFile};
 use std::path::{Path, PathBuf};
 

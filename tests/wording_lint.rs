@@ -8,7 +8,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn q6_wording_linter_emits_byte_spans_for_overclaims() {
+fn wording_linter_emits_byte_spans_for_overclaims() {
     let report = seiri_report::lint_wording_repository(fixture("wording-lint-repo"))
         .expect("wording lint report");
 
@@ -37,7 +37,7 @@ fn q6_wording_linter_emits_byte_spans_for_overclaims() {
 }
 
 #[test]
-fn q6_wording_linter_uses_typed_boundary_exceptions() {
+fn wording_linter_uses_typed_boundary_exceptions() {
     let report = seiri_report::lint_wording_repository(fixture("wording-lint-repo"))
         .expect("wording lint report");
 
@@ -64,7 +64,7 @@ fn q6_wording_linter_uses_typed_boundary_exceptions() {
 }
 
 #[test]
-fn q6_wording_linter_renders_json_and_markdown() {
+fn wording_linter_renders_json_and_markdown() {
     let report = seiri_report::lint_wording_repository_with_profile(
         fixture("wording-lint-repo"),
         ProfileKind::Common,
@@ -73,7 +73,7 @@ fn q6_wording_linter_renders_json_and_markdown() {
 
     let json = seiri_report::wording_lint_to_json(&report).expect("wording lint JSON");
     let parsed = serde_json::from_str::<serde_json::Value>(&json).expect("valid JSON");
-    assert_eq!(parsed["schema_version"], "seiri.wording_lint.v1");
+    assert_eq!(parsed["schema_version"], "seiri.wording-lint.v1");
     assert_eq!(parsed["summary"]["findings"], 4);
     assert!(parsed["findings"][0]["byte_start"].is_number());
     assert!(json.contains("\"replacement_hint\""));

@@ -54,12 +54,15 @@ fn common_registry_exposes_stable_pattern_definitions() {
 }
 
 #[test]
-fn pattern_registry_v3_renders_grouped_json_and_markdown() {
+fn pattern_registry_renders_grouped_json_and_markdown() {
     let registry = seiri_patterns::common_registry();
     let document = seiri_patterns::registry_document(&registry);
 
-    assert_eq!(document.schema_version, seiri_core::SCHEMA_VERSION);
-    assert_eq!(document.registry_version, "pattern_registry.v3");
+    assert_eq!(document.schema_version, seiri_core::ANALYSIS_SCHEMA_VERSION);
+    assert_eq!(
+        document.registry_version,
+        seiri_patterns::PATTERN_REGISTRY_SCHEMA_VERSION
+    );
     assert_eq!(document.groups.len(), 13);
     assert_eq!(document.negative_fixtures.len(), 13);
     assert!(document
@@ -80,7 +83,7 @@ fn pattern_registry_v3_renders_grouped_json_and_markdown() {
         .any(|pattern| pattern.id == "INT-003" && pattern.route == Some(RouteKind::Intake)));
 
     let json = seiri_patterns::registry_to_json(&registry).expect("registry json");
-    assert!(json.contains("\"registry_version\": \"pattern_registry.v3\""));
+    assert!(json.contains("\"registry_version\": \"seiri.pattern-registry.v1\""));
     assert!(json.contains("\"negative_fixtures\""));
     assert!(json.contains("\"group\": \"SEC\""));
     assert!(json.contains("\"id\": \"OWN-001\""));
@@ -149,7 +152,8 @@ fn common_baseline_does_not_credit_nested_license_as_root_license() {
         pattern_match.pattern_id == "common.license.file_present"
             && pattern_match.outcome == PatternOutcome::Missing
     }));
-    assert!(snapshot.route_states.iter().any(|state| {
-        state.route == RouteKind::License && state.state == RouteState::UnsafeToInvent
+    assert!(snapshot.route_assessments.iter().any(|assessment| {
+        assessment.route() == RouteKind::License
+            && assessment.summary_projection().state == RouteState::UnsafeToInvent
     }));
 }

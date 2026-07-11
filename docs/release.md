@@ -25,8 +25,10 @@ release 前に次を確認します。
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 git diff --check
 ```
 
@@ -44,7 +46,7 @@ CI の結果、Dependabot の未処理更新、security issue、manual policy de
 - release branch、tag、GitHub Release は maintainer が明示的に作ります。
 - release note は `CHANGELOG.md` の該当節を元にします。
 - binary、archive、plugin bundle などの artifact を添付する場合は、生成コマンド、対象 commit、checksum を記録します。
-- R4 時点では release workflow と package publication は未実装です。
+- 現在、release workflow と package publication は未実装です。
 
 ### Compatibility boundary
 
@@ -60,7 +62,7 @@ CI の結果、Dependabot の未処理更新、security issue、manual policy de
 
 ### Automation boundary
 
-- R4 は release route を整備しますが、release を自動化しません。
+- release route は release を自動化しません。
 - CI は verification evidence、Dependabot は dependency update evidence、RepoSeiri は route review evidence として扱います。
 - release automation、signed artifact、package publication は、別ブロックで方針決定してから追加します。
 
@@ -91,8 +93,10 @@ Before release, check the following.
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 git diff --check
 ```
 
@@ -110,7 +114,7 @@ If CI results, unresolved Dependabot updates, security issues, or manual policy 
 - Maintainers explicitly create release branches, tags, and GitHub Releases.
 - Release notes are based on the matching section of `CHANGELOG.md`.
 - If attaching binaries, archives, plugin bundles, or other artifacts, record the generation command, target commit, and checksum.
-- Release workflows and package publication are not implemented at R4.
+- Release workflows and package publication are not currently implemented.
 
 ### Compatibility boundary
 
@@ -126,6 +130,6 @@ If CI results, unresolved Dependabot updates, security issues, or manual policy 
 
 ### Automation boundary
 
-- R4 establishes the release route, but it does not automate releases.
+- The release route does not automate releases.
 - CI is verification evidence, Dependabot is dependency-update evidence, and RepoSeiri is route-review evidence.
 - Release automation, signed artifacts, and package publication are added only after their policy is decided in a later block.

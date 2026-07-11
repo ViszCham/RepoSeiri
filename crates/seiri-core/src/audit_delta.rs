@@ -1,6 +1,7 @@
 use crate::{
     AnalysisScope, ContentSlotId, CoverageStatus, DocumentId, EvidenceId, ProfileKind,
-    RepositoryFacet, RouteKind, RouteState, RouteTargetRole, ScopeReadBudget,
+    RepositoryFacet, RouteFreshness, RouteKind, RoutePolicyBoundary, RouteTargetRole,
+    ScopeReadBudget,
 };
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -8,7 +9,7 @@ use std::fmt::{Display, Formatter};
 
 pub const PORTABLE_AUDIT_SCHEMA_VERSION: &str = "seiri.portable-audit.v1";
 pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v1";
-pub const PLANNER_V5_SCHEMA_VERSION: &str = "seiri.planner-v5.v1";
+pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest32([u8; 32]);
@@ -132,7 +133,7 @@ pub struct AnalysisConfiguration {
 impl Default for AnalysisConfiguration {
     fn default() -> Self {
         Self {
-            schema_version: crate::SCHEMA_VERSION.to_string(),
+            schema_version: crate::ANALYSIS_SCHEMA_VERSION.to_string(),
             scope: AnalysisScope::Repository,
             profile: ProfileKind::Common,
             budgets: AnalysisBudgetConfiguration::default(),
@@ -155,7 +156,14 @@ pub enum PortableObservationState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortableRouteRecord {
     pub route: RouteKind,
-    pub legacy_state: RouteState,
+    pub root_structured: bool,
+    pub inherited: bool,
+    pub readme_routed: bool,
+    pub repository_local_targets: usize,
+    pub shared_target_conflicts: usize,
+    pub freshness: RouteFreshness,
+    pub policy: RoutePolicyBoundary,
+    pub missing_pattern: bool,
     pub observation: PortableObservationState,
     pub coverage: CoverageStatus,
     pub evidence_ids: Vec<EvidenceId>,
@@ -320,7 +328,7 @@ pub struct AuditDeltaReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PlannerV5HoldReason {
+pub enum PatchHoldReason {
     NoExistingTarget,
     TargetNotRepositoryLocal,
     CanonicalConflict,
@@ -351,29 +359,29 @@ pub struct AddExistingRouteLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlannerV5HeldItem {
+pub struct PatchHold {
     pub route: RouteKind,
     pub target_path: Option<String>,
-    pub reason: PlannerV5HoldReason,
+    pub reason: PatchHoldReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlannerV5Report {
+pub struct PatchPlan {
     pub schema_version: String,
     pub operations: Vec<AddExistingRouteLink>,
-    pub held: Vec<PlannerV5HeldItem>,
+    pub held: Vec<PatchHold>,
     pub writes_files: bool,
     pub boundary: String,
 }
 
-impl Default for PlannerV5Report {
+impl Default for PatchPlan {
     fn default() -> Self {
         Self {
-            schema_version: PLANNER_V5_SCHEMA_VERSION.to_string(),
+            schema_version: PATCH_PLAN_SCHEMA_VERSION.to_string(),
             operations: Vec::new(),
             held: Vec::new(),
             writes_files: false,
-            boundary: "Planner v5 emits dry-run links to existing repository-local targets only. It does not write files, generate policy bodies, execute Git or GitHub operations, or establish authenticity, safety, or correctness.".to_string(),
+            boundary: "Patch planning emits dry-run links to existing repository-local targets only. It does not write files, generate policy bodies, execute Git or GitHub operations, or establish authenticity, safety, or correctness.".to_string(),
         }
     }
 }

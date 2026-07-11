@@ -1,11 +1,11 @@
 use seiri_core::{
-    stable_evidence_id, EvidenceId, EvidenceKind, EvidenceScope, ImportantFileKind, RepoSnapshot,
-    RouteKind,
+    EvidenceAtom, EvidenceFact, EvidenceId, ImportantFileKind, MarkdownEvidenceKind,
+    RepositoryAnalysis, RouteKind, SourceDomain,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternDetector {
-    EvidenceKind(EvidenceKind),
+    Evidence(EvidenceAtom),
     Route(RouteKind),
     ReadmeRoute(RouteKind),
     ImportantFile(ImportantFileKind),
@@ -13,65 +13,22 @@ pub enum PatternDetector {
 
 impl PatternDetector {
     #[must_use]
-    pub fn evidence_ids(self, snapshot: &RepoSnapshot) -> Vec<EvidenceId> {
-        if !snapshot.evidence_kernel.is_empty() {
-            return snapshot
-                .evidence_kernel
-                .facts()
-                .iter()
-                .filter(|fact| {
-                    self.matches(
-                        fact.scope,
-                        fact.kind,
-                        fact.route,
-                        fact.path.as_deref(),
-                        &fact.value,
-                    )
-                })
-                .map(|fact| fact.id)
-                .collect();
-        }
-
-        if !snapshot.evidence_ledger.is_empty() {
-            return snapshot
-                .evidence_ledger
-                .iter()
-                .filter(|record| {
-                    self.matches(
-                        record.scope,
-                        record.kind,
-                        record.route,
-                        record.path.as_deref(),
-                        &record.value,
-                    )
-                })
-                .map(|record| record.id)
-                .collect();
-        }
-
-        snapshot
-            .evidence
+    pub fn evidence_ids(self, analysis: &RepositoryAnalysis) -> Vec<EvidenceId> {
+        analysis
+            .evidence_kernel
+            .facts()
             .iter()
-            .enumerate()
-            .filter(|(_, evidence)| {
-                self.matches(
-                    EvidenceScope::Root,
-                    evidence.kind,
-                    evidence.route,
-                    evidence.path.as_deref(),
-                    &evidence.value,
-                )
-            })
-            .map(|(index, _)| stable_evidence_id(index + 1))
+            .filter(|fact| self.matches(analysis, fact))
+            .map(|fact| fact.id)
             .collect()
     }
 
     #[must_use]
     pub fn basis(self) -> &'static str {
         match self {
-            Self::EvidenceKind(_) => "evidence kind",
-            Self::Route(_) => "trust route",
-            Self::ReadmeRoute(_) => "README trust route",
+            Self::Evidence(_) => "typed evidence atom",
+            Self::Route(_) => "repository route",
+            Self::ReadmeRoute(_) => "README route",
             Self::ImportantFile(_) => "important file",
         }
     }
@@ -79,39 +36,42 @@ impl PatternDetector {
     #[must_use]
     pub fn label(self) -> String {
         match self {
-            Self::EvidenceKind(kind) => format!("evidence kind:{kind:?}"),
-            Self::Route(route) => format!("trust route:{route:?}"),
+            Self::Evidence(atom) => format!("evidence atom:{atom:?}"),
+            Self::Route(route) => format!("repository route:{route:?}"),
             Self::ReadmeRoute(route) => format!("README route:{route:?}"),
             Self::ImportantFile(kind) => format!("important file:{kind:?}"),
         }
     }
 
-    fn matches(
-        self,
-        scope: EvidenceScope,
-        kind: EvidenceKind,
-        route: Option<RouteKind>,
-        path: Option<&str>,
-        value: &str,
-    ) -> bool {
-        if scope != EvidenceScope::Root {
+    fn matches(self, analysis: &RepositoryAnalysis, fact: &EvidenceFact) -> bool {
+        if fact.provenance.domain != SourceDomain::RepositoryLocal {
             return false;
         }
         match self {
-            Self::EvidenceKind(expected) => kind == expected,
-            Self::Route(expected) => route == Some(expected),
+            Self::Evidence(expected) => fact.atom == expected,
+            Self::Route(expected) => fact.atom.route() == Some(expected),
             Self::ReadmeRoute(expected) => {
-                path.is_some_and(is_root_readme_path)
-                    && route == Some(expected)
+                analysis
+                    .evidence_kernel
+                    .path_for_fact(fact)
+                    .is_some_and(is_root_readme_path)
+                    && fact.atom.route() == Some(expected)
                     && matches!(
-                        kind,
-                        EvidenceKind::MarkdownHeading
-                            | EvidenceKind::MarkdownLink
-                            | EvidenceKind::RouteCandidate
+                        fact.atom,
+                        EvidenceAtom::Markdown {
+                            event: MarkdownEvidenceKind::Heading
+                                | MarkdownEvidenceKind::Link
+                                | MarkdownEvidenceKind::RouteCandidate,
+                            ..
+                        }
                     )
             }
             Self::ImportantFile(expected) => {
-                kind == EvidenceKind::ImportantFile && value == format!("{expected:?}")
+                fact.atom == EvidenceAtom::ImportantFile(expected)
+                    && analysis
+                        .evidence_kernel
+                        .path_for_fact(fact)
+                        .is_some_and(|path| important_file_matches(expected, path))
             }
         }
     }
@@ -119,4 +79,17 @@ impl PatternDetector {
 
 fn is_root_readme_path(path: &str) -> bool {
     matches!(path, "README.md" | "Readme.md" | "readme.md" | "README")
+}
+
+fn important_file_matches(kind: ImportantFileKind, path: &str) -> bool {
+    match kind {
+        ImportantFileKind::License => {
+            !path.contains('/')
+                && matches!(
+                    path.to_ascii_lowercase().as_str(),
+                    "license" | "license.md" | "copying"
+                )
+        }
+        _ => true,
+    }
 }

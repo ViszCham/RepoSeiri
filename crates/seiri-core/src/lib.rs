@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,7 +9,6 @@ mod codex_view;
 mod document_index;
 mod document_scan;
 mod evidence_kernel;
-mod evidence_v2;
 mod facets;
 mod github_local;
 mod obligation_graph;
@@ -19,7 +20,7 @@ mod repository_scope;
 mod review_priority;
 mod route_assessment;
 mod route_content;
-mod route_content_v2;
+mod route_content_contract;
 mod route_target;
 
 pub use calibration_prior::{
@@ -27,13 +28,7 @@ pub use calibration_prior::{
     CalibrationUnavailableReason, NoCalibrationProvider, PriorBasis, PriorVisibility,
 };
 
-pub use codex_view::{
-    CodexCommand, CodexCommandError, CodexLinterContext, CodexNativeAction,
-    CodexNativeAuditSummary, CodexNativeReviewContext, CodexNativeRouteSummary, CodexQueryData,
-    CodexQueryKind, CodexQueryView, CodexRoutesQuery, CodexSummaryQuery,
-    CODEX_KERNEL_SCHEMA_VERSION, CODEX_LINTER_CONTEXT_SCHEMA_VERSION, CODEX_NATIVE_SCHEMA_VERSION,
-    CODEX_NATIVE_V3_SCHEMA_VERSION, CODEX_QUERY_SCHEMA_VERSION,
-};
+pub use codex_view::{CodexAction, CodexCommand, CodexCommandError, CODEX_SCHEMA_VERSION};
 pub use document_index::{
     DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentScanStatus,
     IndexedDocument,
@@ -43,13 +38,10 @@ pub use document_scan::{
     DocumentScanInvariantError,
 };
 pub use evidence_kernel::{
-    stable_evidence_id, EvidenceDraft, EvidenceEvent, EvidenceFact, EvidenceId, EvidenceKernel,
-    EvidenceKernelError, EvidenceOrigin, EvidenceScanner, ParseEvidenceIdError,
-};
-pub use evidence_v2::{
-    ByteOffset, DocumentId, DocumentRecord, EvidenceAtom, EvidenceFactV2, EvidenceKernelV2,
-    EvidenceKernelV2Error, EvidenceProducer, EvidenceProvenance, MarkdownEvidenceKind,
-    ReadmePresence, SourceDomain, SourceSpanV2,
+    stable_evidence_id, ByteOffset, DocumentId, DocumentRecord, EvidenceAtom, EvidenceDraft,
+    EvidenceFact, EvidenceId, EvidenceKernel, EvidenceKernelError, EvidenceProducer,
+    EvidenceProvenance, EvidenceSourceSpan, MarkdownEvidenceKind, ParseEvidenceIdError,
+    ReadmePresence, SourceDomain,
 };
 pub use facets::{
     facet_evidence_ids, FacetAssessment, FacetReport, FacetReportError, RepositoryFacet,
@@ -101,89 +93,62 @@ pub use review_priority::{
     ReviewGap, ReviewGapKind, ReviewPriority, ReviewPriorityReport, ReviewPrioritySummary,
 };
 pub use route_assessment::{
-    LegacyRouteProjection, ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment,
-    RouteAssessmentError, RouteConflictAssessment, RouteEvidenceGroups, RouteFreshness,
-    RoutePolicyBoundary, RoutePresenceAssessment, TargetReachabilityAssessment,
+    ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment, RouteAssessmentError,
+    RouteConflictAssessment, RouteEvidenceGroups, RouteFreshness, RoutePolicyBoundary,
+    RoutePresenceAssessment, RouteSummaryProjection, TargetReachabilityAssessment,
 };
-pub use route_content::{
-    ContentObservation, RouteContentAssessment, RouteContentAtom, RouteContentAtomAssessment,
-};
-pub use route_content_v2::{
-    route_content_contract_v2, BilingualStructuralPair, ContentSlotAssessment, ContentSlotId,
+pub use route_content::RouteContentAtom;
+pub use route_content_contract::{
+    route_content_contract, BilingualStructuralPair, ContentSlotAssessment, ContentSlotId,
     ContentSlotKind, ContentSlotSpec, MeaningAtomSet, PolicySensitivity, PolicySensitivityWire,
-    RouteContentReportV2, ROUTE_CONTENT_CONTRACT_V2,
+    RouteContentReport, ROUTE_CONTENT_CONTRACT,
 };
 pub use route_target::{classify_target_relation, RouteTargetRef, RouteTargetRole, TargetRelation};
 
-pub const SCHEMA_VERSION: &str = "seiri.block_p.v1";
+pub const ANALYSIS_SCHEMA_VERSION: &str = "seiri.analysis.v1";
+pub const CALIBRATION_SCHEMA_VERSION: &str = "seiri.calibration.v1";
+pub const EVIDENCE_SCHEMA_VERSION: &str = "seiri.evidence.v1";
 pub const TOOL_NAME: &str = "RepoSeiri";
-pub const WORDING_LINT_SCHEMA_VERSION: &str = "seiri.wording_lint.v1";
+pub const WORDING_LINT_SCHEMA_VERSION: &str = "seiri.wording-lint.v1";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoSnapshot {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryAnalysis {
     pub schema_version: String,
     pub tool: String,
     pub repo_root: String,
     pub entry_count: usize,
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
-    #[serde(skip, default)]
     pub analysis_configuration: AnalysisConfiguration,
-    #[serde(skip, default)]
     pub document_index: DocumentIndex,
-    #[serde(skip, default)]
     pub github_local_documents: GithubLocalDocuments,
-    #[serde(skip, default)]
     pub github_semantics: GithubSemanticsReport,
-    #[serde(default)]
     pub readme_document: Option<DocumentScan>,
-    // Compatibility document view retained until renderer/schema separation in Q19.
-    pub readme: Option<ReadmeSummary>,
-    #[serde(default)]
+    pub readme_summary: Option<ReadmeSummary>,
     pub evidence_kernel: EvidenceKernel,
-    #[serde(skip, default)]
-    pub evidence_kernel_v2: EvidenceKernelV2,
-    #[serde(skip, default)]
     pub coverage: CoverageIndex,
-    #[serde(skip, default)]
-    pub route_content: Vec<RouteContentAssessment>,
-    #[serde(skip, default)]
-    pub route_content_v2: RouteContentReportV2,
-    #[serde(skip, default)]
+    pub route_content: RouteContentReport,
     pub facets: FacetReport,
-    #[serde(skip, default)]
     pub document_consistency: DocumentConsistencyReport,
-    #[serde(skip, default)]
     pub route_targets: Vec<RouteTargetRef>,
-    #[serde(skip, default)]
     pub remote_evidence: RemoteEvidenceReport,
-    #[serde(skip, default)]
     pub repository_scope: RepositoryScopeReport,
-    #[serde(skip, default)]
     pub freshness: FreshnessReport,
-    // Compatibility views retained until renderer/schema separation in Q19.
-    pub evidence: Vec<Evidence>,
-    pub evidence_ledger: Vec<EvidenceRecord>,
     pub pattern_matches: Vec<PatternMatch>,
-    #[serde(default)]
     pub route_assessments: Vec<RouteAssessment>,
-    // Compatibility projections retained until renderer/schema separation in Q19.
-    pub route_states: Vec<RouteStateReport>,
     pub missing_route_priority: MissingRoutePriorityReport,
-    #[serde(skip, default)]
     pub review_priority: ReviewPriorityReport,
-    #[serde(default)]
     pub claims: Vec<ContentClaim>,
     pub baseline: Option<BaselineReport>,
     pub profile: Option<ProfileReport>,
     pub findings: Vec<Finding>,
 }
 
-impl RepoSnapshot {
+impl RepositoryAnalysis {
     #[must_use]
     pub fn new(repo_root: impl Into<String>) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION.to_string(),
+            schema_version: ANALYSIS_SCHEMA_VERSION.to_string(),
             tool: TOOL_NAME.to_string(),
             repo_root: repo_root.into(),
             entry_count: 0,
@@ -194,23 +159,18 @@ impl RepoSnapshot {
             github_local_documents: GithubLocalDocuments::default(),
             github_semantics: GithubSemanticsReport::default(),
             readme_document: None,
-            readme: None,
+            readme_summary: None,
             evidence_kernel: EvidenceKernel::default(),
-            evidence_kernel_v2: EvidenceKernelV2::default(),
             coverage: CoverageIndex::default(),
-            route_content: Vec::new(),
-            route_content_v2: RouteContentReportV2::default(),
+            route_content: RouteContentReport::default(),
             facets: FacetReport::default(),
             document_consistency: DocumentConsistencyReport::default(),
             route_targets: Vec::new(),
             remote_evidence: RemoteEvidenceReport::default(),
             repository_scope: RepositoryScopeReport::default(),
             freshness: FreshnessReport::default(),
-            evidence: Vec::new(),
-            evidence_ledger: Vec::new(),
             pattern_matches: Vec::new(),
             route_assessments: Vec::new(),
-            route_states: Vec::new(),
             missing_route_priority: MissingRoutePriorityReport::empty(),
             review_priority: ReviewPriorityReport::default(),
             claims: Vec::new(),
@@ -478,39 +438,12 @@ impl<'de> Deserialize<'de> for AggregateRepositoryEstimate {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum AggregateRepositoryEstimateCompat {
-    Typed(AggregateRepositoryEstimate),
-    LegacyCount(u32),
-}
-
-fn deserialize_optional_aggregate_estimate<'de, D>(
-    deserializer: D,
-) -> Result<Option<AggregateRepositoryEstimate>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<AggregateRepositoryEstimateCompat>::deserialize(deserializer).map(|estimate| {
-        estimate.map(|estimate| match estimate {
-            AggregateRepositoryEstimateCompat::Typed(estimate) => estimate,
-            AggregateRepositoryEstimateCompat::LegacyCount(count) => {
-                AggregateRepositoryEstimate::fixed(count, 1_000_000)
-            }
-        })
-    })
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReadmeRouteMapEntry {
     pub route: RouteKind,
     pub assessment: ReadmeRouteAssessment,
     pub state: RouteState,
-    #[serde(
-        default,
-        alias = "observed_gap_count",
-        deserialize_with = "deserialize_optional_aggregate_estimate"
-    )]
+    #[serde(default)]
     pub gap_estimate: Option<AggregateRepositoryEstimate>,
     pub candidate_count: usize,
     pub heading_count: usize,
@@ -530,16 +463,12 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct WireEntry {
             route: RouteKind,
-            #[serde(default)]
-            assessment: Option<ReadmeRouteAssessment>,
+            assessment: ReadmeRouteAssessment,
             state: RouteState,
-            #[serde(
-                default,
-                alias = "observed_gap_count",
-                deserialize_with = "deserialize_optional_aggregate_estimate"
-            )]
+            #[serde(default)]
             gap_estimate: Option<AggregateRepositoryEstimate>,
             candidate_count: usize,
             heading_count: usize,
@@ -563,28 +492,26 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
             &wire.targets,
         )
         .map_err(serde::de::Error::custom)?;
-        let projected_state = derived.legacy_state(wire.route);
-        if let Some(assessment) = wire.assessment {
-            if assessment != derived {
-                return Err(serde::de::Error::custom(
-                    "README route assessment does not match compatibility observations",
-                ));
-            }
-            if wire.state != projected_state {
-                return Err(serde::de::Error::custom(
-                    "README route state does not match its deterministic assessment projection",
-                ));
-            }
-            if wire.stale_target_count != derived.target_reachability.repository_local_missing
-                || wire.conflicting_target_count != derived.conflict.shared_target_count
-            {
-                return Err(serde::de::Error::custom(
-                    "README route compatibility counts do not match its assessment",
-                ));
-            }
+        let projected_state = derived.summary_state(wire.route);
+        if wire.assessment != derived {
+            return Err(serde::de::Error::custom(
+                "README route assessment does not match its observations",
+            ));
+        }
+        if wire.state != projected_state {
+            return Err(serde::de::Error::custom(
+                "README route state does not match its deterministic assessment projection",
+            ));
+        }
+        if wire.stale_target_count != derived.target_reachability.repository_local_missing
+            || wire.conflicting_target_count != derived.conflict.shared_target_count
+        {
+            return Err(serde::de::Error::custom(
+                "README route counts do not match its assessment",
+            ));
         }
 
-        let _legacy_reason = wire.reason;
+        let _summary_reason = wire.reason;
         Ok(Self {
             route: wire.route,
             assessment: derived,
@@ -599,7 +526,7 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
             conflicting_target_count: derived.conflict.shared_target_count,
             evidence_lines: wire.evidence_lines,
             targets: wire.targets,
-            reason: derived.legacy_reason(wire.route).to_string(),
+            reason: derived.summary_reason(wire.route).to_string(),
         })
     }
 }
@@ -725,41 +652,7 @@ impl std::fmt::Display for PatternGroup {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Evidence {
-    pub id: String,
-    pub kind: EvidenceKind,
-    pub path: Option<String>,
-    pub route: Option<RouteKind>,
-    pub value: String,
-    pub source: EvidenceSource,
-}
-
 pub type ClaimId = String;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvidenceRecord {
-    pub id: EvidenceId,
-    pub legacy_evidence_id: Option<String>,
-    pub kind: EvidenceKind,
-    pub path: Option<String>,
-    pub route: Option<RouteKind>,
-    pub value: String,
-    pub source: EvidenceSource,
-    pub scope: EvidenceScope,
-    pub confidence: EvidenceConfidence,
-    pub span: Option<EvidenceSpan>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceScope {
-    Root,
-    Nested,
-    Fixture,
-    Generated,
-    Unknown,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -769,25 +662,9 @@ pub enum EvidenceConfidence {
     Low,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// Line-only compatibility span for the pre-Q13 evidence ledger view.
-pub struct EvidenceSpan {
-    pub start_line: usize,
-    pub end_line: usize,
-}
-
-impl From<SourceSpan> for EvidenceSpan {
-    fn from(span: SourceSpan) -> Self {
-        Self {
-            start_line: span.line,
-            end_line: span.line,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
+pub enum CalibrationEvidenceKind {
     FilePresent,
     ImportantFile,
     ReadmePresent,
@@ -814,15 +691,6 @@ pub struct PatternMatch {
 pub enum PatternOutcome {
     Present,
     Missing,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteStateReport {
-    pub route: RouteKind,
-    pub state: RouteState,
-    pub evidence_ids: Vec<EvidenceId>,
-    pub confidence: EvidenceConfidence,
-    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -865,6 +733,7 @@ pub struct MissingRoutePrioritySummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MissingRoutePriority {
     pub rank: usize,
     pub route: RouteKind,
@@ -873,11 +742,7 @@ pub struct MissingRoutePriority {
     pub severity: Severity,
     pub priority: ProfilePriority,
     pub priority_score_x100: u8,
-    #[serde(
-        default,
-        alias = "observed_missing_repositories",
-        deserialize_with = "deserialize_optional_aggregate_estimate"
-    )]
+    #[serde(default)]
     pub calibration_estimate: Option<AggregateRepositoryEstimate>,
     pub baseline_pattern_ids: Vec<String>,
     pub candidate_pattern_ids: Vec<String>,
@@ -887,14 +752,11 @@ pub struct MissingRoutePriority {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouteCoOccurrenceGap {
     pub id: String,
     pub title: String,
-    #[serde(
-        default,
-        alias = "observed_repositories",
-        deserialize_with = "deserialize_optional_aggregate_estimate"
-    )]
+    #[serde(default)]
     pub calibration_estimate: Option<AggregateRepositoryEstimate>,
     pub support_x1000: u16,
     #[serde(skip, default)]
@@ -1077,69 +939,21 @@ impl std::error::Error for ProfileParseError {}
 pub struct ProfileBranchSummary {
     pub selected_profile: ProfileKind,
     pub top_profile: Option<ProfileKind>,
-    pub top_confidence_x100: Option<u8>,
+    pub top_rank_score_x100: Option<u8>,
     pub emitted_profiles: usize,
     pub ambiguous: bool,
     pub boundary: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileBranch {
     pub rank: usize,
     pub profile: ProfileKind,
-    pub prior_x1000: u16,
-    pub confidence_x100: u8,
-    pub evidence_score_x100: u8,
-    pub score_x100: u8,
-    #[serde(skip, default)]
     pub semantics: ProfileBranchSemantics,
     pub matched_signals: Vec<String>,
     pub missing_signals: Vec<String>,
     pub rationale: String,
-}
-
-impl<'de> Deserialize<'de> for ProfileBranch {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct WireBranch {
-            rank: usize,
-            profile: ProfileKind,
-            prior_x1000: u16,
-            confidence_x100: u8,
-            evidence_score_x100: u8,
-            score_x100: u8,
-            matched_signals: Vec<String>,
-            missing_signals: Vec<String>,
-            rationale: String,
-        }
-
-        let wire = WireBranch::deserialize(deserializer)?;
-        let calibration_prior = if wire.prior_x1000 == 0 {
-            CalibrationPriorState::NotRequested
-        } else {
-            CalibrationPriorState::CompatibilityProjection
-        };
-        Ok(Self {
-            rank: wire.rank,
-            profile: wire.profile,
-            prior_x1000: wire.prior_x1000,
-            confidence_x100: wire.confidence_x100,
-            evidence_score_x100: wire.evidence_score_x100,
-            score_x100: wire.score_x100,
-            semantics: ProfileBranchSemantics {
-                fit: ProfileFit::from_bounded(wire.score_x100),
-                evidence_match: ProfileEvidenceMatch::from_bounded(wire.evidence_score_x100),
-                rank_score: ProfileRankScore::from_bounded(wire.confidence_x100),
-                calibration_prior,
-            },
-            matched_signals: wire.matched_signals,
-            missing_signals: wire.missing_signals,
-            rationale: wire.rationale,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1208,9 +1022,9 @@ pub struct ProfileRecommendation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvidenceSchemaVersion {
     pub schema_version: String,
-    pub compatible_from: String,
     pub note: String,
 }
 
@@ -1273,7 +1087,7 @@ pub struct ObservedPattern {
     pub pattern_id: Option<String>,
     pub raw_label: String,
     #[serde(default)]
-    pub evidence_kind: Option<EvidenceKind>,
+    pub evidence_kind: Option<CalibrationEvidenceKind>,
     #[serde(default)]
     pub route: Option<RouteKind>,
     #[serde(default)]
@@ -1283,6 +1097,7 @@ pub struct ObservedPattern {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CalibrationRun {
     pub schema_version: String,
     pub run_id: String,
@@ -1296,7 +1111,6 @@ pub struct CalibrationRun {
     pub profile_branches: Vec<ProfileBranch>,
     pub pending_patterns: Vec<PendingPatternCandidate>,
     pub weight_suggestions: Vec<WeightSuggestion>,
-    #[serde(default)]
     pub resource_trace: CalibrationResourceTrace,
     pub claim_boundary: ClaimBoundary,
 }
@@ -1395,7 +1209,7 @@ impl CalibrationRun {
 #[serde(rename_all = "snake_case")]
 pub enum CalibrationAggregationMode {
     #[default]
-    MaterializedCompatibility,
+    MaterializedDataset,
     StreamingJsonl,
 }
 
@@ -1748,9 +1562,7 @@ pub enum ClaimStrength {
 pub enum MeaningAtom {
     RouteObserved,
     RouteMissing,
-    #[serde(alias = "route_target_present")]
     RepositoryLocalTargetPresent,
-    #[serde(alias = "route_target_missing")]
     RepositoryLocalTargetMissing,
     ReadmeMentionsRoute,
     StructuredFilePresent,
@@ -2084,189 +1896,6 @@ pub fn route_state_does_not_indicate(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexReviewContext {
-    pub schema_version: String,
-    pub tool: String,
-    pub repo_root: String,
-    pub profile: Option<ProfileKind>,
-    pub audit: CodexAuditSummary,
-    pub route_review: CodexRouteReviewSummary,
-    #[serde(default)]
-    pub claims: CodexClaimSummary,
-    #[serde(default)]
-    pub wording_lint: CodexWordingLintDigest,
-    #[serde(default)]
-    pub route_meanings: Vec<CodexRouteMeaningDigest>,
-    pub routes: Vec<CodexRouteDigest>,
-    pub co_occurrence_gaps: Vec<CodexCoOccurrenceDigest>,
-    pub plan: PatchPlanSummary,
-    pub findings: Vec<CodexFindingDigest>,
-    pub safe_operations: Vec<CodexPatchDigest>,
-    pub blocked_items: Vec<CodexBlockedDigest>,
-    pub user_actions: Vec<CodexUserAction>,
-    pub pr_draft: CodexPrDraft,
-    #[serde(default)]
-    pub calibration_sources: CalibrationSourceVisibilitySummary,
-    pub claim_boundary: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexClaimSummary {
-    pub total: usize,
-    pub observed: usize,
-    pub inferred: usize,
-    pub suggested: usize,
-    pub blocked: usize,
-    pub routes_with_claims: usize,
-    pub evidence_linked_claims: usize,
-    pub boundary_kinds: Vec<ClaimBoundaryKind>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexWordingLintDigest {
-    pub available: bool,
-    pub files_scanned: usize,
-    pub generated_surfaces: usize,
-    pub findings: usize,
-    pub suppressed_boundary_exceptions: usize,
-    pub rules: Vec<WordingRuleKind>,
-    pub boundary_kinds: Vec<ClaimBoundaryKind>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexRouteMeaningDigest {
-    pub route: RouteKind,
-    pub state: RouteState,
-    pub indicates: Vec<MeaningAtom>,
-    pub does_not_indicate: Vec<ClaimBoundaryKind>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexAuditSummary {
-    pub entries_scanned: usize,
-    #[serde(default)]
-    pub document_events: usize,
-    #[serde(default)]
-    pub document_diagnostics: usize,
-    #[serde(default)]
-    pub evidence_kernel_facts: usize,
-    pub evidence_items: usize,
-    pub evidence_ledger_records: usize,
-    #[serde(default)]
-    pub route_assessments: usize,
-    pub route_states: usize,
-    #[serde(default)]
-    pub content_claims: usize,
-    pub strong_routes: usize,
-    pub weak_routes: usize,
-    pub missing_routes: usize,
-    pub findings: usize,
-    pub pattern_matches: usize,
-    pub profile_score_x100: Option<u8>,
-    pub profile_branches: usize,
-    pub top_profile: Option<ProfileKind>,
-    pub top_profile_confidence_x100: Option<u8>,
-    pub missing_route_priorities: usize,
-    pub co_occurrence_gaps: usize,
-    pub top_missing_route: Option<RouteKind>,
-    pub top_missing_route_priority_x100: Option<u8>,
-    pub required_present: Option<usize>,
-    pub required_missing: Option<usize>,
-    pub optional_present: Option<usize>,
-    pub optional_missing: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexRouteReviewSummary {
-    pub strong_routes: usize,
-    pub weak_routes: usize,
-    pub missing_routes: usize,
-    pub co_occurrence_gaps: usize,
-    pub safe_fixes: usize,
-    pub guarded_drafts: usize,
-    pub manual_decisions: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexRouteDigest {
-    pub route: RouteKind,
-    pub state: RouteState,
-    pub confidence: EvidenceConfidence,
-    pub evidence_ids: Vec<EvidenceId>,
-    #[serde(default)]
-    pub claim_ids: Vec<ClaimId>,
-    #[serde(default)]
-    pub boundary_kinds: Vec<ClaimBoundaryKind>,
-    pub priority_score_x100: Option<u8>,
-    pub gate: Option<GateKind>,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexCoOccurrenceDigest {
-    pub id: String,
-    pub title: String,
-    pub gate: GateKind,
-    pub priority: ProfilePriority,
-    pub present_routes: Vec<RouteKind>,
-    pub missing_routes: Vec<RouteKind>,
-    pub missing_signals: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexFindingDigest {
-    pub id: String,
-    pub severity: Severity,
-    pub title: String,
-    pub gate: Option<GateKind>,
-    pub recommendation: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexPatchDigest {
-    pub id: String,
-    pub gate: GateKind,
-    pub kind: PatchOperationKind,
-    pub safety: PatchSafetyLevel,
-    pub preview_only: bool,
-    pub requires_confirmation: bool,
-    pub path: String,
-    pub title: String,
-    pub planned_change: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexBlockedDigest {
-    pub id: String,
-    pub gate: GateKind,
-    pub source: PatchPlanSource,
-    pub safety: PatchSafetyLevel,
-    pub route: Option<RouteKind>,
-    pub priority: ProfilePriority,
-    pub pattern_id: String,
-    pub title: String,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexUserAction {
-    pub id: String,
-    pub label: String,
-    pub command: String,
-    pub mutates_files: bool,
-    pub requires_confirmation: bool,
-    pub detail: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexPrDraft {
-    pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
-    pub draft: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CalibrationConfidence {
@@ -2282,164 +1911,6 @@ pub enum CalibrationReviewStatus {
     Adopted,
     Deferred,
     Rejected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPlan {
-    pub schema_version: String,
-    pub planner_version: String,
-    pub mode: PatchPlanMode,
-    pub profile: Option<ProfileKind>,
-    pub safety_policy: PatchPlanSafetyPolicy,
-    #[serde(skip, default)]
-    pub analysis_run: Option<PatchAnalysisRun>,
-    pub summary: PatchPlanSummary,
-    pub operations: Vec<PatchPlanOperation>,
-    pub blocked: Vec<PatchPlanBlockedItem>,
-    pub claim_boundary: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchPlanMode {
-    DryRun,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPlanSafetyPolicy {
-    pub version: String,
-    pub writes_files: bool,
-    pub applies_patches: bool,
-    pub safe_gate_only: bool,
-    pub requires_existing_targets: bool,
-    pub blocks_unsafe_to_invent: bool,
-    pub guarded_and_manual_are_blocked: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPlanSummary {
-    pub total_candidates: usize,
-    pub safe_operations: usize,
-    pub safe_blocked: usize,
-    pub guarded_items: usize,
-    pub manual_items: usize,
-    pub preview_only_operations: usize,
-    pub preflight_passed: usize,
-    pub preflight_failed: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPlanOperation {
-    pub id: String,
-    pub gate: GateKind,
-    pub kind: PatchOperationKind,
-    pub source: PatchPlanSource,
-    pub safety: PatchSafetyLevel,
-    pub priority: ProfilePriority,
-    pub title: String,
-    pub path: String,
-    pub route: Option<RouteKind>,
-    pub finding_id: Option<String>,
-    pub pattern_id: String,
-    pub preview_only: bool,
-    pub requires_confirmation: bool,
-    pub rationale: String,
-    pub planned_change: String,
-    pub proposal: PatchProposal,
-    #[serde(skip, default)]
-    pub binding: Option<PatchProposalBinding>,
-    pub preflight: Vec<PatchPreflightCheck>,
-    pub diff_preview: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchOperationKind {
-    AddReadmeRoute,
-    AddClaimBoundaryNote,
-    AddLifecycleRoute,
-    AddSupportSkeletonDraft,
-    AddSecuritySkeletonDraft,
-    MoveReadmeDetailToDocsDraft,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPlanBlockedItem {
-    pub id: String,
-    pub gate: GateKind,
-    pub source: PatchPlanSource,
-    pub safety: PatchSafetyLevel,
-    pub severity: Severity,
-    pub priority: ProfilePriority,
-    pub title: String,
-    pub route: Option<RouteKind>,
-    pub finding_id: Option<String>,
-    pub pattern_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suggested_kind: Option<PatchOperationKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proposal: Option<PatchProposal>,
-    pub reason: String,
-    pub preflight: Vec<PatchPreflightCheck>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchPlanSource {
-    ProfileRecommendation,
-    FindingRecommendation,
-    MissingRoutePriority,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchSafetyLevel {
-    PreviewOnly,
-    ReviewRequired,
-    ManualOnly,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchPreflightCheck {
-    pub kind: PatchPreflightCheckKind,
-    pub status: PatchPreflightStatus,
-    pub detail: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchPreflightCheckKind {
-    DryRunOnly,
-    SafeGate,
-    RouteSafeToInvent,
-    SupportedOperation,
-    ExistingReadme,
-    ReadmeRouteAbsent,
-    ExistingTarget,
-    NoPolicyContent,
-    BaseDigestBound,
-    CurrentAnalysisInput,
-    AnalysisRunBound,
-    AnchorContextBound,
-    EncodingKnown,
-    LineEndingBound,
-    NonOverlappingSpans,
-    PolicySlotsResolved,
-    ProposalReady,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatchPreflightStatus {
-    Pass,
-    Blocked,
-    Fail,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvidenceSource {
-    pub scanner: String,
-    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2493,10 +1964,10 @@ fn default_observation_count() -> u32 {
 pub use audit_delta::{
     AddExistingRouteLink, AnalysisBudgetConfiguration, AnalysisConfiguration, AnalysisVisibility,
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
-    DeltaUnknownReason, Digest32, ExistingTargetId, ImprovementCandidate, PlannerV5HeldItem,
-    PlannerV5HoldReason, PlannerV5Report, PortableAuditSnapshot, PortableConflictRecord,
+    DeltaUnknownReason, Digest32, ExistingTargetId, ImprovementCandidate, PatchHold,
+    PatchHoldReason, PatchPlan, PortableAuditSnapshot, PortableConflictRecord,
     PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
     PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
-    RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PLANNER_V5_SCHEMA_VERSION,
+    RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION,
     PORTABLE_AUDIT_SCHEMA_VERSION,
 };

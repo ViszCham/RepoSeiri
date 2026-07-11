@@ -1,4 +1,4 @@
-use seiri_core::{Observation, PatternOutcome, RepoSnapshot};
+use seiri_core::{Observation, PatternOutcome, RepositoryAnalysis};
 use seiri_patterns::{
     EvidenceExpectation, ExecutablePatternPack, FixtureExecutionResult, FixtureExecutionStatus,
     FixtureExpectation, FixtureExpectationActual, FixtureExpectationResult, PredicateContext,
@@ -7,7 +7,7 @@ use seiri_patterns::{
 pub(super) fn evaluate_fixture(
     pack: &ExecutablePatternPack,
     fixture: &seiri_patterns::ExecutableFixtureSpec,
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
 ) -> FixtureExecutionResult {
     let expectations = fixture
         .expectations
@@ -30,7 +30,7 @@ pub(super) fn evaluate_fixture(
 
 fn evaluate_expectation(
     pack: &ExecutablePatternPack,
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     index: usize,
     expectation: &FixtureExpectation,
 ) -> FixtureExpectationResult {

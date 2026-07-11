@@ -62,7 +62,7 @@ fn markdown_extracts_headings_links_badges_and_routes() {
 
 #[test]
 fn readme_route_map_detects_weak_conflicting_overloaded_and_stale_routes() {
-    let summary = seiri_markdown::analyze_readme(fixture("readme-route-map-v2-repo"))
+    let summary = seiri_markdown::analyze_readme(fixture("readme-route-map-repo"))
         .expect("read README")
         .expect("README exists");
 
@@ -109,7 +109,7 @@ fn readme_route_map_detects_hygiene_self_audit_route() {
 }
 
 #[test]
-fn q12_external_mail_anchor_and_unknown_targets_are_routed_not_verified() {
+fn external_mail_anchor_and_unknown_targets_are_routed_not_verified() {
     let summary = seiri_markdown::parse_readme(
         "README.md",
         "# Routes\n\n- [Documentation](https://example.invalid/docs)\n- [Support](mailto:help@example.invalid)\n- [Security](#security)\n- [Contributing](CONTRIBUTING.md)\n",
@@ -133,7 +133,7 @@ fn q12_external_mail_anchor_and_unknown_targets_are_routed_not_verified() {
 }
 
 #[test]
-fn q12_legacy_readme_gap_key_deserializes_as_an_estimate() {
+fn removed_readme_gap_key_is_rejected() {
     let summary = seiri_markdown::analyze_readme(fixture("readme-route-repo"))
         .expect("read README")
         .expect("README exists");
@@ -143,18 +143,11 @@ fn q12_legacy_readme_gap_key_deserializes_as_an_estimate() {
     object.remove("gap_estimate");
     object.insert("observed_gap_count".to_string(), serde_json::json!(186_000));
 
-    let legacy: ReadmeRouteMapEntry = serde_json::from_value(json).expect("legacy route map entry");
-    assert_eq!(
-        legacy
-            .gap_estimate
-            .expect("legacy gap estimate")
-            .estimated_repositories,
-        186_000
-    );
+    assert!(serde_json::from_value::<ReadmeRouteMapEntry>(json).is_err());
 }
 
 #[test]
-fn q7_markdown_spans_survive_utf8_multibyte_text() {
+fn markdown_spans_survive_utf8_multibyte_text() {
     let root = fixture("markdown-span-repo");
     let readme_text = fs::read_to_string(root.join("README.md")).expect("read fixture README");
     let summary = seiri_markdown::analyze_readme(&root)

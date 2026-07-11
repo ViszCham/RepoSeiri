@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod boundary;
 mod detector;
 mod executable;
@@ -5,6 +7,8 @@ mod fixture;
 mod pack;
 mod predicate;
 mod registry;
+
+pub const PATTERN_REGISTRY_SCHEMA_VERSION: &str = "seiri.pattern-registry.v1";
 
 pub use boundary::PatternBoundary;
 pub use detector::PatternDetector;
@@ -31,9 +35,9 @@ pub use registry::{
 
 use seiri_core::{
     stable_id, BaselineProfile, BaselineReport, BaselineRequirement, BaselineRuleResult,
-    BaselineStatus, BaselineSummary, EvidenceId, EvidenceKind, Finding, GateKind,
-    ImportantFileKind, PatternGroup, PatternMatch, PatternOutcome, Recommendation, RepoSnapshot,
-    RouteKind, Severity, SCHEMA_VERSION,
+    BaselineStatus, BaselineSummary, EvidenceAtom, EvidenceId, Finding, GateKind,
+    ImportantFileKind, PatternGroup, PatternMatch, PatternOutcome, ReadmePresence, Recommendation,
+    RepositoryAnalysis, RouteKind, Severity, ANALYSIS_SCHEMA_VERSION,
 };
 use serde::Serialize;
 
@@ -83,7 +87,7 @@ pub struct PatternDocument {
 
 #[must_use]
 pub fn evidence_ids_for_definition(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     definition: &PatternDefinition,
 ) -> Vec<EvidenceId> {
     definition.detector.evidence_ids(snapshot)
@@ -179,7 +183,7 @@ pub fn common_registry() -> PatternRegistry {
             "common.identity.readme_present",
             "Root README is present",
             Some(RouteKind::Identity),
-            PatternDetector::EvidenceKind(EvidenceKind::ReadmePresent),
+            PatternDetector::Evidence(EvidenceAtom::Readme(ReadmePresence::Present)),
             BaselineRequirement::Required,
             Severity::Medium,
             GateKind::Manual,
@@ -467,7 +471,7 @@ pub fn common_registry() -> PatternRegistry {
         ],
         common_negative_fixtures(),
     )
-    .expect("built-in pattern registry must satisfy Q16 coverage invariants")
+    .expect("built-in pattern registry must satisfy coverage invariants")
 }
 
 #[must_use]
@@ -524,8 +528,8 @@ pub fn registry_document(registry: &PatternRegistry) -> PatternRegistryDocument 
         .collect::<Vec<_>>();
 
     PatternRegistryDocument {
-        schema_version: SCHEMA_VERSION.to_string(),
-        registry_version: "pattern_registry.v3",
+        schema_version: ANALYSIS_SCHEMA_VERSION.to_string(),
+        registry_version: PATTERN_REGISTRY_SCHEMA_VERSION,
         groups,
         patterns,
         negative_fixtures: registry.negative_fixtures().to_vec(),
@@ -706,14 +710,14 @@ fn pattern(
 }
 
 #[must_use]
-pub fn evaluate_common_baseline(snapshot: &RepoSnapshot) -> BaselineEvaluation {
+pub fn evaluate_common_baseline(snapshot: &RepositoryAnalysis) -> BaselineEvaluation {
     let registry = common_registry();
     evaluate_with_registry(snapshot, &registry)
 }
 
 #[must_use]
 pub fn evaluate_with_registry(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     registry: &PatternRegistry,
 ) -> BaselineEvaluation {
     let evaluation_definitions = registry.evaluation_definitions();

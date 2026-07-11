@@ -10,7 +10,7 @@ use seiri_core::{
     CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun, CalibrationSource,
     CalibrationSourceKind, CalibrationSourceVisibility, CalibrationSummary, PatternCoOccurrence,
     PatternStats, PendingPatternCandidate, ProfilePatternCorrelation, RouteRequirement,
-    SCHEMA_VERSION,
+    CALIBRATION_SCHEMA_VERSION,
 };
 
 impl StreamingAccumulator {
@@ -85,7 +85,7 @@ impl StreamingAccumulator {
         };
 
         CalibrationRun {
-            schema_version: SCHEMA_VERSION.to_string(),
+            schema_version: CALIBRATION_SCHEMA_VERSION.to_string(),
             run_id: stable_id("calibration-run", 1),
             dataset_id: metadata.dataset_id,
             pattern_pack: Some(pattern_pack),
