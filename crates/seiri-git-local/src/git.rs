@@ -322,7 +322,18 @@ mod tests {
             .expect("clock")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("reposeiri-gix-{nonce}"));
-        let repository = gix::init(&root).expect("initialize repository");
+        let mut repository = gix::init(&root).expect("initialize repository");
+        let mut config = repository.config_snapshot_mut();
+        config
+            .append_config(
+                [
+                    b"user.name=RepoSeiri".as_bstr(),
+                    b"user.email=local@example.invalid".as_bstr(),
+                ],
+                gix::config::Source::Api,
+            )
+            .expect("fixture identity config");
+        config.commit().expect("apply fixture identity config");
         let tree = repository
             .write_object(gix::objs::Tree::empty())
             .expect("empty tree");
