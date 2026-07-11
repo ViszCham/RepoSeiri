@@ -6,7 +6,7 @@ use seiri_core::{
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::Path;
 
 mod codeowners;
@@ -129,7 +129,10 @@ pub fn github_document_kind(path: &str) -> Option<GithubDocumentKind> {
             | ".renovaterc.json"
     ) {
         Some(GithubDocumentKind::DependencyBot)
-    } else if matches!(lower.as_str(), "codeowners" | ".github/codeowners") {
+    } else if matches!(
+        lower.as_str(),
+        "codeowners" | ".github/codeowners" | "docs/codeowners"
+    ) {
         Some(GithubDocumentKind::Codeowners)
     } else {
         None
@@ -145,7 +148,11 @@ struct ParseOutcome {
 impl ParseOutcome {
     fn parsed(ir: GithubDocumentIr, diagnostics: Vec<GithubDiagnostic>) -> Self {
         Self {
-            status: GithubParseStatus::Parsed,
+            status: if diagnostics.is_empty() {
+                GithubParseStatus::Parsed
+            } else {
+                GithubParseStatus::ParsedPartial
+            },
             diagnostics,
             ir: Some(ir),
         }
@@ -178,7 +185,13 @@ fn parse_entry(
     }
 
     let full_path = repo_root.join(path);
-    let bytes = match fs::read(&full_path) {
+    let mut bytes = Vec::new();
+    let bytes = match fs::File::open(&full_path).and_then(|handle| {
+        handle
+            .take(options.max_source_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    }) {
         Ok(bytes) => bytes,
         Err(error) => {
             let status = if error.kind() == io::ErrorKind::PermissionDenied {

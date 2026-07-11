@@ -1,6 +1,6 @@
 use seiri_core::{
-    AggregateEstimateBasis, AggregateRepositoryEstimate, GateKind, MissingRoutePriority,
-    ProfilePriority, RouteCoOccurrenceGap, RouteKind, RouteState,
+    AggregateRepositoryEstimate, CalibrationPriorState, GateKind, MissingRoutePriority,
+    RouteCoOccurrenceGap, RouteKind, RouteState,
 };
 use std::path::{Path, PathBuf};
 
@@ -11,15 +11,15 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn missing_route_priority_uses_fixed_aggregate_gap_estimates() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+fn standard_missing_route_priority_has_no_aggregate_prior() {
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
     let report = &snapshot.missing_route_priority;
 
     assert!(!report.priorities.is_empty());
     assert!(report
         .boundary
-        .contains("fixed aggregate calibration estimates"));
+        .contains("Standard audit uses no aggregate prior"));
     assert!(report
         .priorities
         .windows(2)
@@ -30,16 +30,8 @@ fn missing_route_priority_uses_fixed_aggregate_gap_estimates() {
         .iter()
         .find(|priority| priority.route == RouteKind::Security)
         .expect("security route priority");
-    let security_estimate = security.calibration_estimate.expect("security estimate");
-    assert_eq!(security_estimate.estimated_repositories, 558_000);
-    assert_eq!(security_estimate.denominator, 1_000_000);
-    assert_eq!(security_estimate.rate_x1000, 558);
-    assert_eq!(
-        security_estimate.basis,
-        AggregateEstimateBasis::FixedAggregateCalibration
-    );
+    assert_eq!(security.calibration_estimate, None);
     assert_eq!(security.gate, GateKind::Manual);
-    assert_eq!(security.priority, ProfilePriority::Critical);
     assert!(security
         .baseline_pattern_ids
         .contains(&"common.security.route_present".to_string()));
@@ -49,20 +41,14 @@ fn missing_route_priority_uses_fixed_aggregate_gap_estimates() {
         .iter()
         .find(|priority| priority.route == RouteKind::Support)
         .expect("support route priority");
-    assert_eq!(
-        support
-            .calibration_estimate
-            .expect("support estimate")
-            .estimated_repositories,
-        503_000
-    );
+    assert_eq!(support.calibration_estimate, None);
     assert_eq!(support.gate, GateKind::Guarded);
 }
 
 #[test]
 fn co_occurrence_engine_explains_combination_gaps() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let report = &snapshot.missing_route_priority;
 
     let automation_state = snapshot
@@ -83,11 +69,12 @@ fn co_occurrence_engine_explains_combination_gaps() {
         .iter()
         .find(|gap| gap.id == "co-README-SECURITY-CI-DEPENDENCY-BOT")
         .expect("supply-chain co-occurrence gap");
+    assert_eq!(supply_chain.calibration_estimate, None);
+    assert_eq!(supply_chain.support_x1000, 0);
     assert_eq!(
-        supply_chain.calibration_estimate.estimated_repositories,
-        260_000
+        supply_chain.calibration_prior,
+        CalibrationPriorState::NotRequested
     );
-    assert_eq!(supply_chain.support_x1000, 260);
     assert!(supply_chain.present_routes.contains(&RouteKind::Identity));
     assert!(supply_chain.present_routes.contains(&RouteKind::Security));
     assert!(supply_chain.present_routes.contains(&RouteKind::Automation));
@@ -121,13 +108,7 @@ fn co_occurrence_engine_explains_combination_gaps() {
         .iter()
         .find(|priority| priority.route == RouteKind::Ownership)
         .expect("ownership route priority");
-    assert_eq!(
-        ownership
-            .calibration_estimate
-            .expect("ownership estimate")
-            .estimated_repositories,
-        605_000
-    );
+    assert_eq!(ownership.calibration_estimate, None);
     assert!(ownership
         .co_occurrence_gap_ids
         .contains(&"co-CODEOWNERS-CI-PR-TEMPLATE".to_string()));
@@ -135,12 +116,12 @@ fn co_occurrence_engine_explains_combination_gaps() {
 
 #[test]
 fn q12_native_audit_json_does_not_serialize_estimates_as_observations() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
     let json = seiri_report::to_json(&snapshot).expect("snapshot JSON");
 
     assert!(json.contains("\"calibration_estimate\""));
-    assert!(json.contains("\"estimated_repositories\""));
+    assert!(!json.contains("\"estimated_repositories\""));
     for legacy_key in [
         "\"observed_gap_count\"",
         "\"observed_missing_repositories\"",
@@ -155,8 +136,8 @@ fn q12_native_audit_json_does_not_serialize_estimates_as_observations() {
 
 #[test]
 fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
     let priority = snapshot
         .missing_route_priority
         .priorities
@@ -181,8 +162,8 @@ fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
         558
     );
 
-    let co_snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let co_snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let gap = co_snapshot
         .missing_route_priority
         .co_occurrence_gaps
@@ -190,7 +171,7 @@ fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
         .expect("co-occurrence gap");
     let mut gap_json = serde_json::to_value(gap).expect("gap JSON");
     let gap_object = gap_json.as_object_mut().expect("gap object");
-    let estimated_repositories = gap.calibration_estimate.estimated_repositories;
+    let estimated_repositories = 260_000;
     gap_object.remove("calibration_estimate");
     gap_object.insert(
         "observed_repositories".to_string(),
@@ -199,7 +180,10 @@ fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
     let legacy_gap: RouteCoOccurrenceGap =
         serde_json::from_value(gap_json).expect("legacy co-occurrence gap");
     assert_eq!(
-        legacy_gap.calibration_estimate.estimated_repositories,
+        legacy_gap
+            .calibration_estimate
+            .expect("legacy estimate")
+            .estimated_repositories,
         estimated_repositories
     );
 }

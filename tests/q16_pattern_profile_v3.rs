@@ -25,7 +25,8 @@ fn every_pattern_group_has_an_executable_negative_fixture() {
         for negative in fixtures {
             let repository = fixture(negative.repository);
             assert!(repository.is_dir(), "registered fixture must exist");
-            let snapshot = seiri_report::audit_repository(&repository).expect("audit fixture");
+            let snapshot =
+                seiri_report::audit_repository_subtree(&repository).expect("audit fixture");
             let definition = registry
                 .definition(negative.pattern_id)
                 .expect("fixture pattern must be registered");
@@ -98,20 +99,22 @@ fn profile_registry_is_complete_and_uses_nonzero_static_weights() {
 #[test]
 fn calibration_suggestions_do_not_mutate_profile_scores() {
     let repository = fixture("docs-routed-repo");
-    let before = seiri_report::audit_repository_with_profile(&repository, ProfileKind::Library)
-        .expect("audit before calibration")
-        .profile
-        .expect("profile before calibration");
+    let before =
+        seiri_report::audit_repository_subtree_with_profile(&repository, ProfileKind::Library)
+            .expect("audit before calibration")
+            .profile
+            .expect("profile before calibration");
 
     let dataset = seiri_calibration::load_dataset(fixture("calibration-dataset.json"))
         .expect("load calibration fixture");
     let calibration = seiri_calibration::calibrate_dataset(&dataset);
     assert!(!calibration.weight_suggestions.is_empty());
 
-    let after = seiri_report::audit_repository_with_profile(&repository, ProfileKind::Library)
-        .expect("audit after calibration")
-        .profile
-        .expect("profile after calibration");
+    let after =
+        seiri_report::audit_repository_subtree_with_profile(&repository, ProfileKind::Library)
+            .expect("audit after calibration")
+            .profile
+            .expect("profile after calibration");
 
     assert_eq!(before.score, after.score);
     assert_eq!(
@@ -127,8 +130,8 @@ fn calibration_suggestions_do_not_mutate_profile_scores() {
 
 #[test]
 fn profile_score_does_not_credit_present_status_without_evidence() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit route fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit route fixture");
     let mut baseline = snapshot.baseline.expect("baseline report");
     let identity = baseline
         .rules

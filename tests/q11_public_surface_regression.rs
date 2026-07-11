@@ -41,9 +41,11 @@ fn q11_local_only_calibration_redaction_and_codex_no_github_mutation_are_fixed()
     assert_no_local_only_details(&markdown);
     assert_no_local_only_details(&codex_json);
 
-    let context =
-        seiri_report::codex_repository_with_profile(fixture("safe-plan-repo"), ProfileKind::Common)
-            .expect("codex context");
+    let context = seiri_report::codex_repository_subtree_with_profile(
+        fixture("safe-plan-repo"),
+        ProfileKind::Common,
+    )
+    .expect("codex context");
     assert!(!context.user_actions.is_empty());
     assert!(context
         .user_actions

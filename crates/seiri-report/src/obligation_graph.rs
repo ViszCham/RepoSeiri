@@ -1,21 +1,54 @@
 use seiri_core::{
-    ConditionalObligation, CoverageIncompleteReason, CoverageScope, CoverageStatus,
-    DocumentConflict, DocumentConflictSide, DocumentConsistencyError, DocumentConsistencyReport,
-    DocumentId, EvidenceFact, EvidenceId, EvidenceKind, EvidenceSet, Observation, RepoSnapshot,
-    RepositoryFacet, RouteKind,
+    classify_target_relation, ConditionalObligation, CoverageIncompleteReason, CoverageScope,
+    CoverageStatus, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
+    DocumentConsistencyReport, DocumentTargetRelation, EvidenceFact, EvidenceKind, EvidenceSet,
+    Observation, RepoSnapshot, RepositoryFacet, RouteKind, RouteTargetRef, RouteTargetRole,
+    TargetRelation,
 };
 use std::collections::BTreeMap;
 
 const MAX_DOCUMENT_CONFLICTS: usize = 64;
-const MAX_ROUTE_TARGET_GROUPS: usize = 128;
+const MAX_ROUTE_TARGETS: usize = 128;
+const MAX_ROUTE_TARGET_RELATIONS: usize = 256;
+
+pub(crate) struct RouteTargetBuild {
+    pub(crate) targets: Vec<RouteTargetRef>,
+    pub(crate) truncated: bool,
+}
+
+pub(crate) fn build_route_targets(snapshot: &RepoSnapshot) -> RouteTargetBuild {
+    let mut targets = Vec::new();
+    let mut truncated = false;
+    for fact in snapshot.evidence_kernel.facts() {
+        let Some(target) = route_target_ref(snapshot, fact) else {
+            continue;
+        };
+        if targets.len() == MAX_ROUTE_TARGETS {
+            truncated = true;
+            continue;
+        }
+        targets.push(target);
+    }
+    targets.sort_by(|left, right| {
+        left.route
+            .cmp(&right.route)
+            .then_with(|| left.normalized_target.cmp(&right.normalized_target))
+            .then_with(|| left.document.cmp(&right.document))
+            .then_with(|| left.evidence.cmp(&right.evidence))
+    });
+    RouteTargetBuild { targets, truncated }
+}
 
 pub(crate) fn build_document_consistency_report(
     snapshot: &RepoSnapshot,
+    route_targets_truncated: bool,
 ) -> Result<DocumentConsistencyReport, DocumentConsistencyError> {
     let mut obligations = build_conditional_obligations(snapshot);
     obligations.sort_by(|left, right| left.id.cmp(&right.id));
 
-    let conflict_build = build_document_conflicts(snapshot)?;
+    let conflict_build = build_document_relations(snapshot, route_targets_truncated)?;
+    let mut relations = conflict_build.relations;
+    relations.sort_by(|left, right| left.id.cmp(&right.id));
     let mut conflicts = conflict_build.conflicts;
     conflicts.sort_by(|left, right| left.id.cmp(&right.id));
 
@@ -27,7 +60,7 @@ pub(crate) fn build_document_consistency_report(
             .record(CoverageScope::MarkdownDocuments)
             .map_or(CoverageStatus::NotRequested, |record| record.status)
     };
-    DocumentConsistencyReport::try_new(obligations, conflicts, conflict_coverage)
+    DocumentConsistencyReport::try_new(obligations, relations, conflicts, conflict_coverage)
 }
 
 fn build_conditional_obligations(snapshot: &RepoSnapshot) -> Vec<ConditionalObligation> {
@@ -79,58 +112,51 @@ fn route_observation(snapshot: &RepoSnapshot, route: RouteKind) -> Observation<(
     }
 }
 
-fn build_document_conflicts(
+fn build_document_relations(
     snapshot: &RepoSnapshot,
+    route_targets_truncated: bool,
 ) -> Result<ConflictBuild, DocumentConsistencyError> {
-    let mut by_route_target = BTreeMap::<(RouteKind, String), RouteTargetCandidate>::new();
-    let mut truncated = false;
-    for fact in snapshot.evidence_kernel.facts() {
-        let Some(candidate) = route_target_candidate(snapshot, fact) else {
-            continue;
-        };
-        let key = (candidate.route, candidate.target.clone());
-        if !by_route_target.contains_key(&key) && by_route_target.len() == MAX_ROUTE_TARGET_GROUPS {
-            truncated = true;
-            continue;
-        }
-        by_route_target
-            .entry(key)
-            .and_modify(|current| {
-                if candidate.sort_key() < current.sort_key() {
-                    *current = candidate.clone();
-                }
-            })
-            .or_insert(candidate);
-    }
-
+    let mut truncated = route_targets_truncated;
+    let mut relations = Vec::new();
     let mut conflicts = Vec::new();
-    let mut groups = BTreeMap::<RouteKind, Vec<RouteTargetCandidate>>::new();
-    for ((route, _), candidate) in by_route_target {
+    let mut groups = BTreeMap::<RouteKind, Vec<&RouteTargetRef>>::new();
+    for candidate in &snapshot.route_targets {
+        let route = candidate.route;
         groups.entry(route).or_default().push(candidate);
     }
     for (route, mut candidates) in groups {
-        candidates.sort_by_key(RouteTargetCandidate::sort_key);
+        candidates.sort_by_key(|candidate| (candidate.document, candidate.evidence));
         for left_index in 0..candidates.len() {
             for right in candidates.iter().skip(left_index + 1) {
-                if conflicts.len() == MAX_DOCUMENT_CONFLICTS {
-                    return Ok(ConflictBuild {
-                        conflicts,
-                        truncated: true,
-                    });
-                }
                 let left = &candidates[left_index];
                 if left.document == right.document {
                     continue;
                 }
-                conflicts.push(DocumentConflict::try_new(
+                if relations.len() == MAX_ROUTE_TARGET_RELATIONS {
+                    truncated = true;
+                    continue;
+                }
+                let relation = classify_target_relation(left, right);
+                let left_side = conflict_side(left);
+                let right_side = conflict_side(right);
+                relations.push(DocumentTargetRelation::new(
                     route,
-                    left.to_conflict_side(),
-                    right.to_conflict_side(),
-                )?);
+                    left_side.clone(),
+                    right_side.clone(),
+                    relation,
+                ));
+                if relation == TargetRelation::Competes {
+                    if conflicts.len() == MAX_DOCUMENT_CONFLICTS {
+                        truncated = true;
+                        continue;
+                    }
+                    conflicts.push(DocumentConflict::try_new(route, left_side, right_side)?);
+                }
             }
         }
     }
     Ok(ConflictBuild {
+        relations,
         conflicts,
         truncated,
     })
@@ -138,61 +164,172 @@ fn build_document_conflicts(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConflictBuild {
+    relations: Vec<DocumentTargetRelation>,
     conflicts: Vec<DocumentConflict>,
     truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RouteTargetCandidate {
-    route: RouteKind,
-    document: DocumentId,
-    evidence: EvidenceId,
-    target: String,
-}
-
-impl RouteTargetCandidate {
-    fn sort_key(&self) -> (DocumentId, EvidenceId) {
-        (self.document, self.evidence)
-    }
-
-    fn to_conflict_side(&self) -> DocumentConflictSide {
-        DocumentConflictSide {
-            document: self.document,
-            evidence: self.evidence,
-            target: self.target.clone(),
-        }
+fn conflict_side(candidate: &RouteTargetRef) -> DocumentConflictSide {
+    DocumentConflictSide {
+        document: candidate.document,
+        evidence: candidate.evidence,
+        target: candidate.normalized_target.clone(),
+        role: candidate.role,
+        span: Some(candidate.span),
     }
 }
 
-fn route_target_candidate(
-    snapshot: &RepoSnapshot,
-    fact: &EvidenceFact,
-) -> Option<RouteTargetCandidate> {
+fn route_target_ref(snapshot: &RepoSnapshot, fact: &EvidenceFact) -> Option<RouteTargetRef> {
     if fact.kind != EvidenceKind::RouteCandidate {
         return None;
     }
     let route = fact.route?;
     let path = fact.path.as_deref()?;
+    if is_fixture_document(path) {
+        return None;
+    }
     let document = snapshot.evidence_kernel_v2.document_id_for_path(path)?;
-    let (_, raw_target) = fact.value.rsplit_once(" -> ")?;
-    let target = normalized_local_target(raw_target)?;
-    Some(RouteTargetCandidate {
+    let (label, raw_target) = fact.value.rsplit_once(" -> ")?;
+    let normalized_target = normalized_local_target(path, raw_target)?;
+    let span = fact.span?;
+    Some(RouteTargetRef {
         route,
         document,
         evidence: fact.id,
-        target,
+        span,
+        role: classify_target_role(route, label, &normalized_target),
+        normalized_target,
     })
 }
 
-fn normalized_local_target(raw_target: &str) -> Option<String> {
-    let target = raw_target.trim().split('#').next()?.trim();
+fn normalized_local_target(document_path: &str, raw_target: &str) -> Option<String> {
+    let target = raw_target
+        .trim()
+        .split(['#', '?'])
+        .next()?
+        .trim()
+        .replace('\\', "/");
     if target.is_empty()
         || target.starts_with('/')
         || target.starts_with('#')
         || target.contains("://")
         || target.starts_with("mailto:")
+        || target
+            .split('/')
+            .next()
+            .is_some_and(|part| part.contains(':'))
     {
         return None;
     }
-    Some(target.replace('\\', "/"))
+
+    let mut components = document_path
+        .replace('\\', "/")
+        .split('/')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    components.pop();
+    for component in target.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop()?;
+            }
+            value => components.push(value.to_string()),
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
+}
+
+fn classify_target_role(route: RouteKind, label: &str, normalized_target: &str) -> RouteTargetRole {
+    let target = normalized_target.to_ascii_lowercase();
+    let label = label.trim().to_ascii_lowercase();
+    let file_name = target.rsplit('/').next().unwrap_or(target.as_str());
+
+    if target.starts_with("fixtures/") || target.contains("/fixtures/") {
+        return RouteTargetRole::Example;
+    }
+    if matches!(
+        target.as_str(),
+        "readme.md" | "docs/readme.md" | "docs/index.md"
+    ) {
+        return RouteTargetRole::SharedHub;
+    }
+    if contains_any(&target, &["migration", "migrate", "upgrade"])
+        || contains_any(&label, &["migration", "migrate", "upgrade"])
+    {
+        return RouteTargetRole::Migration;
+    }
+    if contains_any(&target, &["example", "examples", "sample", "samples"])
+        || contains_any(&label, &["example", "sample"])
+    {
+        return RouteTargetRole::Example;
+    }
+    if canonical_target(route, &target, file_name)
+        || (!target.contains('/') && canonical_label(route, &label))
+    {
+        return RouteTargetRole::Canonical;
+    }
+    if target.starts_with("docs/")
+        || contains_any(&label, &["detail", "guide", "reference", "manual"])
+    {
+        return RouteTargetRole::Detail;
+    }
+    RouteTargetRole::Alternate
+}
+
+fn canonical_target(route: RouteKind, target: &str, file_name: &str) -> bool {
+    match route {
+        RouteKind::Identity => file_name == "readme.md",
+        RouteKind::Docs => matches!(file_name, "docs.md" | "documentation.md"),
+        RouteKind::Quickstart => matches!(
+            file_name,
+            "quickstart.md" | "quick-start.md" | "getting-started.md"
+        ),
+        RouteKind::Support => file_name == "support.md",
+        RouteKind::Intake => target.starts_with(".github/issue_template/"),
+        RouteKind::Contributing => file_name == "contributing.md",
+        RouteKind::Security => file_name == "security.md",
+        RouteKind::Release => {
+            matches!(file_name, "changelog.md" | "releases.md")
+                || (file_name == "release.md" && !target.contains('/'))
+        }
+        RouteKind::Lifecycle => matches!(file_name, "lifecycle.md" | "maintenance.md"),
+        RouteKind::Governance => file_name == "governance.md",
+        RouteKind::License => matches!(file_name, "license" | "license.md" | "copying"),
+        RouteKind::Automation => target.starts_with(".github/workflows/"),
+        RouteKind::Ownership => target == ".github/codeowners" || file_name == "codeowners",
+        RouteKind::Hygiene => {
+            matches!(file_name, ".gitignore" | ".gitattributes" | "hygiene.md")
+        }
+        RouteKind::Unknown => false,
+    }
+}
+
+fn canonical_label(route: RouteKind, label: &str) -> bool {
+    match route {
+        RouteKind::Identity => contains_any(label, &["readme", "overview"]),
+        RouteKind::Docs => contains_any(label, &["docs", "documentation"]),
+        RouteKind::Quickstart => contains_any(label, &["quickstart", "getting started"]),
+        RouteKind::Support => contains_any(label, &["support", "help"]),
+        RouteKind::Intake => contains_any(label, &["issue", "bug", "feature request"]),
+        RouteKind::Contributing => contains_any(label, &["contributing", "contribution"]),
+        RouteKind::Security => contains_any(label, &["security", "vulnerability"]),
+        RouteKind::Release => contains_any(label, &["release", "changelog"]),
+        RouteKind::Lifecycle => contains_any(label, &["lifecycle", "maintenance"]),
+        RouteKind::Governance => contains_any(label, &["governance", "decision"]),
+        RouteKind::License => contains_any(label, &["license", "licence"]),
+        RouteKind::Automation => contains_any(label, &["automation", "ci", "workflow"]),
+        RouteKind::Ownership => contains_any(label, &["ownership", "codeowners", "maintainer"]),
+        RouteKind::Hygiene => contains_any(label, &["hygiene", "gitignore", "gitattributes"]),
+        RouteKind::Unknown => false,
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
+}
+
+fn is_fixture_document(path: &str) -> bool {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    path.starts_with("fixtures/") || path.contains("/fixtures/")
 }

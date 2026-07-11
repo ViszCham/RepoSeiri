@@ -94,8 +94,8 @@ fn q3_lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
 
 #[test]
 fn q3_lifecycle_route_state_is_manual_when_missing() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
 
     let state = snapshot
         .route_states

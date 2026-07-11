@@ -1,15 +1,17 @@
 use seiri_core::{
-    AggregateRepositoryEstimate, BaselineRequirement, BaselineRuleResult, BaselineStatus, FileKind,
-    GateKind, MissingRoutePriority, MissingRoutePriorityReport, MissingRoutePrioritySummary,
-    ProfileKind, ProfilePriority, RepoSnapshot, ReviewGap, ReviewPriority, ReviewPriorityReport,
-    RouteCoOccurrenceGap, RouteKind, RouteState, Severity,
+    BaselineRequirement, BaselineRuleResult, BaselineStatus, CalibrationKey, CalibrationLookup,
+    CalibrationPriorState, CalibrationProvider, FileKind, GateKind, MissingRoutePriority,
+    MissingRoutePriorityReport, MissingRoutePrioritySummary, ProfileKind, ProfilePriority,
+    RepoSnapshot, ReviewGap, ReviewPriority, ReviewPriorityReport, RouteCoOccurrenceGap, RouteKind,
+    RouteState, Severity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn build_missing_route_priority_report(
     snapshot: &RepoSnapshot,
+    calibration: &dyn CalibrationProvider,
 ) -> MissingRoutePriorityReport {
-    let co_occurrence_gaps = build_co_occurrence_gaps(snapshot);
+    let co_occurrence_gaps = build_co_occurrence_gaps(snapshot, calibration);
     let gap_ids_by_route = gap_ids_by_missing_route(&co_occurrence_gaps);
     let finding_gates = finding_gates(snapshot);
     let registry = seiri_patterns::common_registry();
@@ -35,7 +37,7 @@ pub(crate) fn build_missing_route_priority_report(
             continue;
         }
 
-        let prior = route_gap_prior(route_state.route);
+        let prior = route_gap_prior(calibration, route_state.route);
         let gate = strongest_gate_for_route(
             route_state.route,
             route_state.state,
@@ -77,7 +79,7 @@ pub(crate) fn build_missing_route_priority_report(
             severity: severity_from_score(priority_score_x100),
             priority: priority_from_score(priority_score_x100),
             priority_score_x100,
-            calibration_estimate: prior.map(|prior| prior.calibration_estimate),
+            calibration_estimate: None,
             baseline_pattern_ids,
             candidate_pattern_ids,
             co_occurrence_gap_ids,
@@ -123,12 +125,13 @@ pub(crate) fn build_missing_route_priority_report(
         summary,
         priorities,
         co_occurrence_gaps,
-        boundary: "This compatibility report retains route, candidate-pattern, and co-occurrence review items. Its top_route fields refer only to actual route gaps. The fixed aggregate calibration estimates remain separate from repository observations and do not guarantee popularity, trust, security, quality, or policy outcomes.".to_string(),
+        boundary: "This compatibility report retains route, candidate-pattern, and co-occurrence review items. Standard audit uses no aggregate prior. An explicitly supplied local prior may affect internal ranking, but its source path, exact values, and raw body are not serialized. Rankings do not guarantee popularity, trust, security, quality, or policy outcomes.".to_string(),
     }
 }
 
 pub(crate) fn build_review_priority_report(
     compatibility: &MissingRoutePriorityReport,
+    content: &seiri_core::RouteContentReportV2,
 ) -> ReviewPriorityReport {
     let mut priorities = Vec::new();
     for item in &compatibility.priorities {
@@ -161,10 +164,77 @@ pub(crate) fn build_review_priority_report(
             ));
         }
     }
+    for assessment in &content.assessments {
+        if assessment.enabled
+            && matches!(
+                assessment.observation,
+                seiri_core::Observation::Absent { .. }
+            )
+        {
+            let (gate, severity, priority, score) = content_slot_priority(assessment.sensitivity);
+            priorities.push(ReviewPriority {
+                rank: 0,
+                gap: ReviewGap::ContentSlot {
+                    route: assessment.route,
+                    slot_ids: vec![assessment.slot],
+                },
+                gate,
+                severity,
+                priority,
+                priority_score_x100: score,
+                calibration_estimate: None,
+                evidence_ids: assessment.condition_evidence_ids.clone(),
+                reason: format!(
+                    "Content slot '{}' is absent under complete bounded coverage; this is separate from route presence.",
+                    assessment.code
+                ),
+            });
+        }
+    }
+    priorities.sort_by(|left, right| {
+        right
+            .priority_score_x100
+            .cmp(&left.priority_score_x100)
+            .then_with(|| left.gap.route().cmp(&right.gap.route()))
+    });
     for (index, priority) in priorities.iter_mut().enumerate() {
         priority.rank = index + 1;
     }
     ReviewPriorityReport::new(priorities)
+}
+
+fn content_slot_priority(
+    sensitivity: seiri_core::PolicySensitivityWire,
+) -> (GateKind, Severity, ProfilePriority, u8) {
+    match sensitivity {
+        seiri_core::PolicySensitivityWire::SecuritySensitive => (
+            GateKind::Manual,
+            Severity::High,
+            ProfilePriority::Critical,
+            95,
+        ),
+        seiri_core::PolicySensitivityWire::LegalSensitive => (
+            GateKind::Manual,
+            Severity::High,
+            ProfilePriority::Critical,
+            92,
+        ),
+        seiri_core::PolicySensitivityWire::MaintainerDecision => (
+            GateKind::Manual,
+            Severity::Medium,
+            ProfilePriority::High,
+            82,
+        ),
+        seiri_core::PolicySensitivityWire::ExecutionSensitive => (
+            GateKind::Guarded,
+            Severity::Medium,
+            ProfilePriority::High,
+            76,
+        ),
+        seiri_core::PolicySensitivityWire::EvidenceOnly => {
+            (GateKind::Safe, Severity::Low, ProfilePriority::Normal, 55)
+        }
+    }
 }
 
 fn review_priority(item: &MissingRoutePriority, gap: ReviewGap) -> ReviewPriority {
@@ -183,30 +253,25 @@ fn review_priority(item: &MissingRoutePriority, gap: ReviewGap) -> ReviewPriorit
 
 #[derive(Debug, Clone, Copy)]
 struct RouteGapPrior {
-    calibration_estimate: AggregateRepositoryEstimate,
     leverage_x100: u8,
+    state: CalibrationPriorState,
 }
 
-fn route_gap_prior(route: RouteKind) -> Option<RouteGapPrior> {
-    let (estimated_repositories, leverage_x100) = match route {
-        RouteKind::Identity => (14_000, 52),
-        RouteKind::Docs => (186_000, 30),
-        RouteKind::Quickstart => (438_000, 34),
-        RouteKind::Support => (503_000, 43),
-        RouteKind::Intake => (822_000, 42),
-        RouteKind::Contributing => (325_000, 24),
-        RouteKind::Security => (558_000, 45),
-        RouteKind::Release => (454_000, 32),
-        RouteKind::Governance => (787_000, 20),
-        RouteKind::License => (80_000, 50),
-        RouteKind::Automation => (229_000, 28),
-        RouteKind::Ownership => (605_000, 40),
-        RouteKind::Lifecycle | RouteKind::Hygiene | RouteKind::Unknown => return None,
-    };
-    Some(RouteGapPrior {
-        calibration_estimate: AggregateRepositoryEstimate::fixed(estimated_repositories, 1_000_000),
-        leverage_x100,
-    })
+fn route_gap_prior(
+    calibration: &dyn CalibrationProvider,
+    route: RouteKind,
+) -> Option<RouteGapPrior> {
+    match calibration.prior(&CalibrationKey::RouteGap(route)) {
+        CalibrationLookup::NotRequested => None,
+        CalibrationLookup::Available(prior) => Some(RouteGapPrior {
+            leverage_x100: prior.rank_weight_x100(),
+            state: CalibrationPriorState::AppliedRedacted,
+        }),
+        CalibrationLookup::Unavailable(_) => Some(RouteGapPrior {
+            leverage_x100: 0,
+            state: CalibrationPriorState::Unavailable,
+        }),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -242,7 +307,6 @@ impl PathSignal {
 struct CoOccurrenceRule {
     id: &'static str,
     title: &'static str,
-    estimated_repositories: u32,
     gate: GateKind,
     expected: &'static [ExpectedSignal],
     reason: &'static str,
@@ -286,15 +350,13 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-README-LICENSE",
             title: "README + LICENSE entry boundary",
-            estimated_repositories: 905_000,
             gate: GateKind::Manual,
             expected: BASELINE_OSS_ENTRY,
-            reason: "A fixed aggregate calibration estimate assigns high support to the README + LICENSE combination; missing members are high-leverage routing gaps but still require human review for content or legal decisions.",
+            reason: "README and LICENSE form a useful entry-boundary review rule; missing members still require human review for content or legal decisions.",
         },
         CoOccurrenceRule {
             id: "co-README-SUPPORT-ISSUE-FORMS",
             title: "README + Support + Issue forms intake control",
-            estimated_repositories: 300_000,
             gate: GateKind::Guarded,
             expected: SUPPORT_INTAKE_CONTROL,
             reason: "Support routes and structured issue forms explain how questions, bugs, and feature requests should enter the project without turning every question into a generic issue.",
@@ -302,7 +364,6 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-README-SECURITY-CI-DEPENDENCY-BOT",
             title: "README + Security + CI + Dependency bot supply-chain route",
-            estimated_repositories: 260_000,
             gate: GateKind::Guarded,
             expected: SUPPLY_CHAIN_MINIMUM,
             reason: "The analysis identified README, security routing, CI, and dependency bot configuration as a useful supply-chain hygiene combination; RepoSeiri reports missing members as routing evidence only.",
@@ -310,7 +371,6 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-CI-RELEASE-CHANGELOG",
             title: "CI + Release + Changelog update-risk route",
-            estimated_repositories: 330_000,
             gate: GateKind::Guarded,
             expected: RELEASE_READINESS,
             reason: "CI, release routing, and changelog evidence help users judge update risk; missing members should be reviewed against the repository purpose.",
@@ -318,7 +378,6 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
         CoOccurrenceRule {
             id: "co-CODEOWNERS-CI-PR-TEMPLATE",
             title: "CODEOWNERS + CI + PR template review route",
-            estimated_repositories: 240_000,
             gate: GateKind::Manual,
             expected: OWNERSHIP_REVIEW,
             reason: "Ownership, CI, and PR template signals often co-occur in mature review flows; owner assignment and decision rights remain manual.",
@@ -326,7 +385,10 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
     ]
 }
 
-fn build_co_occurrence_gaps(snapshot: &RepoSnapshot) -> Vec<RouteCoOccurrenceGap> {
+fn build_co_occurrence_gaps(
+    snapshot: &RepoSnapshot,
+    calibration: &dyn CalibrationProvider,
+) -> Vec<RouteCoOccurrenceGap> {
     let mut gaps = Vec::new();
     for rule in co_occurrence_rules() {
         let mut present_routes = BTreeSet::new();
@@ -359,16 +421,24 @@ fn build_co_occurrence_gaps(snapshot: &RepoSnapshot) -> Vec<RouteCoOccurrenceGap
             continue;
         }
 
-        let calibration_estimate =
-            AggregateRepositoryEstimate::fixed(rule.estimated_repositories, 1_000_000);
-        let support_x1000 = calibration_estimate.rate_x1000;
+        let (rank_weight_x100, calibration_prior) =
+            match calibration.prior(&CalibrationKey::CoOccurrence(rule.id.into())) {
+                CalibrationLookup::NotRequested => (0, CalibrationPriorState::NotRequested),
+                CalibrationLookup::Available(prior) => (
+                    prior.rank_weight_x100(),
+                    CalibrationPriorState::AppliedRedacted,
+                ),
+                CalibrationLookup::Unavailable(_) => (0, CalibrationPriorState::Unavailable),
+            };
         gaps.push(RouteCoOccurrenceGap {
             id: rule.id.to_string(),
             title: rule.title.to_string(),
-            calibration_estimate,
-            support_x1000,
+            calibration_estimate: None,
+            support_x1000: 0,
+            rank_weight_x100,
+            calibration_prior,
             gate: rule.gate,
-            priority: priority_from_support(support_x1000),
+            priority: priority_from_score(rank_weight_x100),
             present_routes: present_routes.into_iter().collect(),
             missing_routes: missing_routes.into_iter().collect(),
             present_signals,
@@ -513,11 +583,18 @@ fn priority_reason(
 ) -> String {
     let mut parts = vec![format!("route state {state:?}")];
     if let Some(prior) = prior {
-        parts.push(format!(
-            "fixed aggregate calibration estimate {} of {} repositories",
-            prior.calibration_estimate.estimated_repositories,
-            prior.calibration_estimate.denominator
-        ));
+        match prior.state {
+            CalibrationPriorState::AppliedRedacted => {
+                parts.push("explicit local calibration prior applied with values redacted".into());
+            }
+            CalibrationPriorState::Unavailable => {
+                parts.push("explicit local calibration prior unavailable for this route".into());
+            }
+            CalibrationPriorState::CompatibilityProjection => {
+                parts.push("legacy calibration projection retained with values redacted".into());
+            }
+            CalibrationPriorState::NotRequested => {}
+        }
     }
     if !baseline_pattern_ids.is_empty() {
         parts.push(format!(
@@ -667,7 +744,7 @@ fn co_occurrence_component(gaps: &[RouteCoOccurrenceGap], gap_ids: &[String]) ->
     gap_ids
         .iter()
         .filter_map(|gap_id| gaps.iter().find(|gap| &gap.id == gap_id))
-        .map(|gap| (gap.support_x1000 / 25).min(18) as u8)
+        .map(|gap| (gap.rank_weight_x100 / 5).min(18))
         .max()
         .unwrap_or(0)
 }
@@ -703,12 +780,19 @@ fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
     let Some(profile) = snapshot.profile.as_ref() else {
         return 0;
     };
-    if profile.branch_summary.top_confidence_x100.unwrap_or(0) < 70 {
-        return 0;
-    }
     let Some(top_profile) = profile.branch_summary.top_profile else {
         return 0;
     };
+    let Some(top_branch) = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == top_profile)
+    else {
+        return 0;
+    };
+    if top_branch.semantics.rank_score.get() < 70 {
+        return 0;
+    }
     let matches_profile = match top_profile {
         ProfileKind::Library => matches!(
             route,
@@ -808,15 +892,6 @@ fn severity_from_score(score: u8) -> Severity {
         55..=74 => Severity::Medium,
         35..=54 => Severity::Low,
         _ => Severity::Info,
-    }
-}
-
-fn priority_from_support(support_x1000: u16) -> ProfilePriority {
-    match support_x1000 {
-        500..=1000 => ProfilePriority::Critical,
-        300..=499 => ProfilePriority::High,
-        150..=299 => ProfilePriority::Normal,
-        _ => ProfilePriority::Low,
     }
 }
 

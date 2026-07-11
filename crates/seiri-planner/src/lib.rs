@@ -11,6 +11,296 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path};
 
+const PLANNER_V5_ROUTES: &[RouteKind] = &[
+    RouteKind::Docs,
+    RouteKind::Quickstart,
+    RouteKind::Support,
+    RouteKind::Intake,
+    RouteKind::Contributing,
+    RouteKind::Security,
+    RouteKind::Release,
+    RouteKind::Lifecycle,
+    RouteKind::Governance,
+    RouteKind::License,
+    RouteKind::Automation,
+    RouteKind::Ownership,
+    RouteKind::Hygiene,
+];
+
+/// Produces bound, dry-run README links to targets that already exist locally.
+#[must_use]
+pub fn plan_existing_route_links(snapshot: &RepoSnapshot) -> seiri_core::PlannerV5Report {
+    let mut report = seiri_core::PlannerV5Report::default();
+    let Some(readme) = snapshot.readme_document.as_ref() else {
+        hold_all(&mut report, seiri_core::PlannerV5HoldReason::MissingReadme);
+        return report;
+    };
+    let Some(document_id) = snapshot
+        .document_index
+        .entries()
+        .iter()
+        .find(|entry| entry.path == readme.path())
+        .and_then(|entry| entry.document_id)
+    else {
+        hold_all(&mut report, seiri_core::PlannerV5HoldReason::MissingReadme);
+        return report;
+    };
+    let current = match read_current_document_bytes(snapshot, readme.path()) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            hold_all(&mut report, seiri_core::PlannerV5HoldReason::StaleBase);
+            return report;
+        }
+    };
+    let base = TextDocumentBase::from_bytes(&current);
+    if base != *readme.base() || base.encoding() == TextEncoding::Unknown {
+        hold_all(
+            &mut report,
+            if base.encoding() == TextEncoding::Unknown {
+                seiri_core::PlannerV5HoldReason::UnsupportedEncoding
+            } else {
+                seiri_core::PlannerV5HoldReason::StaleBase
+            },
+        );
+        return report;
+    }
+
+    let run_digest = seiri_delta::portable_snapshot(snapshot)
+        .map(|portable| PatchBaseDigest::from_bytes(portable.digest.routes.to_string().as_bytes()))
+        .unwrap_or_else(|_| PatchBaseDigest::from_bytes(snapshot.schema_version.as_bytes()));
+    let analysis_run = PatchAnalysisRun::new(format!("planner-v5-{run_digest}"), run_digest);
+    let pair = snapshot
+        .route_content_v2
+        .structural_pairs
+        .iter()
+        .find(|pair| pair.document_path == readme.path());
+
+    for (ordinal, route) in PLANNER_V5_ROUTES.iter().copied().enumerate() {
+        if readme_has_local_route(snapshot, route) {
+            continue;
+        }
+        let Some(target_path) = existing_target(snapshot, route) else {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: None,
+                reason: seiri_core::PlannerV5HoldReason::NoExistingTarget,
+            });
+            continue;
+        };
+        if snapshot
+            .document_consistency
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.route == route)
+        {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: Some(target_path.to_string()),
+                reason: seiri_core::PlannerV5HoldReason::CanonicalConflict,
+            });
+            continue;
+        }
+        if snapshot
+            .document_consistency
+            .relations
+            .iter()
+            .any(|relation| {
+                relation.route == route && relation.relation == seiri_core::TargetRelation::Unknown
+            })
+        {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: Some(target_path.to_string()),
+                reason: seiri_core::PlannerV5HoldReason::UnknownTargetRelation,
+            });
+            continue;
+        }
+
+        let paired_language = pair.is_some();
+        let spans = match insertion_spans(pair, &current) {
+            Some(spans) => spans,
+            None => {
+                report.held.push(seiri_core::PlannerV5HeldItem {
+                    route,
+                    target_path: Some(target_path.to_string()),
+                    reason: seiri_core::PlannerV5HoldReason::PairedLanguageIncomplete,
+                });
+                continue;
+            }
+        };
+        let eol = base.line_ending().sequence().unwrap_or("\n");
+        let label = route_label(route);
+        let edits = spans
+            .iter()
+            .enumerate()
+            .map(|(index, offset)| {
+                PatchTextEdit::literal(
+                    format!("planner-v5-edit-{}-{}", ordinal + 1, index + 1),
+                    TextEditSpan::insertion(*offset),
+                    format!("{eol}- [{label}]({target_path}){eol}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let proposal = PatchProposal::new(
+            format!("planner-v5-proposal-{}", ordinal + 1),
+            readme.path(),
+            base.clone(),
+            edits,
+        );
+        if proposal.preflight_against(&current).decision != PatchProposalDecision::Ready {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: Some(target_path.to_string()),
+                reason: seiri_core::PlannerV5HoldReason::StaleAnchor,
+            });
+            continue;
+        }
+        let Ok(binding) = PatchProposalBinding::bind(analysis_run.clone(), &proposal, &current)
+        else {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: Some(target_path.to_string()),
+                reason: seiri_core::PlannerV5HoldReason::StaleAnchor,
+            });
+            continue;
+        };
+        let Some(insertion_anchor) = binding.anchors.first().cloned() else {
+            report.held.push(seiri_core::PlannerV5HeldItem {
+                route,
+                target_path: Some(target_path.to_string()),
+                reason: seiri_core::PlannerV5HoldReason::StaleAnchor,
+            });
+            continue;
+        };
+        report.operations.push(seiri_core::AddExistingRouteLink {
+            route,
+            target: seiri_core::ExistingTargetId((ordinal + 1) as u32),
+            target_path: target_path.to_string(),
+            target_role: seiri_core::RouteTargetRole::Canonical,
+            document: document_id,
+            insertion_anchor,
+            analysis_run: analysis_run.clone(),
+            proposal,
+            binding,
+            paired_language,
+        });
+    }
+    report.operations.sort_by_key(|operation| operation.route);
+    report.held.sort_by_key(|item| item.route);
+    report
+}
+
+fn hold_all(report: &mut seiri_core::PlannerV5Report, reason: seiri_core::PlannerV5HoldReason) {
+    report
+        .held
+        .extend(
+            PLANNER_V5_ROUTES
+                .iter()
+                .copied()
+                .map(|route| seiri_core::PlannerV5HeldItem {
+                    route,
+                    target_path: None,
+                    reason,
+                }),
+        );
+}
+
+fn readme_has_local_route(snapshot: &RepoSnapshot, route: RouteKind) -> bool {
+    snapshot
+        .route_assessments
+        .iter()
+        .find(|assessment| assessment.route() == route)
+        .is_some_and(|assessment| {
+            assessment
+                .readme()
+                .target_reachability()
+                .repository_local_present()
+                > 0
+        })
+}
+
+fn existing_target(snapshot: &RepoSnapshot, route: RouteKind) -> Option<&str> {
+    target_candidates(route).iter().copied().find(|candidate| {
+        let canonical_candidate = candidate.trim_end_matches('/');
+        is_safe_relative(candidate)
+            && snapshot.files.iter().any(|record| {
+                record.path == canonical_candidate
+                    || (candidate.ends_with('/') && record.path.starts_with(candidate))
+            })
+    })
+}
+
+fn target_candidates(route: RouteKind) -> &'static [&'static str] {
+    match route {
+        RouteKind::Docs => &["docs/", "docs/README.md"],
+        RouteKind::Quickstart => &["docs/getting-started.md", "docs/quickstart.md"],
+        RouteKind::Support => &["SUPPORT.md"],
+        RouteKind::Intake => &[".github/ISSUE_TEMPLATE/", "SUPPORT.md"],
+        RouteKind::Contributing => &["CONTRIBUTING.md"],
+        RouteKind::Security => &["SECURITY.md"],
+        RouteKind::Release => &["CHANGELOG.md", "docs/releases.md"],
+        RouteKind::Lifecycle => &["docs/releases.md", "CHANGELOG.md"],
+        RouteKind::Governance => &["GOVERNANCE.md"],
+        RouteKind::License => &["LICENSE", "LICENSE.md"],
+        RouteKind::Automation => &[".github/workflows/"],
+        RouteKind::Ownership => &[".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"],
+        RouteKind::Hygiene => &[".gitignore", ".gitattributes", ".editorconfig"],
+        RouteKind::Identity | RouteKind::Unknown => &[],
+    }
+}
+
+fn is_safe_relative(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+fn insertion_spans(
+    pair: Option<&seiri_core::BilingualStructuralPair>,
+    source: &[u8],
+) -> Option<Vec<usize>> {
+    match pair {
+        None => Some(vec![source.len()]),
+        Some(pair) => {
+            let mut offsets = vec![pair.left_heading.byte_end, pair.right_heading.byte_end];
+            offsets.sort_unstable();
+            offsets.dedup();
+            if offsets.len() != 2
+                || offsets.iter().any(|offset| {
+                    *offset > source.len()
+                        || std::str::from_utf8(source)
+                            .map_or(true, |text| !text.is_char_boundary(*offset))
+                })
+            {
+                None
+            } else {
+                Some(offsets)
+            }
+        }
+    }
+}
+
+fn route_label(route: RouteKind) -> &'static str {
+    match route {
+        RouteKind::Docs => "Documentation",
+        RouteKind::Quickstart => "Quickstart",
+        RouteKind::Support => "Support",
+        RouteKind::Intake => "Issue intake",
+        RouteKind::Contributing => "Contributing",
+        RouteKind::Security => "Security policy",
+        RouteKind::Release => "Changes and releases",
+        RouteKind::Lifecycle => "Lifecycle",
+        RouteKind::Governance => "Governance",
+        RouteKind::License => "License",
+        RouteKind::Automation => "Automation",
+        RouteKind::Ownership => "Ownership",
+        RouteKind::Hygiene => "Repository hygiene",
+        RouteKind::Identity | RouteKind::Unknown => "Repository information",
+    }
+}
+
 const LEGACY_PLANNER_VERSION: &str = "safe_patch_planner.v3";
 const PLANNER_VERSION: &str = "safe_patch_planner.v4";
 

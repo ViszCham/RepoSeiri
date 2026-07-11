@@ -22,8 +22,9 @@ fn q11_lifecycle_and_verified_security_routes_keep_claim_boundaries() {
         .expect("lifecycle README route entry");
     assert_eq!(lifecycle_readme_route.state, RouteState::Verified);
 
-    let lifecycle_snapshot = seiri_report::audit_repository(fixture("lifecycle-route-repo"))
-        .expect("audit lifecycle fixture");
+    let lifecycle_snapshot =
+        seiri_report::audit_repository_subtree(fixture("lifecycle-route-repo"))
+            .expect("audit lifecycle fixture");
     let lifecycle = lifecycle_snapshot
         .route_states
         .iter()
@@ -32,8 +33,9 @@ fn q11_lifecycle_and_verified_security_routes_keep_claim_boundaries() {
     assert_eq!(lifecycle.state, RouteState::Routed);
     assert!(!lifecycle.evidence_ids.is_empty());
 
-    let security_snapshot = seiri_report::audit_repository(fixture("verified-security-route-repo"))
-        .expect("audit verified security fixture");
+    let security_snapshot =
+        seiri_report::audit_repository_subtree(fixture("verified-security-route-repo"))
+            .expect("audit verified security fixture");
     let security = security_snapshot
         .route_states
         .iter()

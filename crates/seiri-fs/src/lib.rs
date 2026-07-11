@@ -1,4 +1,4 @@
-use seiri_core::{FileRecord, ImportantFile};
+use seiri_core::{FileRecord, IgnoredShallowRecord, ImportantFile};
 use std::path::{Path, PathBuf};
 
 mod classify;
@@ -16,6 +16,7 @@ pub struct RepoFsScan {
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
     pub walk_summary: RepositoryWalkSummary,
+    pub ignored_shallow: Vec<IgnoredShallowRecord>,
 }
 
 pub fn scan_repository(path: impl AsRef<Path>) -> Result<RepoFsScan, FsError> {
@@ -28,11 +29,12 @@ pub fn scan_repository_with_options(
 ) -> Result<RepoFsScan, FsError> {
     let walk = walk_repository_with_options(path, options)?;
     let important_files = classify::classify_important_files(walk.records());
-    let (root, files, walk_summary) = walk.into_parts();
+    let (root, files, walk_summary, ignored_shallow) = walk.into_parts();
     Ok(RepoFsScan {
         repo_root: root.into_path_buf(),
         files,
         important_files,
         walk_summary,
+        ignored_shallow,
     })
 }

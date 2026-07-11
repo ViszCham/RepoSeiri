@@ -1,4 +1,6 @@
-use seiri_core::{BaselineStatus, ProfileEvidenceBasis, ProfileKind, ProfileWeightBasis};
+use seiri_core::{
+    BaselineStatus, CalibrationPriorState, ProfileEvidenceBasis, ProfileKind, ProfileWeightBasis,
+};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -9,10 +11,12 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn profile_rules_change_recommendation_order_by_repository_purpose() {
-    let cli_snapshot =
-        seiri_report::audit_repository_with_profile(fixture("docs-routed-repo"), ProfileKind::Cli)
-            .expect("audit cli profile");
-    let infra_snapshot = seiri_report::audit_repository_with_profile(
+    let cli_snapshot = seiri_report::audit_repository_subtree_with_profile(
+        fixture("docs-routed-repo"),
+        ProfileKind::Cli,
+    )
+    .expect("audit cli profile");
+    let infra_snapshot = seiri_report::audit_repository_subtree_with_profile(
         fixture("docs-routed-repo"),
         ProfileKind::Infra,
     )
@@ -37,9 +41,11 @@ fn profile_rules_change_recommendation_order_by_repository_purpose() {
 
 #[test]
 fn profile_score_view_is_deterministic_and_bounded() {
-    let snapshot =
-        seiri_report::audit_repository_with_profile(fixture("docs-routed-repo"), ProfileKind::Docs)
-            .expect("audit docs profile");
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
+        fixture("docs-routed-repo"),
+        ProfileKind::Docs,
+    )
+    .expect("audit docs profile");
     let profile = snapshot.profile.expect("profile report");
 
     assert_eq!(profile.profile, ProfileKind::Docs);
@@ -71,7 +77,7 @@ fn profile_score_view_is_deterministic_and_bounded() {
 
 #[test]
 fn profile_report_keeps_missing_recommendations_ranked() {
-    let snapshot = seiri_report::audit_repository_with_profile(
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
         fixture("missing-readme-repo"),
         ProfileKind::Library,
     )
@@ -86,8 +92,8 @@ fn profile_report_keeps_missing_recommendations_ranked() {
 }
 
 #[test]
-fn profile_branch_confidence_emits_multiple_candidates_with_priors() {
-    let snapshot = seiri_report::audit_repository_with_profile(
+fn profile_branch_semantics_emit_multiple_candidates_without_implicit_priors() {
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
         fixture("readme-route-repo"),
         ProfileKind::Common,
     )
@@ -101,10 +107,9 @@ fn profile_branch_confidence_emits_multiple_candidates_with_priors() {
         .branch_summary
         .boundary
         .contains("not a repository type assertion"));
-    assert!(profile
-        .branches
-        .windows(2)
-        .all(|window| { window[0].confidence_x100 >= window[1].confidence_x100 }));
+    assert!(profile.branches.windows(2).all(|window| {
+        window[0].semantics.rank_score.get() >= window[1].semantics.rank_score.get()
+    }));
 
     let library = profile
         .branches
@@ -132,11 +137,14 @@ fn profile_branch_confidence_emits_multiple_candidates_with_priors() {
         .find(|branch| branch.profile == ProfileKind::Ml)
         .expect("ml branch");
 
-    assert_eq!(library.prior_x1000, 280);
-    assert_eq!(cli.prior_x1000, 110);
-    assert_eq!(product.prior_x1000, 90);
-    assert_eq!(runtime.prior_x1000, 45);
-    assert_eq!(ml.prior_x1000, 75);
+    for branch in [library, cli, product, runtime, ml] {
+        assert_eq!(branch.prior_x1000, 0);
+        assert_eq!(
+            branch.semantics.calibration_prior,
+            CalibrationPriorState::NotRequested
+        );
+        assert_eq!(branch.confidence_x100, branch.semantics.rank_score.get());
+    }
     assert!(library.confidence_x100 > 0);
     assert!(cli.confidence_x100 > 0);
     assert!(!library.matched_signals.is_empty());

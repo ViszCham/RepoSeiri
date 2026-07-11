@@ -234,8 +234,7 @@ fn q28_unsupported_yaml_is_local_unknown_with_a_precise_span() {
             "name: Unsupported\n",
             "jobs:\n",
             "  test:\n",
-            "    run: |\n",
-            "      cargo test\n",
+            "    runs-on: &runner ubuntu-latest\n",
         ),
     );
 

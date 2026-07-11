@@ -9,9 +9,11 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn codex_context_uses_audit_and_plan_outputs_for_pr_draft() {
-    let context =
-        seiri_report::codex_repository_with_profile(fixture("safe-plan-repo"), ProfileKind::Common)
-            .expect("codex context");
+    let context = seiri_report::codex_repository_subtree_with_profile(
+        fixture("safe-plan-repo"),
+        ProfileKind::Common,
+    )
+    .expect("codex context");
 
     assert_eq!(context.schema_version, "seiri.block_p.v1");
     assert_eq!(context.profile, Some(ProfileKind::Common));
@@ -67,9 +69,11 @@ fn codex_context_uses_audit_and_plan_outputs_for_pr_draft() {
 
 #[test]
 fn codex_context_renders_user_actions_without_mutation() {
-    let context =
-        seiri_report::codex_repository_with_profile(fixture("safe-plan-repo"), ProfileKind::Common)
-            .expect("codex context");
+    let context = seiri_report::codex_repository_subtree_with_profile(
+        fixture("safe-plan-repo"),
+        ProfileKind::Common,
+    )
+    .expect("codex context");
     let markdown = seiri_report::codex_to_markdown(&context);
     let body = seiri_report::codex_pr_body_to_markdown(&context);
 
@@ -103,7 +107,7 @@ fn codex_context_renders_user_actions_without_mutation() {
 
 #[test]
 fn codex_context_json_contains_pr_draft_surface() {
-    let context = seiri_report::codex_repository_with_profile(
+    let context = seiri_report::codex_repository_subtree_with_profile(
         fixture("missing-readme-repo"),
         ProfileKind::Library,
     )
@@ -126,7 +130,7 @@ fn codex_context_json_contains_pr_draft_surface() {
 
 #[test]
 fn q5_codex_context_binds_route_digests_to_claim_ids() {
-    let context = seiri_report::codex_repository_with_profile(
+    let context = seiri_report::codex_repository_subtree_with_profile(
         fixture("readme-route-repo"),
         ProfileKind::Common,
     )
@@ -160,7 +164,7 @@ fn q5_codex_context_binds_route_digests_to_claim_ids() {
 
 #[test]
 fn q10_codex_context_carries_claim_wording_and_route_meaning_digests() {
-    let context = seiri_report::codex_repository_with_profile(
+    let context = seiri_report::codex_repository_subtree_with_profile(
         fixture("wording-lint-repo"),
         ProfileKind::Common,
     )

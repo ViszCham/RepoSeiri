@@ -1,4 +1,14 @@
+mod local_prior;
+mod private_overlay;
 mod streaming;
+
+pub use local_prior::{
+    load_local_calibration_provider, load_local_calibration_provider_for_registry,
+    LocalCalibrationProvider, LocalPriorLoadError, LOCAL_PRIOR_SCHEMA_VERSION,
+};
+pub use private_overlay::{
+    load_private_calibration_overlay, PrivateCalibrationOverlay, PrivateOverlayLoadError,
+};
 
 pub use streaming::{
     calibrate_jsonl_path, calibrate_jsonl_reader, calibrate_jsonl_reader_with_limits,
@@ -7,12 +17,13 @@ pub use streaming::{
 
 use seiri_core::{
     stable_id, BaselineRequirement, BenchmarkDataset, BenchmarkRepoRecord,
-    CalibrationAggregationMode, CalibrationConfidence, CalibrationRecordIdentity,
-    CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun, CalibrationScale,
-    CalibrationSource, CalibrationSourceKind, CalibrationSourceVisibility, CalibrationSummary,
-    ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence, PatternStats,
-    PendingPatternCandidate, ProfileBranch, ProfileKind, ProfilePatternCorrelation,
-    ProfilePriority, RouteKind, RouteRequirement, WeightSuggestion, SCHEMA_VERSION,
+    CalibrationAggregationMode, CalibrationConfidence, CalibrationPriorState,
+    CalibrationRecordIdentity, CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun,
+    CalibrationScale, CalibrationSource, CalibrationSourceKind, CalibrationSourceVisibility,
+    CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence,
+    PatternStats, PendingPatternCandidate, ProfileBranch, ProfileBranchSemantics,
+    ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePatternCorrelation, ProfilePriority,
+    ProfileRankScore, RouteKind, RouteRequirement, WeightSuggestion, SCHEMA_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -700,6 +711,14 @@ fn build_profile_branches(
                 confidence_x100,
                 evidence_score_x100: (prior_x1000 / 10).min(100) as u8,
                 score_x100: confidence_x100,
+                semantics: ProfileBranchSemantics {
+                    fit: ProfileFit::from_bounded(confidence_x100),
+                    evidence_match: ProfileEvidenceMatch::from_bounded(
+                        (prior_x1000 / 10).min(100) as u8,
+                    ),
+                    rank_score: ProfileRankScore::from_bounded(confidence_x100),
+                    calibration_prior: CalibrationPriorState::AppliedRedacted,
+                },
                 matched_signals: vec![
                     format!("profile_hint:{profile}"),
                     format!("records:{repositories}"),

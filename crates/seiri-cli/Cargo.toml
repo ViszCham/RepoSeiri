@@ -14,3 +14,6 @@ seiri-report = { path = "../seiri-report" }
 [[bin]]
 name = "seiri"
 path = "src/main.rs"
+
+[dev-dependencies]
+serde_json.workspace = true

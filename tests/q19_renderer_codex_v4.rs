@@ -13,7 +13,8 @@ fn fixture(name: &str) -> PathBuf {
 
 fn build_kernel(name: &str, profile: ProfileKind) -> seiri_codex::CodexReviewKernel {
     let root = fixture(name);
-    let snapshot = seiri_report::audit_repository_with_profile(&root, profile).expect("audit");
+    let snapshot =
+        seiri_report::audit_repository_subtree_with_profile(&root, profile).expect("audit");
     let plan = seiri_planner::plan_compatibility_safe_patches(&snapshot);
     let linter =
         seiri_report::lint_wording_repository_with_profile(&root, profile).expect("wording lint");

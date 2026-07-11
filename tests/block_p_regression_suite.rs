@@ -1,6 +1,6 @@
 use seiri_core::{
-    EvidenceConfidence, GateKind, ProfileKind, ProfilePriority, RouteKind, RouteState,
-    SCHEMA_VERSION,
+    CalibrationPriorState, EvidenceConfidence, GateKind, ProfileKind, ProfilePriority, RouteKind,
+    RouteState, SCHEMA_VERSION,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -33,21 +33,23 @@ fn block_p_profile_fixture_matrix_locks_9_profile_branch_cases() {
     assert_eq!(branch_profiles, expected_profiles);
 
     let cases = [
-        ("profile-library-regression", ProfileKind::Library, 93),
-        ("profile-cli-regression", ProfileKind::Cli, 88),
-        ("profile-infra-regression", ProfileKind::Infra, 85),
-        ("profile-product-regression", ProfileKind::Product, 85),
-        ("profile-runtime-regression", ProfileKind::Runtime, 82),
-        ("profile-docs-regression", ProfileKind::Docs, 77),
-        ("profile-tutorial-regression", ProfileKind::Tutorial, 84),
-        ("profile-ml-regression", ProfileKind::Ml, 82),
-        ("profile-template-regression", ProfileKind::Template, 75),
+        ("profile-library-regression", ProfileKind::Library, 79),
+        ("profile-cli-regression", ProfileKind::Cli, 83),
+        ("profile-infra-regression", ProfileKind::Infra, 77),
+        ("profile-product-regression", ProfileKind::Product, 81),
+        ("profile-runtime-regression", ProfileKind::Runtime, 80),
+        ("profile-docs-regression", ProfileKind::Docs, 73),
+        ("profile-tutorial-regression", ProfileKind::Tutorial, 79),
+        ("profile-ml-regression", ProfileKind::Ml, 79),
+        ("profile-template-regression", ProfileKind::Template, 74),
     ];
 
     for (fixture_name, expected_profile, expected_confidence) in cases {
-        let snapshot =
-            seiri_report::audit_repository_with_profile(fixture(fixture_name), ProfileKind::Common)
-                .expect("audit profile fixture");
+        let snapshot = seiri_report::audit_repository_subtree_with_profile(
+            fixture(fixture_name),
+            ProfileKind::Common,
+        )
+        .expect("audit profile fixture");
         assert_eq!(snapshot.schema_version, SCHEMA_VERSION);
         let profile = snapshot.profile.as_ref().expect("profile report");
         assert_eq!(profile.branch_summary.emitted_profiles, 9);
@@ -67,6 +69,12 @@ fn block_p_profile_fixture_matrix_locks_9_profile_branch_cases() {
             Some(expected_confidence)
         );
         assert_eq!(top.evidence_score_x100, 100);
+        assert_eq!(top.prior_x1000, 0);
+        assert_eq!(
+            top.semantics.calibration_prior,
+            CalibrationPriorState::NotRequested
+        );
+        assert_eq!(top.confidence_x100, top.semantics.rank_score.get());
         assert!(!top.matched_signals.is_empty());
         assert!(top.rationale.contains("not a repository type assertion"));
     }
@@ -140,7 +148,7 @@ fn block_p_route_state_matrix_locks_representative_states() {
     let mut seen_states = BTreeSet::new();
     for (fixture_name, route, expected_state, expected_confidence) in cases {
         let snapshot =
-            seiri_report::audit_repository(fixture(fixture_name)).expect("audit fixture");
+            seiri_report::audit_repository_subtree(fixture(fixture_name)).expect("audit fixture");
         let route_state = snapshot
             .route_states
             .iter()
@@ -168,49 +176,49 @@ fn block_p_gate_and_co_occurrence_regression_matrix_is_stable() {
             "missing-readme-repo",
             RouteKind::Identity,
             GateKind::Manual,
-            ProfilePriority::Critical,
-            100,
+            ProfilePriority::Normal,
+            46,
         ),
         (
             "readme-route-map-v2-repo",
             RouteKind::License,
             GateKind::Manual,
-            ProfilePriority::Critical,
-            100,
+            ProfilePriority::Normal,
+            50,
         ),
         (
             "safe-plan-repo",
             RouteKind::Security,
             GateKind::Manual,
-            ProfilePriority::Critical,
-            100,
+            ProfilePriority::Normal,
+            51,
         ),
         (
             "security-support-intake-automation-repo",
             RouteKind::Docs,
             GateKind::Safe,
-            ProfilePriority::High,
-            71,
+            ProfilePriority::Normal,
+            41,
         ),
         (
             "security-support-intake-automation-repo",
             RouteKind::Release,
             GateKind::Guarded,
-            ProfilePriority::Critical,
-            86,
+            ProfilePriority::Normal,
+            41,
         ),
         (
             "nested-license-only-repo",
             RouteKind::License,
             GateKind::Manual,
-            ProfilePriority::Critical,
-            100,
+            ProfilePriority::Normal,
+            50,
         ),
     ];
 
     for (fixture_name, route, expected_gate, expected_priority, expected_score) in priority_cases {
         let snapshot =
-            seiri_report::audit_repository(fixture(fixture_name)).expect("audit fixture");
+            seiri_report::audit_repository_subtree(fixture(fixture_name)).expect("audit fixture");
         let priority = snapshot
             .missing_route_priority
             .priorities
@@ -230,29 +238,29 @@ fn block_p_gate_and_co_occurrence_regression_matrix_is_stable() {
             "missing-readme-repo",
             "co-README-LICENSE",
             GateKind::Manual,
-            ProfilePriority::Critical,
-            905,
+            ProfilePriority::Low,
+            0,
         ),
         (
             "readme-route-map-v2-repo",
             "co-README-SUPPORT-ISSUE-FORMS",
             GateKind::Guarded,
-            ProfilePriority::High,
-            300,
+            ProfilePriority::Low,
+            0,
         ),
         (
             "safe-plan-repo",
             "co-README-SECURITY-CI-DEPENDENCY-BOT",
             GateKind::Guarded,
-            ProfilePriority::Normal,
-            260,
+            ProfilePriority::Low,
+            0,
         ),
         (
             "security-support-intake-automation-repo",
             "co-CODEOWNERS-CI-PR-TEMPLATE",
             GateKind::Manual,
-            ProfilePriority::Normal,
-            240,
+            ProfilePriority::Low,
+            0,
         ),
     ];
 
@@ -260,7 +268,7 @@ fn block_p_gate_and_co_occurrence_regression_matrix_is_stable() {
         co_occurrence_cases
     {
         let snapshot =
-            seiri_report::audit_repository(fixture(fixture_name)).expect("audit fixture");
+            seiri_report::audit_repository_subtree(fixture(fixture_name)).expect("audit fixture");
         let gap = snapshot
             .missing_route_priority
             .co_occurrence_gaps

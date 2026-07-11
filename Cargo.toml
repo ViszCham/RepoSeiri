@@ -13,6 +13,8 @@ members = [
     "crates/seiri-fs",
     "crates/seiri-markdown",
     "crates/seiri-github-local",
+    "crates/seiri-git-local",
+    "crates/seiri-delta",
     "crates/seiri-remote",
     "crates/seiri-patterns",
     "crates/seiri-profiles",
@@ -34,12 +36,28 @@ publish = false
 clap = { version = "=4.5.53", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "=0.8.23"
+gix = { version = "=0.63.0", default-features = false, features = ["revision"] }
+home = "=0.5.9"
+time = "=0.3.36"
+indexmap = "=2.7.1"
+url = "=2.5.0"
+tempfile = "=3.10.1"
+gix-trace = "=0.1.12"
+clru = "=0.6.2"
+unicode-bom = "=2.0.2"
+gix-bitmap = "=0.2.11"
+gix-chunk = "=0.4.8"
+gix-validate = "=0.10.0"
+sha2 = "=0.10.9"
 
 [dev-dependencies]
 seiri-core = { path = "crates/seiri-core" }
 seiri-fs = { path = "crates/seiri-fs" }
 seiri-markdown = { path = "crates/seiri-markdown" }
 seiri-github-local = { path = "crates/seiri-github-local" }
+seiri-git-local = { path = "crates/seiri-git-local" }
+seiri-delta = { path = "crates/seiri-delta" }
 seiri-remote = { path = "crates/seiri-remote" }
 seiri-patterns = { path = "crates/seiri-patterns" }
 seiri-profiles = { path = "crates/seiri-profiles" }

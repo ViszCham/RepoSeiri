@@ -10,7 +10,7 @@ fn fixture(name: &str) -> PathBuf {
 #[test]
 fn block_l_operational_files_feed_route_states() {
     let snapshot =
-        seiri_report::audit_repository(fixture("security-support-intake-automation-repo"))
+        seiri_report::audit_repository_subtree(fixture("security-support-intake-automation-repo"))
             .expect("audit fixture");
 
     assert_eq!(snapshot.schema_version, "seiri.block_p.v1");
@@ -39,7 +39,7 @@ fn block_l_operational_files_feed_route_states() {
 #[test]
 fn block_l_candidate_patterns_use_low_level_evidence() {
     let snapshot =
-        seiri_report::audit_repository(fixture("security-support-intake-automation-repo"))
+        seiri_report::audit_repository_subtree(fixture("security-support-intake-automation-repo"))
             .expect("audit fixture");
     let registry = seiri_patterns::common_registry();
 

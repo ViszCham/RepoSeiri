@@ -91,27 +91,9 @@ fn readme_route_map_detects_weak_conflicting_overloaded_and_stale_routes() {
         RouteState::Verified
     );
 
-    assert_eq!(
-        route_entry(&summary, RouteKind::Docs)
-            .gap_estimate
-            .expect("docs gap estimate")
-            .estimated_repositories,
-        186_000
-    );
-    assert_eq!(
-        route_entry(&summary, RouteKind::Quickstart)
-            .gap_estimate
-            .expect("quickstart gap estimate")
-            .estimated_repositories,
-        438_000
-    );
-    assert_eq!(
-        route_entry(&summary, RouteKind::Release)
-            .gap_estimate
-            .expect("release gap estimate")
-            .estimated_repositories,
-        454_000
-    );
+    for route in [RouteKind::Docs, RouteKind::Quickstart, RouteKind::Release] {
+        assert_eq!(route_entry(&summary, route).gap_estimate, None);
+    }
 }
 
 #[test]

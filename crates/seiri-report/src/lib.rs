@@ -1,17 +1,18 @@
 use seiri_core::{
-    BaselineStatus, CalibrationRun, ClaimBoundaryKind, ClaimId, ClaimRefIndex, ClaimStrength,
-    CodexLinterContext, CodexNativeReviewContext, CodexQueryKind, CodexQueryView,
-    CodexReviewContext, EvidenceId, PatchEditContent, PatchPlan, PatchProposal, ProfileKind,
-    RepoSnapshot, RouteKind, RouteState, WordingLintReport,
+    BaselineStatus, CalibrationProvider, CalibrationRun, ClaimBoundaryKind, ClaimId, ClaimRefIndex,
+    ClaimStrength, CodexLinterContext, CodexNativeReviewContext, CodexQueryKind, CodexQueryView,
+    CodexReviewContext, EvidenceId, NoCalibrationProvider, PatchEditContent, PatchPlan,
+    PatchProposal, ProfileKind, RepoSnapshot, RouteKind, RouteState, WordingLintReport,
 };
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::path::Path;
 
-pub use seiri_codex::CodexNativeV3QueryKind;
+pub use seiri_codex::{CodexNativeV3QueryKind, CodexNativeV3QueryParseError};
 
 mod claims;
 mod evidence;
+mod fixture_runner;
 mod obligation_graph;
 mod route_content;
 mod route_priority;
@@ -22,8 +23,9 @@ use evidence::{
     build_evidence_kernel, build_route_assessments, legacy_evidence_ledger_view,
     legacy_evidence_view, legacy_route_state_views,
 };
-use obligation_graph::build_document_consistency_report;
-use route_content::build_route_content;
+pub use fixture_runner::run_executable_pattern_pack;
+use obligation_graph::{build_document_consistency_report, build_route_targets};
+use route_content::{build_route_content, build_route_content_v2};
 use route_priority::{build_missing_route_priority_report, build_review_priority_report};
 
 #[derive(Debug)]
@@ -31,6 +33,7 @@ pub enum AuditError {
     Fs(seiri_fs::FsError),
     Markdown(seiri_markdown::MarkdownError),
     Calibration(seiri_calibration::CalibrationError),
+    LocalPrior(seiri_calibration::LocalPriorLoadError),
     EvidenceKernel(seiri_core::EvidenceKernelError),
     EvidenceKernelV2(seiri_core::EvidenceKernelV2Error),
     DocumentIndex(seiri_core::DocumentIndexError),
@@ -38,6 +41,8 @@ pub enum AuditError {
     Coverage(seiri_core::CoverageIndexError),
     RouteAssessment(seiri_core::RouteAssessmentError),
     DocumentConsistency(seiri_core::DocumentConsistencyError),
+    GitLocal(seiri_git_local::GitLocalError),
+    Delta(seiri_delta::DeltaError),
     Json(serde_json::Error),
     Io {
         path: std::path::PathBuf,
@@ -51,6 +56,7 @@ impl Display for AuditError {
             Self::Fs(error) => write!(f, "{error}"),
             Self::Markdown(error) => write!(f, "{error}"),
             Self::Calibration(error) => write!(f, "{error}"),
+            Self::LocalPrior(error) => write!(f, "{error}"),
             Self::EvidenceKernel(error) => write!(f, "{error}"),
             Self::EvidenceKernelV2(error) => write!(f, "{error}"),
             Self::DocumentIndex(error) => write!(f, "{error}"),
@@ -58,6 +64,8 @@ impl Display for AuditError {
             Self::Coverage(error) => write!(f, "{error}"),
             Self::RouteAssessment(error) => write!(f, "{error}"),
             Self::DocumentConsistency(error) => write!(f, "{error}"),
+            Self::GitLocal(error) => write!(f, "{error}"),
+            Self::Delta(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
             Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
         }
@@ -70,6 +78,7 @@ impl std::error::Error for AuditError {
             Self::Fs(error) => Some(error),
             Self::Markdown(error) => Some(error),
             Self::Calibration(error) => Some(error),
+            Self::LocalPrior(error) => Some(error),
             Self::EvidenceKernel(error) => Some(error),
             Self::EvidenceKernelV2(error) => Some(error),
             Self::DocumentIndex(error) => Some(error),
@@ -77,6 +86,8 @@ impl std::error::Error for AuditError {
             Self::Coverage(error) => Some(error),
             Self::RouteAssessment(error) => Some(error),
             Self::DocumentConsistency(error) => Some(error),
+            Self::GitLocal(error) => Some(error),
+            Self::Delta(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io { source, .. } => Some(source),
         }
@@ -98,6 +109,12 @@ impl From<seiri_markdown::MarkdownError> for AuditError {
 impl From<seiri_calibration::CalibrationError> for AuditError {
     fn from(value: seiri_calibration::CalibrationError) -> Self {
         Self::Calibration(value)
+    }
+}
+
+impl From<seiri_calibration::LocalPriorLoadError> for AuditError {
+    fn from(value: seiri_calibration::LocalPriorLoadError) -> Self {
+        Self::LocalPrior(value)
     }
 }
 
@@ -143,6 +160,84 @@ impl From<seiri_core::DocumentConsistencyError> for AuditError {
     }
 }
 
+impl From<seiri_git_local::GitLocalError> for AuditError {
+    fn from(value: seiri_git_local::GitLocalError) -> Self {
+        Self::GitLocal(value)
+    }
+}
+
+impl From<seiri_delta::DeltaError> for AuditError {
+    fn from(value: seiri_delta::DeltaError) -> Self {
+        Self::Delta(value)
+    }
+}
+
+pub fn portable_audit_snapshot(
+    snapshot: &RepoSnapshot,
+) -> Result<seiri_core::PortableAuditSnapshot, AuditError> {
+    Ok(seiri_delta::portable_snapshot(snapshot)?)
+}
+
+pub fn diff_snapshots(
+    before: &RepoSnapshot,
+    after: &RepoSnapshot,
+) -> Result<seiri_core::AuditDeltaReport, AuditError> {
+    let before = seiri_delta::portable_snapshot(before)?;
+    let after = seiri_delta::portable_snapshot(after)?;
+    Ok(seiri_delta::compare(&before, &after))
+}
+
+pub fn audit_delta_to_json(report: &seiri_core::AuditDeltaReport) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+#[must_use]
+pub fn audit_delta_to_markdown(report: &seiri_core::AuditDeltaReport) -> String {
+    let mut output = String::new();
+    output.push_str("# RepoSeiri Audit Delta\n\n");
+    output.push_str(&format!("- Compatibility: `{:?}`\n", report.compatibility));
+    output.push_str(&format!("- Route deltas: {}\n", report.routes.len()));
+    output.push_str(&format!(
+        "- Regression candidates: {}\n",
+        report.regressions.len()
+    ));
+    output.push_str(&format!(
+        "- Improvement candidates: {}\n\n",
+        report.improvements.len()
+    ));
+    if !report.routes.is_empty() {
+        output.push_str("## Routes\n\n| Route | State |\n|---|---|\n");
+        for delta in &report.routes {
+            output.push_str(&format!("| `{:?}` | `{:?}` |\n", delta.route, delta.state));
+        }
+        output.push('\n');
+    }
+    if !report.regressions.is_empty() {
+        output.push_str("## Regression Candidates\n\n");
+        for regression in &report.regressions {
+            output.push_str(&format!(
+                "- `{}` / `{}`: `{:?}`\n",
+                regression.domain, regression.key, regression.state
+            ));
+        }
+        output.push('\n');
+    }
+    if !report.improvements.is_empty() {
+        output.push_str("## Improvement Candidates\n\n");
+        for improvement in &report.improvements {
+            output.push_str(&format!(
+                "- `{}` / `{}`: `{:?}`\n",
+                improvement.domain, improvement.key, improvement.state
+            ));
+        }
+        output.push('\n');
+    }
+    output.push_str("## Boundary\n\n");
+    output.push_str(&report.boundary);
+    output.push('\n');
+    output
+}
+
 impl From<serde_json::Error> for AuditError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
@@ -153,15 +248,88 @@ pub fn audit_repository(path: impl AsRef<Path>) -> Result<RepoSnapshot, AuditErr
     audit_repository_with_profile(path, ProfileKind::Common)
 }
 
+pub fn audit_repository_subtree(path: impl AsRef<Path>) -> Result<RepoSnapshot, AuditError> {
+    audit_repository_with_scope(
+        path,
+        ProfileKind::Common,
+        seiri_core::AnalysisScope::Subtree,
+    )
+}
+
+pub fn audit_repository_subtree_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<RepoSnapshot, AuditError> {
+    audit_repository_with_scope(path, profile, seiri_core::AnalysisScope::Subtree)
+}
+
 pub fn audit_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<RepoSnapshot, AuditError> {
-    audit_repository_with_options(
+    audit_repository_with_options_and_calibration(
         path,
         profile,
         &seiri_fs::ScanOptions::default(),
         &seiri_markdown::DocumentIndexOptions::default(),
+        seiri_core::AnalysisScope::Repository,
+        &NoCalibrationProvider,
+    )
+}
+
+pub fn audit_repository_with_scope(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    scope: seiri_core::AnalysisScope,
+) -> Result<RepoSnapshot, AuditError> {
+    audit_repository_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        scope,
+        &NoCalibrationProvider,
+    )
+}
+
+pub fn audit_repository_with_calibration_provider(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    calibration: &dyn CalibrationProvider,
+) -> Result<RepoSnapshot, AuditError> {
+    audit_repository_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        seiri_core::AnalysisScope::Repository,
+        calibration,
+    )
+}
+
+pub fn audit_repository_with_local_calibration(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    calibration_path: impl AsRef<Path>,
+) -> Result<RepoSnapshot, AuditError> {
+    let provider = seiri_calibration::load_local_calibration_provider(calibration_path)?;
+    audit_repository_with_calibration_provider(path, profile, &provider)
+}
+
+pub fn audit_repository_with_local_calibration_and_scope(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    calibration_path: impl AsRef<Path>,
+    scope: seiri_core::AnalysisScope,
+) -> Result<RepoSnapshot, AuditError> {
+    let provider = seiri_calibration::load_local_calibration_provider(calibration_path)?;
+    audit_repository_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        scope,
+        &provider,
     )
 }
 
@@ -186,7 +354,55 @@ pub fn audit_repository_with_options(
     fs_options: &seiri_fs::ScanOptions,
     document_options: &seiri_markdown::DocumentIndexOptions,
 ) -> Result<RepoSnapshot, AuditError> {
-    let fs_scan = seiri_fs::scan_repository_with_options(path, fs_options)?;
+    audit_repository_with_options_and_calibration(
+        path,
+        profile,
+        fs_options,
+        document_options,
+        seiri_core::AnalysisScope::Repository,
+        &NoCalibrationProvider,
+    )
+}
+
+pub fn audit_repository_with_options_and_scope(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    fs_options: &seiri_fs::ScanOptions,
+    document_options: &seiri_markdown::DocumentIndexOptions,
+    scope: seiri_core::AnalysisScope,
+) -> Result<RepoSnapshot, AuditError> {
+    audit_repository_with_options_and_calibration(
+        path,
+        profile,
+        fs_options,
+        document_options,
+        scope,
+        &NoCalibrationProvider,
+    )
+}
+
+fn audit_repository_with_options_and_calibration(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    fs_options: &seiri_fs::ScanOptions,
+    document_options: &seiri_markdown::DocumentIndexOptions,
+    analysis_scope: seiri_core::AnalysisScope,
+    calibration: &dyn CalibrationProvider,
+) -> Result<RepoSnapshot, AuditError> {
+    let discovered = seiri_git_local::discover_repository(path.as_ref(), analysis_scope)
+        .map_err(seiri_git_local::GitLocalError::from)?;
+    let fs_scan = seiri_fs::scan_repository_with_options(discovered.analysis_root(), fs_options)?;
+    let repository_scope = seiri_git_local::analyze_discovered_repository(
+        &discovered,
+        &fs_scan.files,
+        &fs_scan.ignored_shallow,
+        fs_scan.walk_summary.ignored_records_truncated,
+        seiri_git_local::RepositoryAnalysisOptions {
+            scope: analysis_scope,
+            ..seiri_git_local::RepositoryAnalysisOptions::default()
+        },
+        &seiri_git_local::GixReadBackend,
+    );
     let document_index = seiri_markdown::scan_document_index_with_options(
         &fs_scan.repo_root,
         &fs_scan.files,
@@ -197,11 +413,55 @@ pub fn audit_repository_with_options(
     let readme = readme_document.as_ref().map(|document| {
         seiri_markdown::summarize_readme_document(document, Some(&fs_scan.repo_root))
     });
-    let repo_root = fs_scan.repo_root.to_string_lossy().replace('\\', "/");
+    let repo_root = normalize_public_path(&fs_scan.repo_root);
     let mut snapshot = RepoSnapshot::new(repo_root);
+    let repository_options = seiri_git_local::RepositoryAnalysisOptions {
+        scope: analysis_scope,
+        ..seiri_git_local::RepositoryAnalysisOptions::default()
+    };
+    snapshot.analysis_configuration = seiri_core::AnalysisConfiguration {
+        schema_version: seiri_core::SCHEMA_VERSION.to_string(),
+        scope: analysis_scope,
+        profile,
+        budgets: seiri_core::AnalysisBudgetConfiguration {
+            filesystem_max_depth: fs_options.max_depth,
+            filesystem_max_entries: fs_options.max_entries,
+            filesystem_max_ignored_records: fs_options.max_ignored_records,
+            filesystem_additional_ignored_names: fs_options
+                .ignore_policy
+                .additional_names()
+                .to_vec(),
+            document_max_documents: document_options.max_documents,
+            document_max_total_source_bytes: document_options.max_total_source_bytes,
+            document_max_source_bytes: document_options.document.max_source_bytes,
+            document_max_events: document_options.document.max_events,
+            document_max_diagnostics: document_options.document.max_diagnostics,
+            git_max_refs: repository_options.git.max_refs,
+            git_max_tags: repository_options.git.max_tags,
+            git_max_commit_headers: repository_options.git.max_commit_headers,
+            scope: repository_options.graph,
+        },
+        pattern_registry_fingerprint: seiri_patterns::common_pattern_pack()
+            .fingerprint()
+            .to_string(),
+        visibility: match calibration.visibility() {
+            None => seiri_core::AnalysisVisibility::Standard,
+            Some(seiri_core::PriorVisibility::PublicSynthetic) => {
+                seiri_core::AnalysisVisibility::PublicSyntheticCalibration
+            }
+            Some(seiri_core::PriorVisibility::LocalOnly) => {
+                seiri_core::AnalysisVisibility::LocalPrivateCalibration
+            }
+            Some(seiri_core::PriorVisibility::Redacted) => {
+                seiri_core::AnalysisVisibility::RedactedCalibration
+            }
+        },
+        redacted_calibration_fingerprint: calibration.redacted_fingerprint().map(str::to_owned),
+    };
     snapshot.entry_count = fs_scan.files.len();
     snapshot.files = fs_scan.files.clone();
     snapshot.important_files = fs_scan.important_files.clone();
+    snapshot.repository_scope = repository_scope;
     snapshot.document_index = document_index;
     snapshot.readme_document = readme_document;
     snapshot.readme = readme;
@@ -216,6 +476,11 @@ pub fn audit_repository_with_options(
         &fs_scan.repo_root,
         &snapshot.document_index,
     )?;
+    snapshot.github_semantics = seiri_core::GithubSemanticsReport::build(
+        &snapshot.github_local_documents,
+        &snapshot.repository_scope.graph,
+        &snapshot.important_files,
+    );
     snapshot.coverage = build_coverage_index(
         &fs_scan,
         &snapshot.evidence_kernel_v2,
@@ -236,11 +501,24 @@ pub fn audit_repository_with_options(
         snapshot.readme.as_ref(),
     )?;
     snapshot.route_states = legacy_route_state_views(&snapshot.route_assessments);
+    snapshot.freshness = build_freshness_report(&snapshot);
     snapshot.facets = seiri_profiles::evaluate_facets(&snapshot);
-    snapshot.document_consistency = build_document_consistency_report(&snapshot)?;
-    snapshot.profile = seiri_profiles::evaluate_profile(&snapshot, profile);
-    snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot);
-    snapshot.review_priority = build_review_priority_report(&snapshot.missing_route_priority);
+    let route_target_build = build_route_targets(&snapshot);
+    snapshot.route_targets = route_target_build.targets;
+    snapshot.document_consistency =
+        build_document_consistency_report(&snapshot, route_target_build.truncated)?;
+    snapshot.route_content_v2 = build_route_content_v2(
+        &snapshot.evidence_kernel,
+        &snapshot.coverage,
+        &snapshot.document_index,
+        &snapshot.facets,
+        &snapshot.document_consistency,
+    );
+    snapshot.profile =
+        seiri_profiles::evaluate_profile_with_calibration(&snapshot, profile, calibration);
+    snapshot.missing_route_priority = build_missing_route_priority_report(&snapshot, calibration);
+    snapshot.review_priority =
+        build_review_priority_report(&snapshot.missing_route_priority, &snapshot.route_content_v2);
     snapshot.claims = build_content_claims(&snapshot);
     Ok(snapshot)
 }
@@ -322,6 +600,101 @@ fn markdown_coverage_status(
         .unwrap_or(seiri_core::CoverageStatus::Complete)
 }
 
+fn normalize_public_path(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    if let Some(rest) = path.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = path.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        path
+    }
+}
+
+fn build_freshness_report(snapshot: &RepoSnapshot) -> seiri_core::FreshnessReport {
+    let mut local_present = 0usize;
+    let mut local_missing = 0usize;
+    let mut non_local_or_unknown = 0usize;
+    for assessment in &snapshot.route_assessments {
+        let reachability = assessment.readme().target_reachability();
+        local_present += reachability.repository_local_present();
+        local_missing += reachability.repository_local_missing();
+        non_local_or_unknown += reachability.non_local_or_unknown();
+    }
+    let repository_coverage = snapshot
+        .coverage
+        .record(seiri_core::CoverageScope::RepositoryFiles)
+        .map_or(seiri_core::CoverageStatus::NotRequested, |record| {
+            record.status
+        });
+
+    let newest = snapshot
+        .repository_scope
+        .git
+        .commits
+        .iter()
+        .map(|commit| commit.committed_at)
+        .max_by_key(|timestamp| timestamp.seconds_since_epoch);
+    let oldest = snapshot
+        .repository_scope
+        .git
+        .commits
+        .iter()
+        .map(|commit| commit.committed_at)
+        .min_by_key(|timestamp| timestamp.seconds_since_epoch);
+
+    let lifecycle_assessment = snapshot
+        .route_assessments
+        .iter()
+        .find(|assessment| assessment.route() == RouteKind::Lifecycle);
+    let mut lifecycle_evidence = lifecycle_assessment
+        .into_iter()
+        .flat_map(|assessment| {
+            assessment
+                .evidence()
+                .root_structural()
+                .iter()
+                .chain(assessment.evidence().readme_routing())
+                .chain(assessment.evidence().inherited())
+                .copied()
+        })
+        .collect::<Vec<_>>();
+    lifecycle_evidence.sort_unstable();
+    lifecycle_evidence.dedup();
+    let lifecycle_state = snapshot
+        .route_states
+        .iter()
+        .find(|state| state.route == RouteKind::Lifecycle)
+        .map(|state| state.state);
+    let lifecycle_coverage = snapshot
+        .coverage
+        .record(seiri_core::CoverageScope::MarkdownDocuments)
+        .map_or(seiri_core::CoverageStatus::NotRequested, |record| {
+            record.status
+        });
+
+    seiri_core::FreshnessReport {
+        target_reachability: seiri_core::TargetReachabilityFreshness {
+            repository_local_present: local_present,
+            repository_local_missing: local_missing,
+            non_local_or_unknown,
+            coverage: repository_coverage,
+        },
+        temporal_activity: seiri_core::TemporalActivityFreshness {
+            observed_commit_headers: snapshot.repository_scope.git.commits.len(),
+            newest,
+            oldest,
+            coverage: snapshot.repository_scope.git.commits_coverage,
+        },
+        lifecycle_signal: seiri_core::LifecycleSignalFreshness {
+            route_state: lifecycle_state,
+            evidence_ids: lifecycle_evidence,
+            coverage: lifecycle_coverage,
+        },
+        ..seiri_core::FreshnessReport::default()
+    }
+}
+
 pub fn to_json(snapshot: &RepoSnapshot) -> Result<String, AuditError> {
     Ok(serde_json::to_string_pretty(snapshot)?)
 }
@@ -339,11 +712,84 @@ pub fn plan_repository(path: impl AsRef<Path>) -> Result<PatchPlan, AuditError> 
     plan_repository_with_profile(path, ProfileKind::Common)
 }
 
+pub fn plan_repository_v5(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    scope: seiri_core::AnalysisScope,
+) -> Result<seiri_core::PlannerV5Report, AuditError> {
+    let snapshot = audit_repository_with_scope(path, profile, scope)?;
+    Ok(seiri_planner::plan_existing_route_links(&snapshot))
+}
+
+pub fn plan_repository_v5_with_local_calibration(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    calibration_path: impl AsRef<Path>,
+    scope: seiri_core::AnalysisScope,
+) -> Result<seiri_core::PlannerV5Report, AuditError> {
+    let snapshot =
+        audit_repository_with_local_calibration_and_scope(path, profile, calibration_path, scope)?;
+    Ok(seiri_planner::plan_existing_route_links(&snapshot))
+}
+
+pub fn planner_v5_to_json(report: &seiri_core::PlannerV5Report) -> Result<String, AuditError> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+#[must_use]
+pub fn planner_v5_to_markdown(report: &seiri_core::PlannerV5Report) -> String {
+    let mut output = String::from("# RepoSeiri Patch Planner v5\n\n");
+    output.push_str(&format!(
+        "- Existing-target link operations: {}\n",
+        report.operations.len()
+    ));
+    output.push_str(&format!("- Held routes: {}\n", report.held.len()));
+    output.push_str("- Writes files: `false`\n\n");
+    if !report.operations.is_empty() {
+        output.push_str("## Operations\n\n");
+        for operation in &report.operations {
+            output.push_str(&format!(
+                "- `{:?}` -> `{}` (paired language: `{}`)\n",
+                operation.route, operation.target_path, operation.paired_language
+            ));
+        }
+        output.push('\n');
+    }
+    if !report.held.is_empty() {
+        output.push_str("## Held\n\n");
+        for item in &report.held {
+            output.push_str(&format!("- `{:?}`: `{:?}`\n", item.route, item.reason));
+        }
+        output.push('\n');
+    }
+    output.push_str("## Boundary\n\n");
+    output.push_str(&report.boundary);
+    output.push('\n');
+    output
+}
+
 pub fn plan_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<PatchPlan, AuditError> {
     let snapshot = audit_repository_with_profile(path, profile)?;
+    Ok(seiri_planner::plan_safe_patches(&snapshot))
+}
+
+pub fn plan_repository_subtree_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<PatchPlan, AuditError> {
+    let snapshot = audit_repository_subtree_with_profile(path, profile)?;
+    Ok(seiri_planner::plan_safe_patches(&snapshot))
+}
+
+pub fn plan_repository_with_local_calibration(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    calibration_path: impl AsRef<Path>,
+) -> Result<PatchPlan, AuditError> {
+    let snapshot = audit_repository_with_local_calibration(path, profile, calibration_path)?;
     Ok(seiri_planner::plan_safe_patches(&snapshot))
 }
 
@@ -397,6 +843,17 @@ pub fn codex_repository_with_profile(
     Ok(codex_repository_kernel_with_profile(path, profile)?.compatibility_v1())
 }
 
+pub fn codex_repository_subtree_with_profile(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+) -> Result<CodexReviewContext, AuditError> {
+    let path = path.as_ref();
+    let snapshot = audit_repository_subtree_with_profile(path, profile)?;
+    let plan = seiri_planner::plan_compatibility_safe_patches(&snapshot);
+    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
+    Ok(seiri_codex::build_review_kernel(&snapshot, &plan, Some(&wording_lint)).compatibility_v1())
+}
+
 pub fn codex_native_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
@@ -412,8 +869,12 @@ pub fn codex_native_v3_query_repository_to_json(
     let path = path.as_ref();
     let snapshot = audit_repository_with_profile(path, profile)?;
     let plan = seiri_planner::plan_safe_patches(&snapshot);
-    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
-    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, Some(&wording_lint));
+    let wording_lint = if query == CodexNativeV3QueryKind::Linter {
+        Some(wording::lint_repository_with_profile(path, profile)?)
+    } else {
+        None
+    };
+    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, wording_lint.as_ref());
     Ok(serde_json::to_string_pretty(&view.query(query))?)
 }
 
@@ -425,8 +886,12 @@ pub fn codex_native_v3_query_repository_to_markdown(
     let path = path.as_ref();
     let snapshot = audit_repository_with_profile(path, profile)?;
     let plan = seiri_planner::plan_safe_patches(&snapshot);
-    let wording_lint = wording::lint_repository_with_profile(path, profile)?;
-    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, Some(&wording_lint));
+    let wording_lint = if query == CodexNativeV3QueryKind::Linter {
+        Some(wording::lint_repository_with_profile(path, profile)?)
+    } else {
+        None
+    };
+    let view = seiri_codex::CodexNativeV3View::new(&snapshot, &plan, wording_lint.as_ref());
     Ok(seiri_codex::render_native_v3_query_markdown(
         &view.query(query),
     ))
@@ -668,12 +1133,13 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     } else {
         for branch in &run.profile_branches {
             out.push_str(&format!(
-                "- rank `{}` profile `{}` prior `{}` confidence `{}` score `{}`\n",
+                "- rank `{}` profile `{}` fit `{}` evidence_match `{}` rank_score `{}` calibration `{:?}`\n",
                 branch.rank,
                 branch.profile,
-                branch.prior_x1000,
-                branch.confidence_x100,
-                branch.score_x100
+                branch.semantics.fit.get(),
+                branch.semantics.evidence_match.get(),
+                branch.semantics.rank_score.get(),
+                branch.semantics.calibration_prior
             ));
         }
         out.push('\n');
@@ -959,7 +1425,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     }
     if let Some(profile) = &snapshot.profile {
         out.push_str(&format!(
-            "- Profile score: `{}` / `100` for `{}`\n",
+            "- Profile fit: `{}` / `100` for `{}`\n",
             profile.score.score_x100, profile.profile
         ));
         if let (Some(top_profile), Some(confidence)) = (
@@ -967,7 +1433,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
             profile.branch_summary.top_confidence_x100,
         ) {
             out.push_str(&format!(
-                "- Profile branch top: `{}` confidence `{}` / `100` across `{}` candidates\n",
+                "- Profile branch top: `{}` rank_score `{}` / `100` across `{}` candidates\n",
                 top_profile, confidence, profile.branch_summary.emitted_profiles
             ));
         }
@@ -1022,6 +1488,14 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         snapshot.missing_route_priority.summary.co_occurrence_gaps
     ));
     out.push_str(&format!("- Findings: `{}`\n\n", snapshot.findings.len()));
+
+    render_repository_scope(&mut out, snapshot);
+    render_github_semantics(&mut out, snapshot);
+
+    out.push_str(&route_content::render_route_content_contract_markdown(
+        &snapshot.route_content_v2,
+    ));
+    out.push('\n');
 
     out.push_str("## Route Review v2\n\n");
     if snapshot.route_states.is_empty() {
@@ -1281,20 +1755,13 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     } else {
         out.push_str("### Co-occurrence Gaps\n\n");
         for gap in &snapshot.missing_route_priority.co_occurrence_gaps {
-            let support = decimal_prior(gap.support_x1000);
             let present_routes = routes_or_none(&gap.present_routes);
             let missing_routes = routes_or_none(&gap.missing_routes);
             let present_signals = list_or_none(&gap.present_signals);
             let missing_signals = list_or_none(&gap.missing_signals);
             out.push_str(&format!(
-                "- `{}` {:?} estimated_support `{}` estimated_repos `{}` / `{}` gate `{:?}`: {}\n",
-                gap.id,
-                gap.priority,
-                support,
-                gap.calibration_estimate.estimated_repositories,
-                gap.calibration_estimate.denominator,
-                gap.gate,
-                gap.title
+                "- `{}` {:?} calibration `{:?}` values `redacted` gate `{:?}`: {}\n",
+                gap.id, gap.priority, gap.calibration_prior, gap.gate, gap.title
             ));
             out.push_str(&format!("  Present routes: {present_routes}\n"));
             out.push_str(&format!("  Missing routes: {missing_routes}\n"));
@@ -1310,7 +1777,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
         Some(profile) => {
             out.push_str(&format!("- Selected profile: `{}`\n", profile.profile));
             out.push_str(&format!(
-                "- Score view: `{}` / `100`\n",
+                "- Profile fit view: `{}` / `100`\n",
                 profile.score.score_x100
             ));
             out.push_str(&format!(
@@ -1322,7 +1789,7 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                 profile.score.present_rules, profile.score.missing_rules
             ));
             out.push_str(&format!("- Note: {}\n\n", profile.score.note));
-            out.push_str("### Profile Branch Confidence\n\n");
+            out.push_str("### Profile Branch Semantics\n\n");
             out.push_str(&format!(
                 "- Ambiguous: `{}`\n",
                 profile.branch_summary.ambiguous
@@ -1332,21 +1799,19 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
                 profile.branch_summary.boundary
             ));
             for branch in &profile.branches {
-                let confidence = decimal_confidence(branch.confidence_x100);
-                let prior = decimal_prior(branch.prior_x1000);
                 let matched = if branch.matched_signals.is_empty() {
                     "none".to_string()
                 } else {
                     branch.matched_signals.join("; ")
                 };
                 out.push_str(&format!(
-                    "{}. `{}` confidence `{}` prior `{}` evidence `{}` score `{}`: {}\n",
+                    "{}. `{}` rank_score `{}` fit `{}` evidence_match `{}` calibration `{:?}`: {}\n",
                     branch.rank,
                     branch.profile,
-                    confidence,
-                    prior,
-                    branch.evidence_score_x100,
-                    branch.score_x100,
+                    decimal_confidence(branch.semantics.rank_score.get()),
+                    branch.semantics.fit.get(),
+                    branch.semantics.evidence_match.get(),
+                    branch.semantics.calibration_prior,
                     matched
                 ));
             }
@@ -1408,6 +1873,70 @@ pub fn to_markdown(snapshot: &RepoSnapshot) -> String {
     }
 
     out
+}
+
+fn render_repository_scope(out: &mut String, snapshot: &RepoSnapshot) {
+    let scope = &snapshot.repository_scope;
+    out.push_str("## Repository Scope Graph\n\n");
+    out.push_str(&format!(
+        "- Analysis scope: `{:?}`\n- Root kind: `{:?}`\n- Scope nodes: `{}` / edges `{}`\n- Workspace manifests: `{}`\n- Ignored shallow records: `{}`\n- Local Git refs: `{}` / commit headers `{}`\n",
+        scope.root.scope,
+        scope.root.kind,
+        scope.graph.nodes.len(),
+        scope.graph.edges.len(),
+        scope.graph.manifests.len(),
+        scope.graph.ignored.len(),
+        scope.git.references.len(),
+        scope.git.commits.len(),
+    ));
+    out.push_str(&format!(
+        "- Scope coverage: nodes `{:?}` / manifests `{:?}` / ignored `{:?}`\n- Git coverage: refs `{:?}` / tags `{:?}` / commits `{:?}`\n- Boundary: {}\n\n",
+        scope.graph.node_coverage,
+        scope.graph.manifest_coverage,
+        scope.graph.ignored_coverage,
+        scope.git.refs_coverage,
+        scope.git.tags_coverage,
+        scope.git.commits_coverage,
+        scope.graph.boundary,
+    ));
+    out.push_str("## Freshness Dimensions\n\n");
+    out.push_str(&format!(
+        "- Target reachability: local present `{}` / local missing `{}` / non-local-or-unknown `{}` / coverage `{:?}`\n- Temporal activity: commit headers `{}` / newest `{:?}` / oldest `{:?}` / coverage `{:?}`\n- Lifecycle signal: state `{:?}` / evidence `{}` / coverage `{:?}`\n- Boundary: {}\n\n",
+        snapshot.freshness.target_reachability.repository_local_present,
+        snapshot.freshness.target_reachability.repository_local_missing,
+        snapshot.freshness.target_reachability.non_local_or_unknown,
+        snapshot.freshness.target_reachability.coverage,
+        snapshot.freshness.temporal_activity.observed_commit_headers,
+        snapshot.freshness.temporal_activity.newest,
+        snapshot.freshness.temporal_activity.oldest,
+        snapshot.freshness.temporal_activity.coverage,
+        snapshot.freshness.lifecycle_signal.route_state,
+        snapshot.freshness.lifecycle_signal.evidence_ids.len(),
+        snapshot.freshness.lifecycle_signal.coverage,
+        snapshot.freshness.boundary,
+    ));
+}
+
+fn render_github_semantics(out: &mut String, snapshot: &RepoSnapshot) {
+    out.push_str("## Structured GitHub Semantics v2\n\n");
+    out.push_str(&format!(
+        "- Local configuration documents: `{}`\n- Critical-path coverage records: `{}`\n",
+        snapshot.github_local_documents.documents().len(),
+        snapshot.github_semantics.critical_paths.len()
+    ));
+    for coverage in &snapshot.github_semantics.critical_paths {
+        out.push_str(&format!(
+            "- `{:?}` at scope `{}`: observed `{}` / parsed `{}` / coverage `{:?}`\n",
+            coverage.kind,
+            coverage.scope_node.0,
+            coverage.observed,
+            coverage.parsed,
+            coverage.coverage
+        ));
+    }
+    out.push_str(
+        "- Boundary: static syntax observations do not establish workflow success, owner validity, repository permissions, branch protection, or deployment safety.\n\n",
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1575,10 +2104,6 @@ fn decimal_confidence(value_x100: u8) -> String {
     } else {
         format!("0.{value_x100:02}")
     }
-}
-
-fn decimal_prior(value_x1000: u16) -> String {
-    format!("0.{value_x1000:03}")
 }
 
 fn list_or_none(values: &[String]) -> String {
