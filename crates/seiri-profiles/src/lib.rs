@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod registry;
 mod weight;
 
@@ -11,7 +13,7 @@ use seiri_core::{
     ProfileBranch, ProfileBranchSemantics, ProfileBranchSummary, ProfileEvidenceBasis,
     ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePriority, ProfileRankScore,
     ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, ProfileWeightBasis,
-    RepoSnapshot, RepositoryFacet, RouteKind, Severity,
+    RepositoryAnalysis, RepositoryFacet, RouteKind, Severity,
 };
 use std::collections::BTreeMap;
 
@@ -24,13 +26,16 @@ pub struct ProfileRuleDefinition {
 }
 
 #[must_use]
-pub fn evaluate_profile(snapshot: &RepoSnapshot, profile: ProfileKind) -> Option<ProfileReport> {
+pub fn evaluate_profile(
+    snapshot: &RepositoryAnalysis,
+    profile: ProfileKind,
+) -> Option<ProfileReport> {
     evaluate_profile_with_calibration(snapshot, profile, &NoCalibrationProvider)
 }
 
 #[must_use]
 pub fn evaluate_profile_with_calibration(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     profile: ProfileKind,
     calibration: &dyn CalibrationProvider,
 ) -> Option<ProfileReport> {
@@ -46,11 +51,11 @@ pub fn evaluate_profile_with_calibration(
 
 /// Evaluates coexisting repository facets without selecting a repository type.
 #[must_use]
-pub fn evaluate_facets(snapshot: &RepoSnapshot) -> FacetReport {
+pub fn evaluate_facets(snapshot: &RepositoryAnalysis) -> FacetReport {
     let facets = RepositoryFacet::ALL
         .into_iter()
         .map(|facet| {
-            let evidence = facet_evidence_ids(facet, snapshot.evidence_kernel.facts());
+            let evidence = facet_evidence_ids(facet, &snapshot.evidence_kernel);
             let observation = if evidence.is_empty() {
                 snapshot
                     .coverage
@@ -140,7 +145,7 @@ pub fn common_profile_registry() -> ProfileRegistry {
         })
         .collect();
     ProfileRegistry::try_complete(definitions)
-        .expect("built-in profile registry must satisfy Q16 completeness invariants")
+        .expect("built-in profile registry must satisfy completeness invariants")
 }
 
 fn catalog_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
@@ -724,7 +729,7 @@ pub fn branch_profiles() -> &'static [(ProfileKind, u16)] {
 }
 
 fn profile_branches(
-    snapshot: Option<&RepoSnapshot>,
+    snapshot: Option<&RepositoryAnalysis>,
     baseline: &BaselineReport,
     selected_profile: ProfileKind,
     registry: &ProfileRegistry,
@@ -738,7 +743,7 @@ fn profile_branches(
 
     let mut branches = branch_profiles()
         .iter()
-        .map(|(profile, _compatibility_prior)| {
+        .map(|(profile, _static_order)| {
             let definition = registry
                 .definition(*profile)
                 .expect("complete profile registry must contain branch profiles");
@@ -778,10 +783,6 @@ fn profile_branches(
             ProfileBranch {
                 rank: 0,
                 profile: *profile,
-                prior_x1000: 0,
-                confidence_x100: rank_score_x100,
-                evidence_score_x100,
-                score_x100: score.score_x100,
                 semantics: ProfileBranchSemantics {
                     fit: ProfileFit::from_bounded(score.score_x100),
                     evidence_match: ProfileEvidenceMatch::from_bounded(evidence_score_x100),
@@ -791,7 +792,7 @@ fn profile_branches(
                 matched_signals,
                 missing_signals,
                 rationale: format!(
-                    "Combines observed route/file/path evidence and profile fit. An explicit local calibration prior may affect rank but is redacted from compatibility fields. This is a branch hint, not a repository type assertion.{selected_note}"
+                    "Combines observed route/file/path evidence and profile fit. An explicit local calibration prior may affect rank but its value remains redacted from public fields. This is a branch hint, not a repository type assertion.{selected_note}"
                 ),
             }
         })
@@ -803,7 +804,13 @@ fn profile_branches(
             .rank_score
             .get()
             .cmp(&left.semantics.rank_score.get())
-            .then_with(|| right.evidence_score_x100.cmp(&left.evidence_score_x100))
+            .then_with(|| {
+                right
+                    .semantics
+                    .evidence_match
+                    .get()
+                    .cmp(&left.semantics.evidence_match.get())
+            })
             .then_with(|| left.profile.cmp(&right.profile))
     });
 
@@ -837,15 +844,15 @@ fn profile_branch_summary(
     ProfileBranchSummary {
         selected_profile,
         top_profile: top.map(|branch| branch.profile),
-        top_confidence_x100: top.map(|branch| branch.semantics.rank_score.get()),
+        top_rank_score_x100: top.map(|branch| branch.semantics.rank_score.get()),
         emitted_profiles: branches.len(),
         ambiguous,
-        boundary: "Profile fit, evidence match, rank score, and calibration-prior state are separate typed values. The legacy confidence field is only a compatibility projection of rank score. It is not a probability and not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
+        boundary: "Profile fit, evidence match, rank score, and calibration-prior state are separate typed values. Rank score is not a probability and not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
     }
 }
 
 fn profile_signal_score(
-    snapshot: Option<&RepoSnapshot>,
+    snapshot: Option<&RepositoryAnalysis>,
     baseline: &BaselineReport,
     profile: ProfileKind,
 ) -> (u8, Vec<String>, Vec<String>) {
@@ -1180,7 +1187,11 @@ fn profile_rank_score(prior_weight_x100: u8, evidence_score_x100: u8, score_x100
         .min(100) as u8
 }
 
-fn has_route(snapshot: Option<&RepoSnapshot>, baseline: &BaselineReport, route: RouteKind) -> bool {
+fn has_route(
+    snapshot: Option<&RepositoryAnalysis>,
+    baseline: &BaselineReport,
+    route: RouteKind,
+) -> bool {
     if baseline
         .rules
         .iter()
@@ -1190,28 +1201,20 @@ fn has_route(snapshot: Option<&RepoSnapshot>, baseline: &BaselineReport, route: 
     }
 
     snapshot.is_some_and(|snapshot| {
-        snapshot.route_states.iter().any(|state| {
-            state.route == route
-                && !matches!(
-                    state.state,
-                    seiri_core::RouteState::Absent | seiri_core::RouteState::UnsafeToInvent
-                )
-        }) || if snapshot.evidence_kernel.is_empty() {
-            snapshot
-                .evidence_ledger
-                .iter()
-                .any(|record| record.route == Some(route))
-        } else {
-            snapshot
-                .evidence_kernel
-                .facts()
-                .iter()
-                .any(|fact| fact.route == Some(route))
-        }
+        snapshot.route_assessments.iter().any(|assessment| {
+            assessment.route() == route
+                && (assessment.presence().root_structured()
+                    || assessment.presence().inherited()
+                    || assessment.readme().routing().is_present())
+        }) || snapshot
+            .evidence_kernel
+            .facts()
+            .iter()
+            .any(|fact| fact.atom.route() == Some(route))
     })
 }
 
-fn has_important_file(snapshot: Option<&RepoSnapshot>, kind: ImportantFileKind) -> bool {
+fn has_important_file(snapshot: Option<&RepositoryAnalysis>, kind: ImportantFileKind) -> bool {
     snapshot.is_some_and(|snapshot| {
         snapshot
             .important_files
@@ -1220,7 +1223,7 @@ fn has_important_file(snapshot: Option<&RepoSnapshot>, kind: ImportantFileKind) 
     })
 }
 
-fn path_or_readme_contains(snapshot: Option<&RepoSnapshot>, needles: &[&str]) -> bool {
+fn path_or_readme_contains(snapshot: Option<&RepositoryAnalysis>, needles: &[&str]) -> bool {
     let Some(snapshot) = snapshot else {
         return false;
     };
@@ -1228,7 +1231,7 @@ fn path_or_readme_contains(snapshot: Option<&RepoSnapshot>, needles: &[&str]) ->
         let path = record.path.to_ascii_lowercase();
         let kind_match = matches!(record.kind, FileKind::Directory | FileKind::File);
         kind_match && needles.iter().any(|needle| path.contains(needle))
-    }) || snapshot.readme.as_ref().is_some_and(|readme| {
+    }) || snapshot.readme_summary.as_ref().is_some_and(|readme| {
         readme
             .headings
             .iter()

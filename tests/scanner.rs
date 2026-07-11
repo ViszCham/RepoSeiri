@@ -42,7 +42,7 @@ fn scanner_keeps_missing_readme_visible() {
 }
 
 #[test]
-fn scanner_detects_block_l_operational_files() {
+fn scanner_detects_operational_files() {
     let scan = seiri_fs::scan_repository(fixture("security-support-intake-automation-repo"))
         .expect("scan fixture");
 

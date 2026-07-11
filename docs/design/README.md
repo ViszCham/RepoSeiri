@@ -2,68 +2,56 @@
 
 ## 日本語
 
-この subindex は、RepoSeiri の設計文書を読む順序と責務境界を示します。設計判断はここから各文書へ分岐し、README には戻しません。
+この subindex は RepoSeiri の設計文書を、長期前提、分析モデル、実装 roadmap に分けます。README はアプリの入口に限定し、低レイヤ Rust 契約と実装判断はここから辿ります。
 
 ### Reading order
 
-| Step | Document | Use when |
+| Step | Document | Owns |
 | --- | --- | --- |
-| 1 | [Repository Trust Graph](repository-trust-graph.md) | RepoSeiri の固定設計、trust route、graph 全体を読むとき。 |
-| 2 | [Baseline And Profiles](baseline-and-profiles.md) | 分析データ、common baseline、目的別 profile の扱いを読むとき。 |
-| 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Rust module 境界、safe/guarded/manual gate、verification を読むとき。 |
-| 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | 実装block、将来拡張、calibration ingest 準備を読むとき。 |
-| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Q0-Q34のclaim boundary、evidence-closed route、coverage、wording、patch safetyの実装条件を読むとき。 |
-| 6 | [Roadmap v4: Low-level Semantic Closure And Expansion](roadmap-v4-low-level-expansion.md) | Q20-Q34後のBlock X-AD、private calibration境界、content contract、Git/scope、delta/plannerの固定条件を読むとき。 |
+| 1 | [Repository Trust Graph](repository-trust-graph.md) | product boundary、repository route、claim boundary の長期前提 |
+| 2 | [Baseline And Profiles](baseline-and-profiles.md) | common pattern、目的別 profile、calibration input の扱い |
+| 3 | [Roadmap v5: Legacy Removal](roadmap-v5-legacy-removal.md) | 0.2.0 canonical Rust architecture、削除判断、実装 block、完了条件 |
 
-### Boundaries
+### Authority
 
-| Topic | Owned by | Boundary |
-| --- | --- | --- |
-| Product design | `repository-trust-graph.md` | 人気、信頼、安全性、品質の保証として書かない。 |
-| Analysis data and profiles | `baseline-and-profiles.md` | 分析データは calibration input であり、統計的証明ではない。 |
-| Repair and gates | `repair-implementation-and-verification.md` | policy、license、security SLA、ownership は自動決定しない。 |
-| Roadmap | `roadmap-and-implementation-blocks.md` | 実装順序を示すが、完成や性能を保証しない。 |
-| Claim boundary roadmap | `low-level-claim-boundary-roadmap.md` | 実装順序と完了条件を示すが、GitHub 操作や private analysis data の公開を許可しない。 |
-| Roadmap v4 | `roadmap-v4-low-level-expansion.md` | 低レイヤRust contractとBlock X-ADを固定するが、実装、GitHub操作、private calibration公開を許可しない。 |
+- 現行実装の schema、CLI、planner、Codex surface は Roadmap v5 を正とします。
+- Trust Graph と Baseline And Profiles は前提と分析モデルを所有しますが、現行 symbol や command を上書きしません。
+- Git history と changelog は変更履歴であり、現在の実装指示ではありません。
+- private analysis data と private calibration body は設計 docs、fixture、report、commit に移しません。
 
 ### Update rules
 
-- 新しい設計文書を追加する場合は、この subindex に入口を追加します。
-- 既存文書と責務が重なる場合は、新規文書ではなく既存文書を更新します。
-- README へ戻すのは、first-read route として必要な短い入口だけにします。
-- 実装済み事実、計画、仮説、manual decision を混ぜません。
+1. 新しい設計文書を追加する前に、既存3文書の責務へ統合できないか確認します。
+2. 実装 roadmap は同時に一つだけを正とします。
+3. plan、implemented fact、manual decision、verification evidence を混在させません。
+4. 主要文書は日本語前半、英語後半で同じ判断と境界を維持します。
+5. 人気、信頼、安全性、品質、法的適合性、公開準備完了を RepoSeiri の出力から保証しません。
 
 ---
 
 ## English
 
-This subindex defines the reading order and responsibility boundaries for RepoSeiri design documents. Design decisions branch from here into individual documents and do not move back into the README.
+This subindex separates RepoSeiri design documentation into long-term premises, the analysis model, and the implementation roadmap. The README remains the application entry point; low-level Rust contracts and implementation decisions are routed from here.
 
-### Reading order
+### Reading Order
 
-| Step | Document | Use when |
+| Step | Document | Owns |
 | --- | --- | --- |
-| 1 | [Repository Trust Graph](repository-trust-graph.md) | Reading the fixed RepoSeiri design, trust routes, and whole graph. |
-| 2 | [Baseline And Profiles](baseline-and-profiles.md) | Reading analysis data handling, common baseline, and purpose-specific profiles. |
-| 3 | [Repair, Implementation, And Verification](repair-implementation-and-verification.md) | Reading Rust module boundaries, safe/guarded/manual gates, and verification. |
-| 4 | [Roadmap And Implementation Blocks](roadmap-and-implementation-blocks.md) | Reading implementation blocks, future extension, and calibration ingest preparation. |
-| 5 | [Low-level Claim Boundary Roadmap](low-level-claim-boundary-roadmap.md) | Reading Q0-Q34 implementation criteria for claim boundaries, evidence-closed routes, coverage, wording, and patch safety. |
-| 6 | [Roadmap v4: Low-level Semantic Closure And Expansion](roadmap-v4-low-level-expansion.md) | Reading frozen Block X-AD criteria after Q20-Q34 for private calibration boundaries, content contracts, Git/scope, and delta/planner work. |
+| 1 | [Repository Trust Graph](repository-trust-graph.md) | Long-term premises for product boundaries, repository routes, and claim boundaries |
+| 2 | [Baseline And Profiles](baseline-and-profiles.md) | Common patterns, purpose-specific profiles, and calibration-input handling |
+| 3 | [Roadmap v5: Legacy Removal](roadmap-v5-legacy-removal.md) | Canonical 0.2.0 Rust architecture, removal decisions, implementation blocks, and completion criteria |
 
-### Boundaries
+### Authority
 
-| Topic | Owned by | Boundary |
-| --- | --- | --- |
-| Product design | `repository-trust-graph.md` | Do not describe it as a guarantee of popularity, trust, safety, or quality. |
-| Analysis data and profiles | `baseline-and-profiles.md` | Analysis data is calibration input, not statistical proof. |
-| Repair and gates | `repair-implementation-and-verification.md` | Policy, license, security SLA, and ownership are not decided automatically. |
-| Roadmap | `roadmap-and-implementation-blocks.md` | Shows implementation order but does not guarantee completion or performance. |
-| Claim boundary roadmap | `low-level-claim-boundary-roadmap.md` | Shows implementation order and completion criteria, but does not authorize GitHub actions or publication of private analysis data. |
-| Roadmap v4 | `roadmap-v4-low-level-expansion.md` | Freezes low-level Rust contracts and Blocks X-AD, but does not authorize implementation, GitHub actions, or private calibration publication. |
+- Roadmap v5 is authoritative for the current implementation schema, CLI, planner, and Codex surface.
+- Trust Graph and Baseline And Profiles own premises and the analysis model, but do not override current symbols or commands.
+- Git history and the changelog record changes; they are not current implementation instructions.
+- Private analysis data and private calibration bodies do not move into design docs, fixtures, reports, or commits.
 
-### Update rules
+### Update Rules
 
-- Add an entry to this subindex when adding a new design document.
-- If the responsibility overlaps an existing document, update the existing document instead of creating a new one.
-- Move content back to the README only when a short first-read entry is necessary.
-- Keep implemented facts, plans, hypotheses, and manual decisions separate.
+1. Before adding a design document, check whether its responsibility belongs in one of the existing three documents.
+2. Keep exactly one implementation roadmap authoritative at a time.
+3. Do not mix plans, implemented facts, manual decisions, and verification evidence.
+4. Keep equivalent decisions and boundaries in the Japanese-first and English-second halves of major documents.
+5. Do not turn RepoSeiri output into guarantees of popularity, trust, security, quality, legal fitness, or publication readiness.

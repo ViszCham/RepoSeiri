@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
     AnalysisScope, FileRecord, GitReadBudget, IgnoredShallowRecord, RepositoryScopeReport,
     ScopeReadBudget,

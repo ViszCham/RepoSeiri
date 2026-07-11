@@ -1,5 +1,5 @@
 {
-  "schema_version": "seiri.block_p.v1",
+  "schema_version": "seiri.calibration.v1",
   "dataset_id": "SYNTHETIC_LOCAL_ONLY_DATASET_ID_SHOULD_NOT_RENDER",
   "name": "Synthetic Local-only Calibration Fixture",
   "collected_at": "2026-07-10",
@@ -20,8 +20,7 @@
         "Fixture data exercises redaction behavior only."
       ],
       "evidence_schema": {
-        "schema_version": "seiri.block_p.v1",
-        "compatible_from": "seiri.block_a.v1",
+        "schema_version": "seiri.evidence.v1",
         "note": "Synthetic public source."
       },
       "review_status": "pending_review"
@@ -42,8 +41,7 @@
         "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"
       ],
       "evidence_schema": {
-        "schema_version": "seiri.block_p.v1",
-        "compatible_from": "seiri.block_a.v1",
+        "schema_version": "seiri.evidence.v1",
         "note": "SYNTHETIC_LOCAL_ONLY_BODY_SHOULD_NOT_RENDER"
       },
       "review_status": "pending_review"
@@ -56,8 +54,7 @@
     "Uses synthetic tokens only; no private analysis content is stored here."
   ],
   "evidence_schema": {
-    "schema_version": "seiri.block_p.v1",
-    "compatible_from": "seiri.block_a.v1",
+    "schema_version": "seiri.evidence.v1",
     "note": "Synthetic fixture schema."
   },
   "records": [

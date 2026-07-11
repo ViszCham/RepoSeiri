@@ -1,11 +1,12 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, CoverageIncompleteReason, CoverageScope,
     CoverageStatus, DeltaCompatibility, DeltaState, DeltaUnknownReason, Digest32, EvidenceId,
     ImprovementCandidate, Observation, PortableAuditSnapshot, PortableConflictRecord,
     PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
     PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
-    RepoSnapshot, RouteDelta, RouteState, AUDIT_DELTA_SCHEMA_VERSION,
-    PORTABLE_AUDIT_SCHEMA_VERSION,
+    RepositoryAnalysis, RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -42,7 +43,9 @@ impl From<serde_json::Error> for DeltaError {
     }
 }
 
-pub fn portable_snapshot(snapshot: &RepoSnapshot) -> Result<PortableAuditSnapshot, DeltaError> {
+pub fn portable_snapshot(
+    snapshot: &RepositoryAnalysis,
+) -> Result<PortableAuditSnapshot, DeltaError> {
     let repository_coverage = coverage(snapshot, CoverageScope::RepositoryFiles);
     let readme_coverage = coverage(snapshot, CoverageScope::RootReadme);
     let route_coverage = combine_coverage(repository_coverage, readme_coverage);
@@ -51,20 +54,43 @@ pub fn portable_snapshot(snapshot: &RepoSnapshot) -> Result<PortableAuditSnapsho
         .route_assessments
         .iter()
         .map(|assessment| {
-            let legacy_state = assessment.legacy_projection().state;
-            let mut evidence_ids = assessment.legacy_evidence_ids();
+            let presence = assessment.presence();
+            let readme = assessment.readme();
+            let mut evidence_ids = assessment
+                .evidence()
+                .root_structural()
+                .iter()
+                .chain(assessment.evidence().readme_routing())
+                .chain(assessment.evidence().inherited())
+                .copied()
+                .collect::<Vec<_>>();
             normalize_ids(&mut evidence_ids);
-            let observation = route_observation(legacy_state, route_coverage, &evidence_ids);
+            let readme_routed = readme.routing().is_present();
+            let repository_local_targets = readme.target_reachability().repository_local_present();
+            let shared_target_conflicts = readme.conflict().shared_target_count();
+            let freshness = readme.freshness();
+            let observation =
+                route_observation(shared_target_conflicts, route_coverage, &evidence_ids);
             let digest = digest_json(&(
                 assessment.route(),
-                legacy_state,
+                presence,
+                readme,
+                assessment.policy(),
+                assessment.missing_pattern(),
                 observation,
                 route_coverage,
                 &evidence_ids,
             ))?;
             Ok(PortableRouteRecord {
                 route: assessment.route(),
-                legacy_state,
+                root_structured: presence.root_structured(),
+                inherited: presence.inherited(),
+                readme_routed,
+                repository_local_targets,
+                shared_target_conflicts,
+                freshness,
+                policy: assessment.policy(),
+                missing_pattern: assessment.missing_pattern(),
                 observation,
                 coverage: route_coverage,
                 evidence_ids,
@@ -76,7 +102,7 @@ pub fn portable_snapshot(snapshot: &RepoSnapshot) -> Result<PortableAuditSnapsho
 
     let markdown_coverage = coverage(snapshot, CoverageScope::MarkdownDocuments);
     let mut content_slots = snapshot
-        .route_content_v2
+        .route_content
         .assessments
         .iter()
         .map(|assessment| {
@@ -215,7 +241,7 @@ pub fn portable_snapshot(snapshot: &RepoSnapshot) -> Result<PortableAuditSnapsho
     documents.sort_by(|left, right| left.path.cmp(&right.path));
 
     let configuration = digest_json(&snapshot.analysis_configuration)?;
-    let evidence = digest_json(snapshot.evidence_kernel_v2.facts())?;
+    let evidence = digest_json(snapshot.evidence_kernel.facts())?;
     let digest = AuditSnapshotDigest {
         schema: PORTABLE_AUDIT_SCHEMA_VERSION.to_string(),
         configuration,
@@ -442,7 +468,7 @@ fn digest_json<T: Serialize + ?Sized>(value: &T) -> Result<Digest32, DeltaError>
     Ok(Digest32::new(digest))
 }
 
-fn coverage(snapshot: &RepoSnapshot, scope: CoverageScope) -> CoverageStatus {
+fn coverage(snapshot: &RepositoryAnalysis, scope: CoverageScope) -> CoverageStatus {
     snapshot
         .coverage
         .record(scope)
@@ -460,14 +486,14 @@ fn combine_coverage(left: CoverageStatus, right: CoverageStatus) -> CoverageStat
 }
 
 fn route_observation(
-    state: RouteState,
+    shared_target_conflicts: usize,
     coverage: CoverageStatus,
     evidence: &[EvidenceId],
 ) -> PortableObservationState {
     if coverage != CoverageStatus::Complete && evidence.is_empty() {
         return PortableObservationState::Unknown;
     }
-    if state == RouteState::Conflicting {
+    if shared_target_conflicts > 0 {
         PortableObservationState::Conflict
     } else if !evidence.is_empty() {
         PortableObservationState::Present
@@ -702,14 +728,10 @@ fn route_state_for(
             DeltaState::Unknown
         }
         (Some(left), Some(right)) if left.digest == right.digest => DeltaState::Unchanged,
-        (Some(left), Some(right))
-            if route_is_exposed(left.legacy_state) && !route_is_exposed(right.legacy_state) =>
-        {
+        (Some(left), Some(right)) if route_signal_change(left, right) == (true, false) => {
             DeltaState::Removed
         }
-        (Some(left), Some(right))
-            if !route_is_exposed(left.legacy_state) && route_is_exposed(right.legacy_state) =>
-        {
+        (Some(left), Some(right)) if route_signal_change(left, right) == (false, true) => {
             DeltaState::Added
         }
         (Some(left), Some(right))
@@ -744,15 +766,25 @@ fn route_is_regression(delta: &RouteDelta) -> bool {
                 .is_some_and(|item| item.observation == PortableObservationState::Conflict))
 }
 
-fn route_is_exposed(state: RouteState) -> bool {
-    matches!(
-        state,
-        RouteState::Routed
-            | RouteState::Verified
-            | RouteState::Stale
-            | RouteState::Overloaded
-            | RouteState::Conflicting
-    )
+fn route_signal_change(before: &PortableRouteRecord, after: &PortableRouteRecord) -> (bool, bool) {
+    let before_signals = [
+        before.root_structured,
+        before.inherited,
+        before.readme_routed,
+        before.repository_local_targets > 0,
+    ];
+    let after_signals = [
+        after.root_structured,
+        after.inherited,
+        after.readme_routed,
+        after.repository_local_targets > 0,
+    ];
+    before_signals
+        .into_iter()
+        .zip(after_signals)
+        .fold((false, false), |(lost, gained), (left, right)| {
+            (lost || (left && !right), gained || (!left && right))
+        })
 }
 
 fn merged_route_evidence(delta: &RouteDelta) -> Vec<EvidenceId> {

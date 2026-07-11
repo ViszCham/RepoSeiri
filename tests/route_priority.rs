@@ -51,18 +51,21 @@ fn co_occurrence_engine_explains_combination_gaps() {
         .expect("audit fixture");
     let report = &snapshot.missing_route_priority;
 
-    let automation_state = snapshot
-        .route_states
+    let automation = snapshot
+        .route_assessments
         .iter()
-        .find(|state| state.route == RouteKind::Automation)
-        .expect("automation route state");
-    assert_eq!(automation_state.state, RouteState::Structured);
-    let security_state = snapshot
-        .route_states
+        .find(|assessment| assessment.route() == RouteKind::Automation)
+        .expect("automation route assessment");
+    assert_eq!(
+        automation.summary_projection().state,
+        RouteState::Structured
+    );
+    let security = snapshot
+        .route_assessments
         .iter()
-        .find(|state| state.route == RouteKind::Security)
-        .expect("security route state");
-    assert_eq!(security_state.state, RouteState::Verified);
+        .find(|assessment| assessment.route() == RouteKind::Security)
+        .expect("security route assessment");
+    assert_eq!(security.summary_projection().state, RouteState::Verified);
 
     let supply_chain = report
         .co_occurrence_gaps
@@ -115,27 +118,27 @@ fn co_occurrence_engine_explains_combination_gaps() {
 }
 
 #[test]
-fn q12_native_audit_json_does_not_serialize_estimates_as_observations() {
+fn canonical_audit_json_does_not_serialize_estimates_as_observations() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
         .expect("audit fixture");
     let json = seiri_report::to_json(&snapshot).expect("snapshot JSON");
 
     assert!(json.contains("\"calibration_estimate\""));
     assert!(!json.contains("\"estimated_repositories\""));
-    for legacy_key in [
+    for removed_key in [
         "\"observed_gap_count\"",
         "\"observed_missing_repositories\"",
         "\"observed_missing_x1000\"",
     ] {
         assert!(
-            !json.contains(legacy_key),
-            "native audit JSON emitted legacy observation key {legacy_key}"
+            !json.contains(removed_key),
+            "canonical audit JSON emitted a removed observation key {removed_key}"
         );
     }
 }
 
 #[test]
-fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
+fn removed_observation_keys_are_rejected() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
         .expect("audit fixture");
     let priority = snapshot
@@ -152,15 +155,7 @@ fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
         serde_json::json!(558_000),
     );
     priority_object.insert("observed_missing_x1000".to_string(), serde_json::json!(558));
-    let legacy_priority: MissingRoutePriority =
-        serde_json::from_value(priority_json).expect("legacy priority");
-    assert_eq!(
-        legacy_priority
-            .calibration_estimate
-            .expect("legacy estimate")
-            .rate_x1000,
-        558
-    );
+    assert!(serde_json::from_value::<MissingRoutePriority>(priority_json).is_err());
 
     let co_snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
         .expect("audit fixture");
@@ -177,19 +172,11 @@ fn q12_legacy_observation_keys_deserialize_into_typed_estimates() {
         "observed_repositories".to_string(),
         serde_json::json!(estimated_repositories),
     );
-    let legacy_gap: RouteCoOccurrenceGap =
-        serde_json::from_value(gap_json).expect("legacy co-occurrence gap");
-    assert_eq!(
-        legacy_gap
-            .calibration_estimate
-            .expect("legacy estimate")
-            .estimated_repositories,
-        estimated_repositories
-    );
+    assert!(serde_json::from_value::<RouteCoOccurrenceGap>(gap_json).is_err());
 }
 
 #[test]
-fn q12_typed_estimate_rejects_inconsistent_wire_values() {
+fn typed_estimate_rejects_inconsistent_wire_values() {
     let invalid = serde_json::json!({
         "estimated_repositories": 558_000,
         "denominator": 1_000_000,

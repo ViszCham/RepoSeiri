@@ -59,7 +59,7 @@ pub(crate) fn build_route_map(
             &targets,
         )
         .expect("README route observations must form a valid assessment");
-        let state = assessment.legacy_state(route);
+        let state = assessment.summary_state(route);
 
         entries.push(ReadmeRouteMapEntry {
             route,
@@ -75,7 +75,7 @@ pub(crate) fn build_route_map(
             conflicting_target_count,
             evidence_lines,
             targets,
-            reason: assessment.legacy_reason(route).to_string(),
+            reason: assessment.summary_reason(route).to_string(),
         });
     }
 

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 
+const COMMON_PATTERN_PACK_VERSION: &str = "seiri.pattern-pack.v1";
+
 const MAX_PATTERN_PACK_FIXTURES: usize = 512;
 const FNV1A64_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV1A64_PRIME: u64 = 0x100000001b3;
@@ -192,8 +194,14 @@ pub fn profile_pattern_pack(profile: ProfileKind) -> PatternPack {
 fn pattern_pack(id: &str, condition: PatternPackCondition) -> PatternPack {
     let registry = common_registry();
     let fixtures = fixtures_for_registry(&registry);
-    PatternPack::try_new(id, "pattern_pack.v4", condition, registry, fixtures)
-        .expect("built-in pattern pack must satisfy fixture and registry invariants")
+    PatternPack::try_new(
+        id,
+        COMMON_PATTERN_PACK_VERSION,
+        condition,
+        registry,
+        fixtures,
+    )
+    .expect("built-in pattern pack must satisfy fixture and registry invariants")
 }
 
 fn fixtures_for_registry(registry: &PatternRegistry) -> Vec<PatternFixture> {

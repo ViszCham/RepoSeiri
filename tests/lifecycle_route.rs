@@ -8,7 +8,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn q3_lifecycle_classification_keeps_support_and_release_boundaries() {
+fn lifecycle_classification_keeps_support_and_release_boundaries() {
     assert_eq!(
         seiri_markdown::classify_route("Supported versions", None),
         RouteKind::Lifecycle
@@ -32,7 +32,7 @@ fn q3_lifecycle_classification_keeps_support_and_release_boundaries() {
 }
 
 #[test]
-fn q3_readme_route_map_verifies_lifecycle_targets() {
+fn readme_route_map_verifies_lifecycle_targets() {
     let summary = seiri_markdown::analyze_readme(fixture("lifecycle-route-repo"))
         .expect("read README")
         .expect("README exists");
@@ -54,7 +54,7 @@ fn q3_readme_route_map_verifies_lifecycle_targets() {
 }
 
 #[test]
-fn q3_lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
+fn lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
     let registry = seiri_patterns::common_registry();
     let baseline = registry
         .definitions()
@@ -93,16 +93,19 @@ fn q3_lifecycle_patterns_are_manual_baseline_and_candidate_surfaces() {
 }
 
 #[test]
-fn q3_lifecycle_route_state_is_manual_when_missing() {
+fn lifecycle_route_state_is_manual_when_missing() {
     let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
         .expect("audit fixture");
 
-    let state = snapshot
-        .route_states
+    let assessment = snapshot
+        .route_assessments
         .iter()
-        .find(|state| state.route == RouteKind::Lifecycle)
-        .expect("lifecycle route state");
-    assert_eq!(state.state, RouteState::UnsafeToInvent);
+        .find(|assessment| assessment.route() == RouteKind::Lifecycle)
+        .expect("lifecycle route assessment");
+    assert_eq!(
+        assessment.summary_projection().state,
+        RouteState::UnsafeToInvent
+    );
 
     let priority = snapshot
         .missing_route_priority
@@ -121,7 +124,7 @@ fn q3_lifecycle_route_state_is_manual_when_missing() {
 }
 
 #[test]
-fn q3_lifecycle_is_covered_by_route_meaning_registry() {
+fn lifecycle_is_covered_by_route_meaning_registry() {
     assert!(ROUTE_MEANING_ROUTES.contains(&RouteKind::Lifecycle));
     let rule = seiri_core::route_meaning_rule(RouteKind::Lifecycle, RouteState::Verified);
     assert!(rule

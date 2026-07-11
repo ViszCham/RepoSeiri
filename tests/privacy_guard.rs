@@ -9,18 +9,18 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn q0_public_boundary_guard_scans_committable_text() {
+fn public_boundary_guard_scans_committable_text() {
     let root = repo_root();
     let tokens = forbidden_public_boundary_tokens(&root);
     assert!(
         !tokens.is_empty(),
-        "Q0 privacy guard must have at least one token to scan"
+        "privacy guard must have at least one token to scan"
     );
 
     let files = committable_files(&root);
     assert!(
         !files.is_empty(),
-        "Q0 privacy guard could not discover committable files"
+        "privacy guard could not discover committable files"
     );
 
     let mut leaks = Vec::new();
@@ -46,13 +46,13 @@ fn q0_public_boundary_guard_scans_committable_text() {
 
     assert!(
         leaks.is_empty(),
-        "Q0 public boundary guard found local-only material in committable text:\n{}",
+        "public boundary guard found local-only material in committable text:\n{}",
         leaks.join("\n")
     );
 }
 
 #[test]
-fn q11_privacy_guard_covers_tracked_public_text_surfaces() {
+fn privacy_guard_covers_tracked_public_text_surfaces() {
     let root = repo_root();
     let files = committable_files(&root)
         .into_iter()
@@ -61,14 +61,15 @@ fn q11_privacy_guard_covers_tracked_public_text_surfaces() {
 
     for expected in [
         "README.md",
-        "docs/design/low-level-claim-boundary-roadmap.md",
+        "docs/design/roadmap-v5-legacy-removal.md",
         "fixtures/verified-security-route-repo/README.md",
         "fixtures/verified-security-route-repo/SECURITY.md",
         "fixtures/wording-safe-repo/README.md",
         "fixtures/wording-lint-repo/README.md",
         "tests/privacy_guard.rs",
-        "tests/q11_public_surface_regression.rs",
-        "tests/q11_regression_suite.rs",
+        "tests/canonical_evidence.rs",
+        "tests/canonical_report.rs",
+        "tests/semantic_privacy.rs",
     ] {
         assert!(
             files.contains(expected),

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use seiri_core::{
     DocumentIndex, DocumentRole, DocumentScanStatus, GithubDiagnostic, GithubDiagnosticKind,
     GithubDocumentIr, GithubDocumentKind, GithubLocalDocument, GithubLocalDocumentError,

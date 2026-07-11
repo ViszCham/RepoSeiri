@@ -1,7 +1,7 @@
 use seiri_core::{
-    ContentObservation, CoverageIndex, CoverageScope, DocumentIndex, DocumentRole, EvidenceAtom,
-    EvidenceFactV2, EvidenceId, Observation, RepoSnapshot, RouteContentAssessment,
-    RouteContentAtom, UnknownReason,
+    route_content_contract, CoverageIndex, CoverageScope, DocumentIndex, DocumentRole,
+    EvidenceAtom, EvidenceFact, EvidenceId, MeaningAtomSet, Observation, RepositoryAnalysis,
+    RouteContentAtom, RouteContentReport, UnknownReason,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
@@ -194,17 +194,17 @@ fn reduce_stack(
 
 #[derive(Debug, Clone, Copy)]
 pub struct PredicateContext<'a> {
-    evidence: &'a [EvidenceFactV2],
+    evidence: &'a [EvidenceFact],
     coverage: &'a CoverageIndex,
     document_index: &'a DocumentIndex,
-    route_content: &'a [RouteContentAssessment],
+    route_content: &'a RouteContentReport,
 }
 
 impl<'a> PredicateContext<'a> {
     #[must_use]
-    pub fn from_snapshot(snapshot: &'a RepoSnapshot) -> Self {
+    pub fn from_snapshot(snapshot: &'a RepositoryAnalysis) -> Self {
         Self {
-            evidence: snapshot.evidence_kernel_v2.facts(),
+            evidence: snapshot.evidence_kernel.facts(),
             coverage: &snapshot.coverage,
             document_index: &snapshot.document_index,
             route_content: &snapshot.route_content,
@@ -213,10 +213,10 @@ impl<'a> PredicateContext<'a> {
 
     #[must_use]
     pub const fn new(
-        evidence: &'a [EvidenceFactV2],
+        evidence: &'a [EvidenceFact],
         coverage: &'a CoverageIndex,
         document_index: &'a DocumentIndex,
-        route_content: &'a [RouteContentAssessment],
+        route_content: &'a RouteContentReport,
     ) -> Self {
         Self {
             evidence,
@@ -237,20 +237,14 @@ impl<'a> PredicateContext<'a> {
                 self.coverage,
                 role,
             ),
-            PredicateAtom::RouteContent(atom) => self
-                .route_content
-                .iter()
-                .find(|assessment| assessment.route == atom.route())
-                .and_then(|assessment| assessment.observation(atom))
-                .map(content_observation_as_observation)
-                .unwrap_or(Observation::Unknown(UnknownReason::NotRequested)),
+            PredicateAtom::RouteContent(atom) => observe_content_atom(self.route_content, atom),
         }
     }
 }
 
 fn observation_for_evidence(
-    evidence: &[EvidenceFactV2],
-    predicate: impl Fn(&EvidenceFactV2) -> bool,
+    evidence: &[EvidenceFact],
+    predicate: impl Fn(&EvidenceFact) -> bool,
     coverage: &CoverageIndex,
 ) -> Observation<()> {
     let ids = evidence
@@ -266,7 +260,7 @@ fn observation_for_evidence(
 }
 
 fn observation_for_document_role(
-    evidence: &[EvidenceFactV2],
+    evidence: &[EvidenceFact],
     document_index: &DocumentIndex,
     coverage: &CoverageIndex,
     role: DocumentRole,
@@ -290,17 +284,33 @@ fn observation_for_document_role(
     }
 }
 
-fn content_observation_as_observation(observation: &ContentObservation) -> Observation<()> {
+fn observe_content_atom(report: &RouteContentReport, atom: RouteContentAtom) -> Observation<()> {
+    let observations = route_content_contract()
+        .iter()
+        .filter(|spec| spec.pattern_atom == Some(atom))
+        .filter_map(|spec| report.assessment(spec.id))
+        .map(|assessment| content_observation_as_observation(&assessment.observation))
+        .collect::<Vec<_>>();
+    if observations.is_empty() {
+        Observation::Unknown(UnknownReason::NotRequested)
+    } else {
+        combine_any(&observations)
+    }
+}
+
+fn content_observation_as_observation(
+    observation: &Observation<MeaningAtomSet>,
+) -> Observation<()> {
     match observation {
-        ContentObservation::Present { evidence } => Observation::Present {
+        Observation::Present { evidence, .. } => Observation::Present {
             value: (),
             evidence: evidence.clone(),
         },
-        ContentObservation::Absent { coverage } => Observation::Absent {
+        Observation::Absent { coverage } => Observation::Absent {
             coverage: *coverage,
         },
-        ContentObservation::Unknown(reason) => Observation::Unknown(*reason),
-        ContentObservation::Conflict { alternatives } => Observation::Conflict {
+        Observation::Unknown(reason) => Observation::Unknown(*reason),
+        Observation::Conflict { alternatives } => Observation::Conflict {
             alternatives: alternatives.clone(),
         },
     }
@@ -509,7 +519,7 @@ mod tests {
 
     #[test]
     fn bounded_evaluator_matches_reference_for_simple_program() {
-        let evidence = [EvidenceFactV2 {
+        let evidence = [EvidenceFact {
             id: stable_evidence_id(1),
             atom: EvidenceAtom::FilePresent,
             provenance: EvidenceProvenance {
@@ -524,7 +534,8 @@ mod tests {
             CoverageIndex::try_new([(CoverageScope::RepositoryFiles, CoverageStatus::Complete)])
                 .expect("coverage");
         let document_index = DocumentIndex::default();
-        let context = PredicateContext::new(&evidence, &coverage, &document_index, &[]);
+        let route_content = RouteContentReport::default();
+        let context = PredicateContext::new(&evidence, &coverage, &document_index, &route_content);
         for instruction in [
             PredicateInstruction::All(2),
             PredicateInstruction::Any(2),

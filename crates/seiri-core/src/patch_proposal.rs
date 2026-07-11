@@ -12,7 +12,7 @@ pub use binding::{
     PatchProposalBindingError, PATCH_ANCHOR_CONTEXT_BYTES,
 };
 
-pub const PATCH_PROPOSAL_SCHEMA_VERSION: &str = "seiri.patch_proposal.v1";
+pub const PATCH_PROPOSAL_SCHEMA_VERSION: &str = "seiri.patch-proposal.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

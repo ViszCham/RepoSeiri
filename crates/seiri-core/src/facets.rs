@@ -1,4 +1,7 @@
-use crate::{CoverageIndex, CoverageScope, EvidenceFact, EvidenceId, EvidenceKind, Observation};
+use crate::{
+    CoverageIndex, CoverageScope, EvidenceAtom, EvidenceFact, EvidenceId, EvidenceKernel,
+    ImportantFileKind, Observation,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
@@ -141,10 +144,13 @@ impl Display for FacetReportError {
 impl std::error::Error for FacetReportError {}
 
 #[must_use]
-pub fn facet_evidence_ids(facet: RepositoryFacet, facts: &[EvidenceFact]) -> Vec<EvidenceId> {
-    let mut ids = facts
+pub fn facet_evidence_ids(facet: RepositoryFacet, kernel: &EvidenceKernel) -> Vec<EvidenceId> {
+    let mut ids = kernel
+        .facts()
         .iter()
-        .filter(|fact| fact_supports_facet(facet, fact))
+        .filter(|fact| {
+            fact_supports_facet(facet, fact, kernel.path_for_fact(fact).unwrap_or_default())
+        })
         .map(|fact| fact.id)
         .collect::<Vec<_>>();
     ids.sort_unstable();
@@ -152,97 +158,67 @@ pub fn facet_evidence_ids(facet: RepositoryFacet, facts: &[EvidenceFact]) -> Vec
     ids
 }
 
-fn fact_supports_facet(facet: RepositoryFacet, fact: &EvidenceFact) -> bool {
-    let path = fact
-        .path
-        .as_deref()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let value = fact.value.to_ascii_lowercase();
+fn fact_supports_facet(facet: RepositoryFacet, fact: &EvidenceFact, path: &str) -> bool {
+    let path = path.to_ascii_lowercase();
     match facet {
         RepositoryFacet::Package => {
-            (fact.kind == EvidenceKind::ImportantFile && fact.value == "CargoToml")
-                || is_package_manifest(&path)
+            matches!(
+                fact.atom,
+                EvidenceAtom::ImportantFile(ImportantFileKind::CargoToml)
+            ) || is_package_manifest(&path)
         }
-        RepositoryFacet::Binary => {
-            is_binary_entrypoint(&path)
-                || is_markdown_signal(fact.kind)
-                    && contains_any(
-                        &value,
-                        &["cli", "command line", "command-line", "command-line tool"],
-                    )
-        }
+        RepositoryFacet::Binary => is_binary_entrypoint(&path),
         RepositoryFacet::Infrastructure => {
-            (fact.kind == EvidenceKind::ImportantFile
-                && matches!(
-                    fact.value.as_str(),
-                    "Workflow" | "DependencyBot" | "SecurityAutomation"
-                ))
-                || has_path_segment(
-                    &path,
-                    &[
-                        "infra",
-                        "infrastructure",
-                        "terraform",
-                        "k8s",
-                        "helm",
-                        "deploy",
-                        "deployments",
-                        "ops",
-                    ],
+            matches!(
+                fact.atom,
+                EvidenceAtom::ImportantFile(
+                    ImportantFileKind::Workflow
+                        | ImportantFileKind::DependencyBot
+                        | ImportantFileKind::SecurityAutomation
                 )
-        }
-        RepositoryFacet::Documentation => {
-            (fact.kind == EvidenceKind::ImportantFile && fact.value == "DocsDirectory")
-                || path == "docs"
-                || path.starts_with("docs/")
-        }
-        RepositoryFacet::Research => {
-            has_path_segment(
+            ) || has_path_segment(
                 &path,
                 &[
-                    "research",
-                    "paper",
-                    "papers",
-                    "dataset",
-                    "datasets",
-                    "notebook",
-                    "notebooks",
-                    "experiment",
-                    "experiments",
+                    "infra",
+                    "infrastructure",
+                    "terraform",
+                    "k8s",
+                    "helm",
+                    "deploy",
+                    "deployments",
+                    "ops",
                 ],
-            ) || is_markdown_signal(fact.kind)
-                && contains_any(
-                    &value,
-                    &[
-                        "research",
-                        "dataset",
-                        "experiment",
-                        "paper",
-                        "reproducibility",
-                    ],
-                )
+            )
         }
-        RepositoryFacet::Template => {
-            has_path_segment(
-                &path,
-                &["template", "templates", "cookiecutter", "scaffold"],
-            ) || is_markdown_signal(fact.kind)
-                && contains_any(
-                    &value,
-                    &["template", "scaffold", "starter project", "boilerplate"],
-                )
+        RepositoryFacet::Documentation => {
+            matches!(
+                fact.atom,
+                EvidenceAtom::ImportantFile(ImportantFileKind::DocsDirectory)
+            ) || path == "docs"
+                || path.starts_with("docs/")
         }
-        RepositoryFacet::Product => {
-            has_path_segment(
-                &path,
-                &["app", "apps", "web", "frontend", "backend", "product"],
-            ) || is_markdown_signal(fact.kind)
-                && contains_any(
-                    &value,
-                    &["product", "application", "end user", "user-facing"],
-                )
-        }
+        RepositoryFacet::Research => has_path_segment(
+            &path,
+            &[
+                "research",
+                "paper",
+                "papers",
+                "dataset",
+                "datasets",
+                "notebook",
+                "notebooks",
+                "experiment",
+                "experiments",
+            ],
+        ),
+        RepositoryFacet::Template => has_path_segment(
+            &path,
+            &["template", "templates", "cookiecutter", "scaffold"],
+        ),
+        RepositoryFacet::Product => has_path_segment(
+            &path,
+            &["app", "apps", "web", "frontend", "backend", "product"],
+        ),
     }
 }
 
@@ -261,17 +237,6 @@ fn is_binary_entrypoint(path: &str) -> bool {
         || path.starts_with("cmd/")
 }
 
-fn is_markdown_signal(kind: EvidenceKind) -> bool {
-    matches!(
-        kind,
-        EvidenceKind::MarkdownHeading | EvidenceKind::MarkdownLink | EvidenceKind::RouteCandidate
-    )
-}
-
 fn has_path_segment(path: &str, candidates: &[&str]) -> bool {
     path.split('/').any(|segment| candidates.contains(&segment))
-}
-
-fn contains_any(value: &str, markers: &[&str]) -> bool {
-    markers.iter().any(|marker| value.contains(marker))
 }

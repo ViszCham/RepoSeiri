@@ -1,9 +1,9 @@
 use seiri_core::{
     classify_target_relation, ConditionalObligation, CoverageIncompleteReason, CoverageScope,
     CoverageStatus, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
-    DocumentConsistencyReport, DocumentTargetRelation, EvidenceFact, EvidenceKind, EvidenceSet,
-    Observation, RepoSnapshot, RepositoryFacet, RouteKind, RouteTargetRef, RouteTargetRole,
-    TargetRelation,
+    DocumentConsistencyReport, DocumentEvent, DocumentTargetRelation, EvidenceAtom, EvidenceSet,
+    MarkdownEvidenceKind, Observation, RepositoryAnalysis, RepositoryFacet, RouteKind,
+    RouteTargetRef, RouteTargetRole, SourceSpan, TargetRelation,
 };
 use std::collections::BTreeMap;
 
@@ -16,18 +16,48 @@ pub(crate) struct RouteTargetBuild {
     pub(crate) truncated: bool,
 }
 
-pub(crate) fn build_route_targets(snapshot: &RepoSnapshot) -> RouteTargetBuild {
+pub(crate) fn build_route_targets(snapshot: &RepositoryAnalysis) -> RouteTargetBuild {
     let mut targets = Vec::new();
     let mut truncated = false;
-    for fact in snapshot.evidence_kernel.facts() {
-        let Some(target) = route_target_ref(snapshot, fact) else {
+    for entry in snapshot.document_index.scanned_documents() {
+        let Some(document) = entry.scan.as_ref() else {
             continue;
         };
-        if targets.len() == MAX_ROUTE_TARGETS {
-            truncated = true;
+        let Some(document_id) = entry.document_id else {
+            continue;
+        };
+        if is_fixture_document(&entry.path) {
             continue;
         }
-        targets.push(target);
+        for event in document.events() {
+            let DocumentEvent::RouteCandidate(candidate) = event else {
+                continue;
+            };
+            let (Some(raw_target), Some(span)) = (candidate.target.as_deref(), candidate.span)
+            else {
+                continue;
+            };
+            let Some(normalized_target) = normalized_local_target(&entry.path, raw_target) else {
+                continue;
+            };
+            let Some(evidence) =
+                evidence_for_route_candidate(snapshot, &entry.path, candidate.route, span)
+            else {
+                continue;
+            };
+            if targets.len() == MAX_ROUTE_TARGETS {
+                truncated = true;
+                continue;
+            }
+            targets.push(RouteTargetRef {
+                route: candidate.route,
+                document: document_id,
+                evidence,
+                span,
+                role: classify_target_role(candidate.route, &candidate.text, &normalized_target),
+                normalized_target,
+            });
+        }
     }
     targets.sort_by(|left, right| {
         left.route
@@ -40,7 +70,7 @@ pub(crate) fn build_route_targets(snapshot: &RepoSnapshot) -> RouteTargetBuild {
 }
 
 pub(crate) fn build_document_consistency_report(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     route_targets_truncated: bool,
 ) -> Result<DocumentConsistencyReport, DocumentConsistencyError> {
     let mut obligations = build_conditional_obligations(snapshot);
@@ -63,7 +93,7 @@ pub(crate) fn build_document_consistency_report(
     DocumentConsistencyReport::try_new(obligations, relations, conflicts, conflict_coverage)
 }
 
-fn build_conditional_obligations(snapshot: &RepoSnapshot) -> Vec<ConditionalObligation> {
+fn build_conditional_obligations(snapshot: &RepositoryAnalysis) -> Vec<ConditionalObligation> {
     let mut obligations = Vec::new();
     for facet in RepositoryFacet::ALL {
         let Some(reason_ids) = snapshot.facets.observed_evidence(facet) else {
@@ -96,12 +126,12 @@ fn routes_for_facet(facet: RepositoryFacet) -> &'static [RouteKind] {
     }
 }
 
-fn route_observation(snapshot: &RepoSnapshot, route: RouteKind) -> Observation<()> {
+fn route_observation(snapshot: &RepositoryAnalysis, route: RouteKind) -> Observation<()> {
     let evidence = snapshot
-        .route_states
+        .route_assessments
         .iter()
-        .find(|state| state.route == route)
-        .map_or_else(Vec::new, |state| state.evidence_ids.clone());
+        .find(|assessment| assessment.route() == route)
+        .map_or_else(Vec::new, |assessment| assessment.summary_evidence_ids());
     if evidence.is_empty() {
         snapshot
             .coverage
@@ -113,7 +143,7 @@ fn route_observation(snapshot: &RepoSnapshot, route: RouteKind) -> Observation<(
 }
 
 fn build_document_relations(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     route_targets_truncated: bool,
 ) -> Result<ConflictBuild, DocumentConsistencyError> {
     let mut truncated = route_targets_truncated;
@@ -179,27 +209,34 @@ fn conflict_side(candidate: &RouteTargetRef) -> DocumentConflictSide {
     }
 }
 
-fn route_target_ref(snapshot: &RepoSnapshot, fact: &EvidenceFact) -> Option<RouteTargetRef> {
-    if fact.kind != EvidenceKind::RouteCandidate {
-        return None;
-    }
-    let route = fact.route?;
-    let path = fact.path.as_deref()?;
-    if is_fixture_document(path) {
-        return None;
-    }
-    let document = snapshot.evidence_kernel_v2.document_id_for_path(path)?;
-    let (label, raw_target) = fact.value.rsplit_once(" -> ")?;
-    let normalized_target = normalized_local_target(path, raw_target)?;
-    let span = fact.span?;
-    Some(RouteTargetRef {
-        route,
-        document,
-        evidence: fact.id,
-        span,
-        role: classify_target_role(route, label, &normalized_target),
-        normalized_target,
+fn evidence_for_route_candidate(
+    snapshot: &RepositoryAnalysis,
+    path: &str,
+    route: RouteKind,
+    span: SourceSpan,
+) -> Option<seiri_core::EvidenceId> {
+    snapshot.evidence_kernel.facts().iter().find_map(|fact| {
+        let matches = snapshot.evidence_kernel.path_for_fact(fact) == Some(path)
+            && matches!(
+                fact.atom,
+                EvidenceAtom::Markdown {
+                    event: MarkdownEvidenceKind::RouteCandidate,
+                    route: Some(actual),
+                } if actual == route
+            )
+            && fact
+                .provenance
+                .span
+                .is_some_and(|actual| span_matches(actual, span));
+        matches.then_some(fact.id)
     })
+}
+
+fn span_matches(actual: seiri_core::EvidenceSourceSpan, expected: SourceSpan) -> bool {
+    actual.line.get() == u32::try_from(expected.line).unwrap_or(u32::MAX)
+        && actual.column.get() == u32::try_from(expected.column).unwrap_or(u32::MAX)
+        && actual.byte_start.get() == u32::try_from(expected.byte_start).unwrap_or(u32::MAX)
+        && actual.byte_end.get() == u32::try_from(expected.byte_end).unwrap_or(u32::MAX)
 }
 
 fn normalized_local_target(document_path: &str, raw_target: &str) -> Option<String> {

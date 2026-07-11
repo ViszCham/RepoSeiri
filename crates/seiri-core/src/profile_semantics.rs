@@ -7,7 +7,6 @@ pub enum CalibrationPriorState {
     NotRequested,
     AppliedRedacted,
     Unavailable,
-    CompatibilityProjection,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +55,7 @@ impl ProfileRankScore {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileBranchSemantics {
     pub fit: ProfileFit,
     pub evidence_match: ProfileEvidenceMatch,

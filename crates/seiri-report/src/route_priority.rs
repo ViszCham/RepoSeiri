@@ -2,13 +2,13 @@ use seiri_core::{
     BaselineRequirement, BaselineRuleResult, BaselineStatus, CalibrationKey, CalibrationLookup,
     CalibrationPriorState, CalibrationProvider, FileKind, GateKind, MissingRoutePriority,
     MissingRoutePriorityReport, MissingRoutePrioritySummary, ProfileKind, ProfilePriority,
-    RepoSnapshot, ReviewGap, ReviewPriority, ReviewPriorityReport, RouteCoOccurrenceGap, RouteKind,
-    RouteState, Severity,
+    RepositoryAnalysis, ReviewGap, ReviewPriority, ReviewPriorityReport, RouteCoOccurrenceGap,
+    RouteKind, RouteState, Severity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn build_missing_route_priority_report(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     calibration: &dyn CalibrationProvider,
 ) -> MissingRoutePriorityReport {
     let co_occurrence_gaps = build_co_occurrence_gaps(snapshot, calibration);
@@ -17,19 +17,18 @@ pub(crate) fn build_missing_route_priority_report(
     let registry = seiri_patterns::common_registry();
 
     let mut priorities = Vec::new();
-    for route_state in &snapshot.route_states {
-        let baseline_rules = missing_baseline_rules(snapshot, route_state.route);
-        let candidate_patterns = missing_candidate_patterns(snapshot, &registry, route_state.route);
+    for assessment in &snapshot.route_assessments {
+        let route = assessment.route();
+        let summary = assessment.summary_projection();
+        let baseline_rules = missing_baseline_rules(snapshot, route);
+        let candidate_patterns = missing_candidate_patterns(snapshot, &registry, route);
         let candidate_pattern_ids = candidate_patterns
             .iter()
             .map(|pattern| pattern.id.clone())
             .collect::<Vec<_>>();
-        let co_occurrence_gap_ids = gap_ids_by_route
-            .get(&route_state.route)
-            .cloned()
-            .unwrap_or_default();
+        let co_occurrence_gap_ids = gap_ids_by_route.get(&route).cloned().unwrap_or_default();
 
-        if !route_needs_priority(route_state.state)
+        if !route_needs_priority(summary.state)
             && baseline_rules.is_empty()
             && candidate_pattern_ids.is_empty()
             && co_occurrence_gap_ids.is_empty()
@@ -37,19 +36,19 @@ pub(crate) fn build_missing_route_priority_report(
             continue;
         }
 
-        let prior = route_gap_prior(calibration, route_state.route);
+        let prior = route_gap_prior(calibration, route);
         let gate = strongest_gate_for_route(
-            route_state.route,
-            route_state.state,
+            route,
+            summary.state,
             &baseline_rules,
             &candidate_patterns,
             &co_occurrence_gaps,
             &co_occurrence_gap_ids,
             &finding_gates,
         );
-        let profile_bonus = profile_route_bonus(snapshot, route_state.route);
+        let profile_bonus = profile_route_bonus(snapshot, route);
         let priority_score_x100 = priority_score(PriorityScoreInput {
-            state: route_state.state,
+            state: summary.state,
             prior,
             baseline_rules: &baseline_rules,
             candidate_count: candidate_pattern_ids.len(),
@@ -63,7 +62,7 @@ pub(crate) fn build_missing_route_priority_report(
             .map(|rule| rule.pattern_id.clone())
             .collect::<Vec<_>>();
         let reason = priority_reason(
-            route_state.state,
+            summary.state,
             prior,
             &baseline_pattern_ids,
             &candidate_pattern_ids,
@@ -73,8 +72,8 @@ pub(crate) fn build_missing_route_priority_report(
 
         priorities.push(MissingRoutePriority {
             rank: 0,
-            route: route_state.route,
-            state: route_state.state,
+            route,
+            state: summary.state,
             gate,
             severity: severity_from_score(priority_score_x100),
             priority: priority_from_score(priority_score_x100),
@@ -83,7 +82,7 @@ pub(crate) fn build_missing_route_priority_report(
             baseline_pattern_ids,
             candidate_pattern_ids,
             co_occurrence_gap_ids,
-            evidence_ids: route_state.evidence_ids.clone(),
+            evidence_ids: assessment.summary_evidence_ids(),
             reason,
         });
     }
@@ -125,16 +124,16 @@ pub(crate) fn build_missing_route_priority_report(
         summary,
         priorities,
         co_occurrence_gaps,
-        boundary: "This compatibility report retains route, candidate-pattern, and co-occurrence review items. Standard audit uses no aggregate prior. An explicitly supplied local prior may affect internal ranking, but its source path, exact values, and raw body are not serialized. Rankings do not guarantee popularity, trust, security, quality, or policy outcomes.".to_string(),
+        boundary: "This report retains route, candidate-pattern, and co-occurrence review items. Standard audit uses no aggregate prior. An explicitly supplied local prior may affect internal ranking, but its source path, exact values, and raw body are not serialized. Rankings do not guarantee popularity, trust, security, quality, or policy outcomes.".to_string(),
     }
 }
 
 pub(crate) fn build_review_priority_report(
-    compatibility: &MissingRoutePriorityReport,
-    content: &seiri_core::RouteContentReportV2,
+    routes: &MissingRoutePriorityReport,
+    content: &seiri_core::RouteContentReport,
 ) -> ReviewPriorityReport {
     let mut priorities = Vec::new();
-    for item in &compatibility.priorities {
+    for item in &routes.priorities {
         if route_needs_priority(item.state) || !item.baseline_pattern_ids.is_empty() {
             priorities.push(review_priority(
                 item,
@@ -386,7 +385,7 @@ fn co_occurrence_rules() -> Vec<CoOccurrenceRule> {
 }
 
 fn build_co_occurrence_gaps(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     calibration: &dyn CalibrationProvider,
 ) -> Vec<RouteCoOccurrenceGap> {
     let mut gaps = Vec::new();
@@ -459,7 +458,10 @@ fn gap_ids_by_missing_route(gaps: &[RouteCoOccurrenceGap]) -> BTreeMap<RouteKind
     map
 }
 
-fn missing_baseline_rules(snapshot: &RepoSnapshot, route: RouteKind) -> Vec<BaselineRuleResult> {
+fn missing_baseline_rules(
+    snapshot: &RepositoryAnalysis,
+    route: RouteKind,
+) -> Vec<BaselineRuleResult> {
     snapshot
         .baseline
         .as_ref()
@@ -481,7 +483,7 @@ struct MissingCandidatePattern {
 }
 
 fn missing_candidate_patterns(
-    snapshot: &RepoSnapshot,
+    snapshot: &RepositoryAnalysis,
     registry: &seiri_patterns::PatternRegistry,
     route: RouteKind,
 ) -> Vec<MissingCandidatePattern> {
@@ -500,7 +502,7 @@ fn missing_candidate_patterns(
         .collect()
 }
 
-fn finding_gates(snapshot: &RepoSnapshot) -> BTreeMap<&str, GateKind> {
+fn finding_gates(snapshot: &RepositoryAnalysis) -> BTreeMap<&str, GateKind> {
     snapshot
         .findings
         .iter()
@@ -590,9 +592,6 @@ fn priority_reason(
             CalibrationPriorState::Unavailable => {
                 parts.push("explicit local calibration prior unavailable for this route".into());
             }
-            CalibrationPriorState::CompatibilityProjection => {
-                parts.push("legacy calibration projection retained with values redacted".into());
-            }
             CalibrationPriorState::NotRequested => {}
         }
     }
@@ -633,11 +632,12 @@ fn route_needs_priority(state: RouteState) -> bool {
     )
 }
 
-fn route_is_present(snapshot: &RepoSnapshot, route: RouteKind) -> bool {
-    snapshot.route_states.iter().any(|state| {
-        state.route == route
+fn route_is_present(snapshot: &RepositoryAnalysis, route: RouteKind) -> bool {
+    snapshot.route_assessments.iter().any(|assessment| {
+        let state = assessment.summary_projection().state;
+        assessment.route() == route
             && matches!(
-                state.state,
+                state,
                 RouteState::Routed
                     | RouteState::Structured
                     | RouteState::Verified
@@ -646,7 +646,7 @@ fn route_is_present(snapshot: &RepoSnapshot, route: RouteKind) -> bool {
     })
 }
 
-fn path_signal_present(snapshot: &RepoSnapshot, signal: PathSignal) -> bool {
+fn path_signal_present(snapshot: &RepositoryAnalysis, signal: PathSignal) -> bool {
     snapshot.files.iter().any(|record| {
         if record.kind != FileKind::File {
             return false;
@@ -776,7 +776,7 @@ fn default_route_gate(route: RouteKind) -> GateKind {
     }
 }
 
-fn profile_route_bonus(snapshot: &RepoSnapshot, route: RouteKind) -> u8 {
+fn profile_route_bonus(snapshot: &RepositoryAnalysis, route: RouteKind) -> u8 {
     let Some(profile) = snapshot.profile.as_ref() else {
         return 0;
     };

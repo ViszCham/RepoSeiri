@@ -5,7 +5,7 @@ use seiri_core::{
 };
 
 #[test]
-fn q2_registry_covers_every_route_and_major_state_pair() {
+fn registry_covers_every_route_and_major_state_pair() {
     let rules = route_meaning_rules().collect::<Vec<_>>();
     assert_eq!(
         rules.len(),
@@ -25,7 +25,7 @@ fn q2_registry_covers_every_route_and_major_state_pair() {
 }
 
 #[test]
-fn q2_verified_security_route_does_not_become_a_guarantee() {
+fn verified_security_route_does_not_become_a_guarantee() {
     let rule = route_meaning_rule(RouteKind::Security, RouteState::Verified);
     assert!(rule.indicates.contains(&MeaningAtom::RouteObserved));
     assert!(rule
@@ -50,7 +50,7 @@ fn q2_verified_security_route_does_not_become_a_guarantee() {
 }
 
 #[test]
-fn q2_state_meanings_keep_missing_weak_and_verified_separate() {
+fn state_meanings_keep_missing_weak_and_verified_separate() {
     assert_eq!(
         route_state_indicates(RouteState::Absent),
         &[MeaningAtom::RouteMissing]
@@ -67,7 +67,7 @@ fn q2_state_meanings_keep_missing_weak_and_verified_separate() {
 }
 
 #[test]
-fn q2_route_meaning_rule_serializes_to_stable_json_surface() {
+fn route_meaning_rule_serializes_to_stable_json_surface() {
     let rule = route_meaning_rule(RouteKind::Docs, RouteState::Structured);
     let json = serde_json::to_value(rule).expect("serialize route meaning rule");
 
@@ -78,7 +78,7 @@ fn q2_route_meaning_rule_serializes_to_stable_json_surface() {
 }
 
 #[test]
-fn q2_non_claim_boundaries_are_available_from_route_state_pair() {
+fn non_claim_boundaries_are_available_from_route_state_pair() {
     let boundaries = route_state_does_not_indicate(RouteKind::License, RouteState::Verified);
     assert!(boundaries.contains(&ClaimBoundaryKind::NotLegalAdvice));
     assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticPolicyAdoption));
@@ -86,12 +86,11 @@ fn q2_non_claim_boundaries_are_available_from_route_state_pair() {
 }
 
 #[test]
-fn q12_route_target_meaning_uses_local_name_and_reads_legacy_name() {
-    let atom: MeaningAtom =
-        serde_json::from_str("\"route_target_present\"").expect("legacy meaning atom");
-    assert_eq!(atom, MeaningAtom::RepositoryLocalTargetPresent);
+fn route_target_meaning_rejects_removed_name() {
+    assert!(serde_json::from_str::<MeaningAtom>("\"route_target_present\"").is_err());
+    let atom = MeaningAtom::RepositoryLocalTargetPresent;
     assert_eq!(
-        serde_json::to_string(&atom).expect("native meaning atom"),
+        serde_json::to_string(&atom).expect("canonical meaning atom"),
         "\"repository_local_target_present\""
     );
 }

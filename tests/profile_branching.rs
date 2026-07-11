@@ -72,7 +72,7 @@ fn profile_score_view_is_deterministic_and_bounded() {
     assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Docs);
     assert_eq!(profile.branches.len(), 9);
     assert!(profile.branch_summary.top_profile.is_some());
-    assert!(profile.branch_summary.top_confidence_x100.is_some());
+    assert!(profile.branch_summary.top_rank_score_x100.is_some());
 }
 
 #[test]
@@ -138,14 +138,12 @@ fn profile_branch_semantics_emit_multiple_candidates_without_implicit_priors() {
         .expect("ml branch");
 
     for branch in [library, cli, product, runtime, ml] {
-        assert_eq!(branch.prior_x1000, 0);
         assert_eq!(
             branch.semantics.calibration_prior,
             CalibrationPriorState::NotRequested
         );
-        assert_eq!(branch.confidence_x100, branch.semantics.rank_score.get());
     }
-    assert!(library.confidence_x100 > 0);
-    assert!(cli.confidence_x100 > 0);
+    assert!(library.semantics.rank_score.get() > 0);
+    assert!(cli.semantics.rank_score.get() > 0);
     assert!(!library.matched_signals.is_empty());
 }
