@@ -10,4 +10,5 @@ publish.workspace = true
 seiri-core = { path = "../seiri-core" }
 seiri-patterns = { path = "../seiri-patterns" }
 seiri-profiles = { path = "../seiri-profiles" }
+serde.workspace = true
 serde_json.workspace = true

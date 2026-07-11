@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod audit_delta;
+mod calibration_prior;
 mod codex_view;
 mod document_index;
 mod document_scan;
@@ -11,10 +13,19 @@ mod github_local;
 mod obligation_graph;
 mod observation;
 mod patch_proposal;
+mod profile_semantics;
 mod remote_evidence;
+mod repository_scope;
 mod review_priority;
 mod route_assessment;
 mod route_content;
+mod route_content_v2;
+mod route_target;
+
+pub use calibration_prior::{
+    AggregatePrior, AggregatePriorError, CalibrationKey, CalibrationLookup, CalibrationProvider,
+    CalibrationUnavailableReason, NoCalibrationProvider, PriorBasis, PriorVisibility,
+};
 
 pub use codex_view::{
     CodexCommand, CodexCommandError, CodexLinterContext, CodexNativeAction,
@@ -44,15 +55,19 @@ pub use facets::{
     facet_evidence_ids, FacetAssessment, FacetReport, FacetReportError, RepositoryFacet,
 };
 pub use github_local::{
-    CodeownerEntry, Codeowners, DependencyBot, DependencyBotProvider, DependencyUpdate,
-    GithubDiagnostic, GithubDiagnosticKind, GithubDocumentIr, GithubDocumentKind,
-    GithubLocalDocument, GithubLocalDocumentError, GithubLocalDocuments, GithubLocalDocumentsError,
-    GithubParseStatus, IssueForm, IssueFormField, IssueFormFieldKind, StructuredBudgetKind,
-    Workflow, WorkflowJob, WorkflowTrigger,
+    ActionReference, ActionReferenceKind, CodeownerEntry, Codeowners, CodeownersOp,
+    CodeownersPatternProgram, CodeownersSkippedLine, CriticalPathCoverage, CriticalPathKind,
+    DependencyBot, DependencyBotProvider, DependencyUpdate, GithubDiagnostic, GithubDiagnosticKind,
+    GithubDocumentIr, GithubDocumentKind, GithubLocalDocument, GithubLocalDocumentError,
+    GithubLocalDocuments, GithubLocalDocumentsError, GithubParseStatus, GithubSemanticsReport,
+    IssueForm, IssueFormField, IssueFormFieldKind, IssueFormRequiredFields, IssueRouteCandidate,
+    IssueRouteCandidateKind, PermissionEntry, PermissionSet, StaticUnknownReason, StaticValue,
+    StructuredBudgetKind, TokenPermission, Workflow, WorkflowJob, WorkflowJobCandidate,
+    WorkflowJobCandidateKind, WorkflowStep, WorkflowTrigger,
 };
 pub use obligation_graph::{
     ConditionalObligation, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
-    DocumentConsistencyReport,
+    DocumentConsistencyReport, DocumentTargetRelation,
 };
 pub use observation::{
     CoverageId, CoverageIncompleteReason, CoverageIndex, CoverageIndexError, CoverageRecord,
@@ -65,9 +80,22 @@ pub use patch_proposal::{
     PatchTextEdit, PolicySlotKind, TextDocumentBase, TextEditSpan, TextEncoding, TextLineEnding,
     UnresolvedPolicySlot, PATCH_ANCHOR_CONTEXT_BYTES, PATCH_PROPOSAL_SCHEMA_VERSION,
 };
+pub use profile_semantics::{
+    CalibrationPriorState, ProfileBranchSemantics, ProfileEvidenceMatch, ProfileFit,
+    ProfileRankScore,
+};
 pub use remote_evidence::{
     RemoteEvidenceReport, RemoteEvidenceStatus, RemoteRepositoryMetadata,
     RemoteRepositoryReference, RemoteRepositoryReferenceError, RemoteUnavailableReason,
+};
+pub use repository_scope::{
+    AnalysisScope, FreshnessReport, GitCommitHeader, GitDiagnostic, GitDiagnosticKind,
+    GitObservationState, GitReadBudget, GitReferenceKind, GitReferenceObservation,
+    GitTemporalObservation, GitTimestamp, IgnoredPathReason, IgnoredShallowRecord,
+    LifecycleSignalFreshness, ManifestObservationStatus, RepositoryRootKind, RepositoryScopeGraph,
+    RepositoryScopeReport, RepositoryScopeRoot, ScopeEdge, ScopeEdgeKind, ScopeNode, ScopeNodeId,
+    ScopeNodeKind, ScopeReadBudget, TargetReachabilityFreshness, TemporalActivityFreshness,
+    WorkspaceManifestKind, WorkspaceManifestObservation,
 };
 pub use review_priority::{
     ReviewGap, ReviewGapKind, ReviewPriority, ReviewPriorityReport, ReviewPrioritySummary,
@@ -80,6 +108,12 @@ pub use route_assessment::{
 pub use route_content::{
     ContentObservation, RouteContentAssessment, RouteContentAtom, RouteContentAtomAssessment,
 };
+pub use route_content_v2::{
+    route_content_contract_v2, BilingualStructuralPair, ContentSlotAssessment, ContentSlotId,
+    ContentSlotKind, ContentSlotSpec, MeaningAtomSet, PolicySensitivity, PolicySensitivityWire,
+    RouteContentReportV2, ROUTE_CONTENT_CONTRACT_V2,
+};
+pub use route_target::{classify_target_relation, RouteTargetRef, RouteTargetRole, TargetRelation};
 
 pub const SCHEMA_VERSION: &str = "seiri.block_p.v1";
 pub const TOOL_NAME: &str = "RepoSeiri";
@@ -94,9 +128,13 @@ pub struct RepoSnapshot {
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
     #[serde(skip, default)]
+    pub analysis_configuration: AnalysisConfiguration,
+    #[serde(skip, default)]
     pub document_index: DocumentIndex,
     #[serde(skip, default)]
     pub github_local_documents: GithubLocalDocuments,
+    #[serde(skip, default)]
+    pub github_semantics: GithubSemanticsReport,
     #[serde(default)]
     pub readme_document: Option<DocumentScan>,
     // Compatibility document view retained until renderer/schema separation in Q19.
@@ -110,11 +148,19 @@ pub struct RepoSnapshot {
     #[serde(skip, default)]
     pub route_content: Vec<RouteContentAssessment>,
     #[serde(skip, default)]
+    pub route_content_v2: RouteContentReportV2,
+    #[serde(skip, default)]
     pub facets: FacetReport,
     #[serde(skip, default)]
     pub document_consistency: DocumentConsistencyReport,
     #[serde(skip, default)]
+    pub route_targets: Vec<RouteTargetRef>,
+    #[serde(skip, default)]
     pub remote_evidence: RemoteEvidenceReport,
+    #[serde(skip, default)]
+    pub repository_scope: RepositoryScopeReport,
+    #[serde(skip, default)]
+    pub freshness: FreshnessReport,
     // Compatibility views retained until renderer/schema separation in Q19.
     pub evidence: Vec<Evidence>,
     pub evidence_ledger: Vec<EvidenceRecord>,
@@ -143,17 +189,23 @@ impl RepoSnapshot {
             entry_count: 0,
             files: Vec::new(),
             important_files: Vec::new(),
+            analysis_configuration: AnalysisConfiguration::default(),
             document_index: DocumentIndex::default(),
             github_local_documents: GithubLocalDocuments::default(),
+            github_semantics: GithubSemanticsReport::default(),
             readme_document: None,
             readme: None,
             evidence_kernel: EvidenceKernel::default(),
             evidence_kernel_v2: EvidenceKernelV2::default(),
             coverage: CoverageIndex::default(),
             route_content: Vec::new(),
+            route_content_v2: RouteContentReportV2::default(),
             facets: FacetReport::default(),
             document_consistency: DocumentConsistencyReport::default(),
+            route_targets: Vec::new(),
             remote_evidence: RemoteEvidenceReport::default(),
+            repository_scope: RepositoryScopeReport::default(),
+            freshness: FreshnessReport::default(),
             evidence: Vec::new(),
             evidence_ledger: Vec::new(),
             pattern_matches: Vec::new(),
@@ -297,6 +349,19 @@ pub struct MarkdownLink {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<SourceSpan>,
     pub route: Option<RouteKind>,
+    #[serde(default)]
+    pub kind: MarkdownLinkKind,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkdownLinkKind {
+    #[default]
+    Inline,
+    Reference,
+    Autolink,
+    Image,
+    HtmlAnchor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,20 +498,6 @@ where
                 AggregateRepositoryEstimate::fixed(count, 1_000_000)
             }
         })
-    })
-}
-
-fn deserialize_aggregate_estimate<'de, D>(
-    deserializer: D,
-) -> Result<AggregateRepositoryEstimate, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    AggregateRepositoryEstimateCompat::deserialize(deserializer).map(|estimate| match estimate {
-        AggregateRepositoryEstimateCompat::Typed(estimate) => estimate,
-        AggregateRepositoryEstimateCompat::LegacyCount(count) => {
-            AggregateRepositoryEstimate::fixed(count, 1_000_000)
-        }
     })
 }
 
@@ -797,7 +848,7 @@ impl MissingRoutePriorityReport {
             },
             priorities: Vec::new(),
             co_occurrence_gaps: Vec::new(),
-            boundary: "Missing route priority is a deterministic routing hint from repository observations, fixed aggregate calibration estimates, and route co-occurrence rules; it is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
+            boundary: "Missing route priority is a deterministic routing hint from repository observations and route co-occurrence rules. Standard audit has no aggregate prior; explicit local calibration remains redacted. This is not a popularity, trust, security, quality, or policy guarantee.".to_string(),
         }
     }
 }
@@ -840,11 +891,16 @@ pub struct RouteCoOccurrenceGap {
     pub id: String,
     pub title: String,
     #[serde(
+        default,
         alias = "observed_repositories",
-        deserialize_with = "deserialize_aggregate_estimate"
+        deserialize_with = "deserialize_optional_aggregate_estimate"
     )]
-    pub calibration_estimate: AggregateRepositoryEstimate,
+    pub calibration_estimate: Option<AggregateRepositoryEstimate>,
     pub support_x1000: u16,
+    #[serde(skip, default)]
+    pub rank_weight_x100: u8,
+    #[serde(skip, default)]
+    pub calibration_prior: CalibrationPriorState,
     pub gate: GateKind,
     pub priority: ProfilePriority,
     pub present_routes: Vec<RouteKind>,
@@ -1027,7 +1083,7 @@ pub struct ProfileBranchSummary {
     pub boundary: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProfileBranch {
     pub rank: usize,
     pub profile: ProfileKind,
@@ -1035,9 +1091,55 @@ pub struct ProfileBranch {
     pub confidence_x100: u8,
     pub evidence_score_x100: u8,
     pub score_x100: u8,
+    #[serde(skip, default)]
+    pub semantics: ProfileBranchSemantics,
     pub matched_signals: Vec<String>,
     pub missing_signals: Vec<String>,
     pub rationale: String,
+}
+
+impl<'de> Deserialize<'de> for ProfileBranch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireBranch {
+            rank: usize,
+            profile: ProfileKind,
+            prior_x1000: u16,
+            confidence_x100: u8,
+            evidence_score_x100: u8,
+            score_x100: u8,
+            matched_signals: Vec<String>,
+            missing_signals: Vec<String>,
+            rationale: String,
+        }
+
+        let wire = WireBranch::deserialize(deserializer)?;
+        let calibration_prior = if wire.prior_x1000 == 0 {
+            CalibrationPriorState::NotRequested
+        } else {
+            CalibrationPriorState::CompatibilityProjection
+        };
+        Ok(Self {
+            rank: wire.rank,
+            profile: wire.profile,
+            prior_x1000: wire.prior_x1000,
+            confidence_x100: wire.confidence_x100,
+            evidence_score_x100: wire.evidence_score_x100,
+            score_x100: wire.score_x100,
+            semantics: ProfileBranchSemantics {
+                fit: ProfileFit::from_bounded(wire.score_x100),
+                evidence_match: ProfileEvidenceMatch::from_bounded(wire.evidence_score_x100),
+                rank_score: ProfileRankScore::from_bounded(wire.confidence_x100),
+                calibration_prior,
+            },
+            matched_signals: wire.matched_signals,
+            missing_signals: wire.missing_signals,
+            rationale: wire.rationale,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1236,7 +1338,31 @@ impl CalibrationRun {
 
         if !source_id_map.is_empty() {
             public_run.dataset_id = "redacted-calibration-dataset".to_string();
-            public_run.resource_trace.replay_digest = None;
+            public_run.summary = CalibrationSummary {
+                records: 0,
+                sources: public_run.sources.len(),
+                known_pattern_stats: 0,
+                route_requirements: 0,
+                profile_branches: 0,
+                pending_patterns: 0,
+                weight_suggestions: 0,
+            };
+            public_run.stats.clear();
+            public_run.route_requirements.clear();
+            public_run.profile_branches.clear();
+            public_run.pending_patterns.clear();
+            public_run.weight_suggestions.clear();
+            let aggregation_mode = public_run.resource_trace.aggregation_mode;
+            let record_identity = public_run.resource_trace.record_identity;
+            public_run.resource_trace = CalibrationResourceTrace {
+                aggregation_mode,
+                record_identity,
+                ..CalibrationResourceTrace::default()
+            };
+            if let Some(pack) = &mut public_run.pattern_pack {
+                pack.eligible_records = 0;
+                pack.excluded_records = 0;
+            }
         }
         public_run.redact_source_references(&source_id_map);
         public_run
@@ -1465,15 +1591,15 @@ fn redacted_calibration_source(source: &CalibrationSource, public_id: String) ->
         kind: source.kind,
         visibility: CalibrationSourceVisibility::Redacted,
         label: "redacted local-only calibration source".to_string(),
-        collected_at: source.collected_at.clone(),
-        records: source.records,
-        scale: source.scale,
+        collected_at: "redacted".to_string(),
+        records: 0,
+        scale: CalibrationScale::Custom,
         metadata_sources: vec!["redacted".to_string()],
         extraction_conditions: vec![
             "Local-only source details are withheld from public output.".to_string(),
         ],
         limitations: vec![
-            "Source path, body text, and source-specific notes are redacted; only counts and review status remain.".to_string(),
+            "Source path, body text, source-specific notes, and aggregate values are redacted; only review status remains.".to_string(),
         ],
         evidence_schema: None,
         review_status: source.review_status,
@@ -1632,6 +1758,9 @@ pub enum MeaningAtom {
     HumanReviewRequired,
     PatchPreviewOnly,
     CalibrationCandidate,
+    ContentSlotObserved,
+    ExpectedOutputDocumented,
+    StructuralParallelCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -2361,3 +2490,13 @@ pub fn stable_claim_id(index: usize) -> ClaimId {
 fn default_observation_count() -> u32 {
     1
 }
+pub use audit_delta::{
+    AddExistingRouteLink, AnalysisBudgetConfiguration, AnalysisConfiguration, AnalysisVisibility,
+    ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
+    DeltaUnknownReason, Digest32, ExistingTargetId, ImprovementCandidate, PlannerV5HeldItem,
+    PlannerV5HoldReason, PlannerV5Report, PortableAuditSnapshot, PortableConflictRecord,
+    PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
+    PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
+    RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PLANNER_V5_SCHEMA_VERSION,
+    PORTABLE_AUDIT_SCHEMA_VERSION,
+};

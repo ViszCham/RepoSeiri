@@ -170,6 +170,11 @@ impl TargetReachabilityAssessment {
     pub const fn unknown(self) -> usize {
         self.unknown
     }
+
+    #[must_use]
+    pub const fn non_local_or_unknown(self) -> usize {
+        self.external + self.anchor + self.mail + self.unknown
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,7 +5,8 @@ use std::process::ExitCode;
 
 mod codex;
 
-use codex::{CodexQuery, CodexSchema, CodexView};
+use codex::{CodexError, CodexSchema, CodexView};
+use seiri_report::CodexNativeV3QueryKind;
 
 #[derive(Debug, Parser)]
 #[command(name = "seiri")]
@@ -22,6 +23,10 @@ enum Command {
         path: PathBuf,
         #[arg(long, default_value = "common", value_parser = parse_profile)]
         profile: ProfileKind,
+        #[arg(long)]
+        calibration_priors: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
+        scope: ScopeArg,
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
@@ -30,6 +35,38 @@ enum Command {
         path: PathBuf,
         #[arg(long, default_value = "common", value_parser = parse_profile)]
         profile: ProfileKind,
+        #[arg(long)]
+        calibration_priors: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        format: OutputFormat,
+    },
+    PlanV5 {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long, default_value = "common", value_parser = parse_profile)]
+        profile: ProfileKind,
+        #[arg(long)]
+        calibration_priors: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
+        scope: ScopeArg,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        format: OutputFormat,
+    },
+    Diff {
+        #[arg(long)]
+        before: PathBuf,
+        #[arg(long)]
+        after: PathBuf,
+        #[arg(long, default_value = "common", value_parser = parse_profile)]
+        profile: ProfileKind,
+        #[arg(long)]
+        before_calibration_priors: Option<PathBuf>,
+        #[arg(long)]
+        after_calibration_priors: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
+        before_scope: ScopeArg,
+        #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
+        after_scope: ScopeArg,
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
@@ -62,8 +99,8 @@ enum Command {
         view: CodexView,
         #[arg(long, value_enum, default_value_t = CodexSchema::CompatibilityV1)]
         schema: CodexSchema,
-        #[arg(long, value_enum, default_value_t = CodexQuery::Summary)]
-        query: CodexQuery,
+        #[arg(long, default_value = "summary", value_parser = parse_codex_query)]
+        query: CodexNativeV3QueryKind,
     },
 }
 
@@ -71,6 +108,23 @@ enum Command {
 pub(crate) enum OutputFormat {
     Json,
     Markdown,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ScopeArg {
+    Repository,
+    Workspace,
+    Subtree,
+}
+
+impl From<ScopeArg> for seiri_core::AnalysisScope {
+    fn from(value: ScopeArg) -> Self {
+        match value {
+            ScopeArg::Repository => Self::Repository,
+            ScopeArg::Workspace => Self::Workspace,
+            ScopeArg::Subtree => Self::Subtree,
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -86,29 +140,104 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<String, seiri_report::AuditError> {
+fn run() -> Result<String, CodexError> {
     let cli = Cli::parse();
     match cli.command {
         Command::Audit {
             path,
             profile,
+            calibration_priors,
+            scope,
             format,
         } => {
-            let snapshot = seiri_report::audit_repository_with_profile(path, profile)?;
+            let snapshot = match calibration_priors {
+                Some(priors) => seiri_report::audit_repository_with_local_calibration_and_scope(
+                    path,
+                    profile,
+                    priors,
+                    scope.into(),
+                )?,
+                None => seiri_report::audit_repository_with_scope(path, profile, scope.into())?,
+            };
             match format {
-                OutputFormat::Json => seiri_report::to_json(&snapshot),
+                OutputFormat::Json => Ok(seiri_report::to_json(&snapshot)?),
                 OutputFormat::Markdown => Ok(seiri_report::to_markdown(&snapshot)),
             }
         }
         Command::Plan {
             path,
             profile,
+            calibration_priors,
             format,
         } => {
-            let plan = seiri_report::plan_repository_with_profile(path, profile)?;
+            let plan = match calibration_priors {
+                Some(priors) => {
+                    seiri_report::plan_repository_with_local_calibration(path, profile, priors)?
+                }
+                None => seiri_report::plan_repository_with_profile(path, profile)?,
+            };
             match format {
-                OutputFormat::Json => seiri_report::plan_to_json(&plan),
+                OutputFormat::Json => Ok(seiri_report::plan_to_json(&plan)?),
                 OutputFormat::Markdown => Ok(seiri_report::plan_to_markdown(&plan)),
+            }
+        }
+        Command::PlanV5 {
+            path,
+            profile,
+            calibration_priors,
+            scope,
+            format,
+        } => {
+            let plan = match calibration_priors {
+                Some(priors) => seiri_report::plan_repository_v5_with_local_calibration(
+                    path,
+                    profile,
+                    priors,
+                    scope.into(),
+                )?,
+                None => seiri_report::plan_repository_v5(path, profile, scope.into())?,
+            };
+            match format {
+                OutputFormat::Json => Ok(seiri_report::planner_v5_to_json(&plan)?),
+                OutputFormat::Markdown => Ok(seiri_report::planner_v5_to_markdown(&plan)),
+            }
+        }
+        Command::Diff {
+            before,
+            after,
+            profile,
+            before_calibration_priors,
+            after_calibration_priors,
+            before_scope,
+            after_scope,
+            format,
+        } => {
+            let before_snapshot = match before_calibration_priors {
+                Some(priors) => seiri_report::audit_repository_with_local_calibration_and_scope(
+                    before,
+                    profile,
+                    priors,
+                    before_scope.into(),
+                )?,
+                None => {
+                    seiri_report::audit_repository_with_scope(before, profile, before_scope.into())?
+                }
+            };
+            let after_snapshot = match after_calibration_priors {
+                Some(priors) => seiri_report::audit_repository_with_local_calibration_and_scope(
+                    after,
+                    profile,
+                    priors,
+                    after_scope.into(),
+                )?,
+                None => {
+                    seiri_report::audit_repository_with_scope(after, profile, after_scope.into())?
+                }
+            };
+            let delta = seiri_report::diff_snapshots(&before_snapshot, &after_snapshot)?;
+            match format {
+                OutputFormat::Json => Ok(seiri_report::audit_delta_to_json(&delta)?),
+                OutputFormat::Markdown => Ok(seiri_report::audit_delta_to_markdown(&delta)),
             }
         }
         Command::LintWording {
@@ -118,19 +247,19 @@ fn run() -> Result<String, seiri_report::AuditError> {
         } => {
             let report = seiri_report::lint_wording_repository_with_profile(path, profile)?;
             match format {
-                OutputFormat::Json => seiri_report::wording_lint_to_json(&report),
+                OutputFormat::Json => Ok(seiri_report::wording_lint_to_json(&report)?),
                 OutputFormat::Markdown => Ok(seiri_report::wording_lint_to_markdown(&report)),
             }
         }
         Command::Calibrate { input, format } => {
             let run = seiri_report::calibrate_dataset_path(input)?;
             match format {
-                OutputFormat::Json => seiri_report::calibration_to_json(&run),
+                OutputFormat::Json => Ok(seiri_report::calibration_to_json(&run)?),
                 OutputFormat::Markdown => Ok(seiri_report::calibration_to_markdown(&run)),
             }
         }
         Command::Patterns { format } => match format {
-            OutputFormat::Json => seiri_report::pattern_registry_to_json(),
+            OutputFormat::Json => Ok(seiri_report::pattern_registry_to_json()?),
             OutputFormat::Markdown => Ok(seiri_report::pattern_registry_to_markdown()),
         },
         Command::Codex {
@@ -150,4 +279,10 @@ fn parse_profile(value: &str) -> Result<ProfileKind, String> {
             "{error}; expected one of: common, library, cli, infra, product, runtime, docs, tutorial, ml, research, template"
         )
     })
+}
+
+fn parse_codex_query(value: &str) -> Result<CodexNativeV3QueryKind, String> {
+    value
+        .parse::<CodexNativeV3QueryKind>()
+        .map_err(|error| error.to_string())
 }

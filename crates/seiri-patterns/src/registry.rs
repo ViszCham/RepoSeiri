@@ -3,6 +3,7 @@ use crate::{
     PredicateProgramError,
 };
 use seiri_core::{stable_id, PatternGroup, PatternMatch, PatternOutcome, RepoSnapshot, RouteKind};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +18,8 @@ pub struct PatternDefinition {
     pub predicate: Option<PredicateProgram>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PatternAdoptionStage {
     CommonBaseline,
     Candidate,

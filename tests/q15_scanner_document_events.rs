@@ -218,8 +218,8 @@ fn q15_document_scan_wire_rejects_missing_bounds_and_order() {
 
 #[test]
 fn q15_audit_uses_document_events_as_canonical_evidence_input() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let document = snapshot
         .readme_document
         .as_ref()

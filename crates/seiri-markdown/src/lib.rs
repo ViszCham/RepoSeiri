@@ -580,7 +580,7 @@ fn is_github_configuration_candidate(path: &str) -> bool {
     path.starts_with(".github/")
         || matches!(
             path,
-            "codeowners" | "renovate.json" | ".renovaterc" | ".renovaterc.json"
+            "codeowners" | "docs/codeowners" | "renovate.json" | ".renovaterc" | ".renovaterc.json"
         )
 }
 
@@ -612,11 +612,10 @@ fn scan_status_for_error(error: &MarkdownError) -> DocumentScanStatus {
         MarkdownError::Io { source, .. } if source.kind() == io::ErrorKind::PermissionDenied => {
             DocumentScanStatus::PermissionDenied
         }
-        MarkdownError::Io { .. }
-        | MarkdownError::SourceLimitExceeded { .. }
+        MarkdownError::SourceLimitExceeded { .. }
         | MarkdownError::EventLimitExceeded { .. }
-        | MarkdownError::DiagnosticLimitExceeded { .. }
-        | MarkdownError::Invariant(_) => DocumentScanStatus::ParseFailed,
+        | MarkdownError::DiagnosticLimitExceeded { .. } => DocumentScanStatus::SkippedByteBudget,
+        MarkdownError::Io { .. } | MarkdownError::Invariant(_) => DocumentScanStatus::ParseFailed,
     }
 }
 

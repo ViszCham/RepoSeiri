@@ -1,7 +1,6 @@
 use seiri_core::{
-    AggregateRepositoryEstimate, ReadmeRouteAssessment, ReadmeRouteMap, ReadmeRouteMapEntry,
-    ReadmeRouteMapSummary, ReadmeRouteTarget, ReadmeRouteTargetStatus, RouteCandidate, RouteKind,
-    RouteSource, RouteState,
+    ReadmeRouteAssessment, ReadmeRouteMap, ReadmeRouteMapEntry, ReadmeRouteMapSummary,
+    ReadmeRouteTarget, ReadmeRouteTargetStatus, RouteCandidate, RouteKind, RouteSource, RouteState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -66,7 +65,7 @@ pub(crate) fn build_route_map(
             route,
             assessment,
             state,
-            gap_estimate: gap_estimate(route),
+            gap_estimate: None,
             candidate_count,
             heading_count,
             link_count,
@@ -170,21 +169,6 @@ fn readme_hub_routes() -> &'static [RouteKind] {
         RouteKind::Ownership,
         RouteKind::Hygiene,
     ]
-}
-
-fn gap_estimate(route: RouteKind) -> Option<AggregateRepositoryEstimate> {
-    let estimated_repositories = match route {
-        RouteKind::Docs => 186_000,
-        RouteKind::Quickstart => 438_000,
-        RouteKind::Support => 503_000,
-        RouteKind::Intake => 822_000,
-        RouteKind::Release => 454_000,
-        _ => return None,
-    };
-    Some(AggregateRepositoryEstimate::fixed(
-        estimated_repositories,
-        1_000_000,
-    ))
 }
 
 fn classify_target_status(target: &str, repo_root: Option<&Path>) -> ReadmeRouteTargetStatus {

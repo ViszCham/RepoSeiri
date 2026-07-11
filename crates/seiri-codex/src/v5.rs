@@ -9,6 +9,8 @@ use seiri_core::{
 };
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,7 +38,75 @@ impl CodexNativeV3QueryKind {
         Self::Actions,
         Self::Remote,
     ];
+
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Routes => "routes",
+            Self::Evidence => "evidence",
+            Self::Documents => "documents",
+            Self::Governance => "governance",
+            Self::Patches => "patches",
+            Self::Linter => "linter",
+            Self::Actions => "actions",
+            Self::Remote => "remote",
+        }
+    }
+
+    #[must_use]
+    pub const fn compatibility_kind(self) -> Option<seiri_core::CodexQueryKind> {
+        match self {
+            Self::Summary => Some(seiri_core::CodexQueryKind::Summary),
+            Self::Routes => Some(seiri_core::CodexQueryKind::Routes),
+            Self::Patches => Some(seiri_core::CodexQueryKind::Patches),
+            Self::Linter => Some(seiri_core::CodexQueryKind::Linter),
+            Self::Actions => Some(seiri_core::CodexQueryKind::Actions),
+            Self::Evidence | Self::Documents | Self::Governance | Self::Remote => None,
+        }
+    }
 }
+
+impl Display for CodexNativeV3QueryKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.slug())
+    }
+}
+
+impl FromStr for CodexNativeV3QueryKind {
+    type Err = CodexNativeV3QueryParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.slug() == value)
+            .ok_or_else(|| CodexNativeV3QueryParseError {
+                value: value.to_string(),
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexNativeV3QueryParseError {
+    value: String,
+}
+
+impl Display for CodexNativeV3QueryParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown Codex query `{}`; expected one of: {}",
+            self.value,
+            CodexNativeV3QueryKind::ALL
+                .iter()
+                .map(|kind| kind.slug())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+impl std::error::Error for CodexNativeV3QueryParseError {}
 
 /// Borrowed native v3 surface. It owns only the small argv action list.
 #[derive(Debug)]
@@ -44,7 +114,6 @@ pub struct CodexNativeV3View<'a> {
     snapshot: &'a RepoSnapshot,
     plan: &'a PatchPlan,
     wording_lint: Option<&'a WordingLintReport>,
-    actions: Vec<CodexNativeAction>,
 }
 
 impl<'a> CodexNativeV3View<'a> {
@@ -54,12 +123,10 @@ impl<'a> CodexNativeV3View<'a> {
         plan: &'a PatchPlan,
         wording_lint: Option<&'a WordingLintReport>,
     ) -> Self {
-        let profile = snapshot.profile.as_ref().map(|profile| profile.profile);
         Self {
             snapshot,
             plan,
             wording_lint,
-            actions: build_native_actions(snapshot, profile),
         }
     }
 
@@ -74,6 +141,9 @@ impl<'a> CodexNativeV3View<'a> {
                 route_content_assessments: self.snapshot.route_content.len(),
                 facet_assessments: self.snapshot.facets.facets.len(),
                 document_conflicts: self.snapshot.document_consistency.conflicts.len(),
+                scope_nodes: self.snapshot.repository_scope.graph.nodes.len(),
+                git_commit_headers: self.snapshot.repository_scope.git.commits.len(),
+                github_critical_paths: self.snapshot.github_semantics.critical_paths.len(),
                 patch_operations: self.plan.operations.len(),
                 blocked_patch_items: self.plan.blocked.len(),
                 bound_patch_operations: self
@@ -100,6 +170,9 @@ impl<'a> CodexNativeV3View<'a> {
                 CodexNativeV3Query::Documents(CodexNativeV3DocumentsQuery {
                     index: &self.snapshot.document_index,
                     github_local: &self.snapshot.github_local_documents,
+                    github_semantics: &self.snapshot.github_semantics,
+                    repository_scope: &self.snapshot.repository_scope,
+                    freshness: &self.snapshot.freshness,
                 })
             }
             CodexNativeV3QueryKind::Governance => {
@@ -107,13 +180,22 @@ impl<'a> CodexNativeV3View<'a> {
                     facets: &self.snapshot.facets,
                     consistency: &self.snapshot.document_consistency,
                     route_content: &self.snapshot.route_content,
+                    route_content_v2: &self.snapshot.route_content_v2,
+                    content_contract: seiri_core::route_content_contract_v2(),
                 })
             }
             CodexNativeV3QueryKind::Patches => {
                 CodexNativeV3Query::Patches(CodexNativeV3PatchQuery { plan: self.plan })
             }
             CodexNativeV3QueryKind::Linter => CodexNativeV3Query::Linter(self.wording_lint),
-            CodexNativeV3QueryKind::Actions => CodexNativeV3Query::Actions(&self.actions),
+            CodexNativeV3QueryKind::Actions => {
+                let profile = self
+                    .snapshot
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.profile);
+                CodexNativeV3Query::Actions(build_native_actions(self.snapshot, profile))
+            }
             CodexNativeV3QueryKind::Remote => {
                 CodexNativeV3Query::Remote(&self.snapshot.remote_evidence)
             }
@@ -149,7 +231,7 @@ pub enum CodexNativeV3Query<'a> {
     Governance(CodexNativeV3GovernanceQuery<'a>),
     Patches(CodexNativeV3PatchQuery<'a>),
     Linter(Option<&'a WordingLintReport>),
-    Actions(&'a [CodexNativeAction]),
+    Actions(Vec<CodexNativeAction>),
     Remote(&'a seiri_core::RemoteEvidenceReport),
 }
 
@@ -179,6 +261,9 @@ pub struct CodexNativeV3Summary {
     pub route_content_assessments: usize,
     pub facet_assessments: usize,
     pub document_conflicts: usize,
+    pub scope_nodes: usize,
+    pub git_commit_headers: usize,
+    pub github_critical_paths: usize,
     pub patch_operations: usize,
     pub blocked_patch_items: usize,
     pub bound_patch_operations: usize,
@@ -201,6 +286,9 @@ pub struct CodexNativeV3EvidenceQuery<'a> {
 pub struct CodexNativeV3DocumentsQuery<'a> {
     pub index: &'a seiri_core::DocumentIndex,
     pub github_local: &'a seiri_core::GithubLocalDocuments,
+    pub github_semantics: &'a seiri_core::GithubSemanticsReport,
+    pub repository_scope: &'a seiri_core::RepositoryScopeReport,
+    pub freshness: &'a seiri_core::FreshnessReport,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +296,8 @@ pub struct CodexNativeV3GovernanceQuery<'a> {
     pub facets: &'a seiri_core::FacetReport,
     pub consistency: &'a seiri_core::DocumentConsistencyReport,
     pub route_content: &'a [seiri_core::RouteContentAssessment],
+    pub route_content_v2: &'a seiri_core::RouteContentReportV2,
+    pub content_contract: &'static [seiri_core::ContentSlotSpec],
 }
 
 #[derive(Debug)]
@@ -264,22 +354,25 @@ impl Serialize for CodexNativeV3OperationBinding<'_> {
 #[must_use]
 pub fn render_native_v3_query_markdown(view: &CodexNativeV3QueryView<'_>) -> String {
     let mut out = format!(
-        "# RepoSeiri Codex Native v3 Query\n\n- Schema: `{}`\n- Kernel: `{}`\n- Repository: `{}`\n- Query: `{:?}`\n- Boundary: {}\n\n",
+        "# RepoSeiri Codex Native v3 Query\n\n- Schema: `{}`\n- Kernel: `{}`\n- Repository: `{}`\n- Query: `{}`\n- Boundary: {}\n\n",
         view.schema_version,
         view.kernel_schema_version,
         view.repo_root,
-        view.query.kind(),
+        view.query.kind().slug(),
         view.claim_boundary,
     );
     match &view.query {
         CodexNativeV3Query::Summary(summary) => out.push_str(&format!(
-            "- Entries: `{}`\n- Indexed documents: `{}`\n- Evidence v2 facts: `{}`\n- Route content assessments: `{}`\n- Facets: `{}`\n- Document conflicts: `{}`\n- Patch operations: `{}` / bound `{}` / blocked `{}`\n",
+            "- Entries: `{}`\n- Indexed documents: `{}`\n- Evidence v2 facts: `{}`\n- Route content assessments: `{}`\n- Facets: `{}`\n- Document conflicts: `{}`\n- Scope nodes: `{}` / Git commit headers `{}`\n- GitHub critical paths: `{}`\n- Patch operations: `{}` / bound `{}` / blocked `{}`\n",
             summary.audit.entries_scanned,
             summary.indexed_documents,
             summary.evidence_v2_facts,
             summary.route_content_assessments,
             summary.facet_assessments,
             summary.document_conflicts,
+            summary.scope_nodes,
+            summary.git_commit_headers,
+            summary.github_critical_paths,
             summary.patch_operations,
             summary.bound_patch_operations,
             summary.blocked_patch_items,
@@ -295,15 +388,23 @@ pub fn render_native_v3_query_markdown(view: &CodexNativeV3QueryView<'_>) -> Str
             evidence.coverage.records().len(),
         )),
         CodexNativeV3Query::Documents(documents) => out.push_str(&format!(
-            "- Indexed documents: `{}`\n- Local GitHub documents: `{}`\n",
+            "- Indexed documents: `{}`\n- Local GitHub documents: `{}`\n- GitHub critical paths: `{}`\n- Scope nodes: `{}` / edges `{}`\n- Git refs: `{}` / commit headers `{}`\n",
             documents.index.entries().len(),
             documents.github_local.documents().len(),
+            documents.github_semantics.critical_paths.len(),
+            documents.repository_scope.graph.nodes.len(),
+            documents.repository_scope.graph.edges.len(),
+            documents.repository_scope.git.references.len(),
+            documents.repository_scope.git.commits.len(),
         )),
         CodexNativeV3Query::Governance(governance) => out.push_str(&format!(
-            "- Facets: `{}`\n- Conflicts: `{}`\n- Route content assessments: `{}`\n",
+            "- Facets: `{}`\n- Conflicts: `{}`\n- Route content assessments: `{}`\n- Content slots v2: `{}` / registry `{}`\n- Structural JA/EN candidates: `{}`\n",
             governance.facets.facets.len(),
             governance.consistency.conflicts.len(),
             governance.route_content.len(),
+            governance.route_content_v2.assessments.len(),
+            governance.content_contract.len(),
+            governance.route_content_v2.structural_pairs.len(),
         )),
         CodexNativeV3Query::Patches(patches) => out.push_str(&format!(
             "- Planner: `{}`\n- Analysis run bound: `{}`\n- Operations: `{}`\n",

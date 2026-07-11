@@ -95,8 +95,8 @@ fn pattern_registry_v3_renders_grouped_json_and_markdown() {
 
 #[test]
 fn common_baseline_marks_route_fixture_as_complete_for_required_rules() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let baseline = snapshot.baseline.expect("baseline report");
 
     assert_eq!(baseline.summary.required_missing, 0);
@@ -114,8 +114,8 @@ fn common_baseline_marks_route_fixture_as_complete_for_required_rules() {
 
 #[test]
 fn common_baseline_generates_findings_from_missing_patterns() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
     let baseline = snapshot.baseline.expect("baseline report");
 
     assert!(baseline.summary.required_missing >= 3);
@@ -138,8 +138,8 @@ fn common_baseline_generates_findings_from_missing_patterns() {
 
 #[test]
 fn common_baseline_does_not_credit_nested_license_as_root_license() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("nested-license-only-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("nested-license-only-repo"))
+        .expect("audit fixture");
     let baseline = snapshot.baseline.expect("baseline report");
 
     assert!(baseline.rules.iter().any(|rule| {

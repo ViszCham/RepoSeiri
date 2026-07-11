@@ -26,7 +26,7 @@ fn q18_planner_binds_safe_edit_to_scanner_base_and_applies_only_in_memory() {
     let root = fixture("safe-plan-repo");
     let source = fs::read(root.join("README.md")).expect("README bytes");
     let snapshot =
-        seiri_report::audit_repository_with_profile(&root, seiri_core::ProfileKind::Common)
+        seiri_report::audit_repository_subtree_with_profile(&root, seiri_core::ProfileKind::Common)
             .expect("audit fixture");
     let plan = seiri_planner::plan_safe_patches(&snapshot);
     let operation = plan.operations.first().expect("safe docs route operation");

@@ -11,10 +11,12 @@ seiri-core = { path = "../seiri-core" }
 seiri-fs = { path = "../seiri-fs" }
 seiri-markdown = { path = "../seiri-markdown" }
 seiri-github-local = { path = "../seiri-github-local" }
+seiri-git-local = { path = "../seiri-git-local" }
 seiri-remote = { path = "../seiri-remote" }
 seiri-patterns = { path = "../seiri-patterns" }
 seiri-profiles = { path = "../seiri-profiles" }
 seiri-planner = { path = "../seiri-planner" }
 seiri-calibration = { path = "../seiri-calibration" }
 seiri-codex = { path = "../seiri-codex" }
+seiri-delta = { path = "../seiri-delta" }
 serde_json.workspace = true

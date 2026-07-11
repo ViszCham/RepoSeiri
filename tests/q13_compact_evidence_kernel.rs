@@ -89,10 +89,10 @@ fn q13_kernel_rejects_origin_mismatch_and_missing_markdown_span() {
 
 #[test]
 fn q13_audit_uses_canonical_facts_and_projects_legacy_views() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let repeated =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("repeat audit");
+        seiri_report::audit_repository_subtree(fixture("readme-route-repo")).expect("repeat audit");
 
     assert!(!snapshot.evidence_kernel.is_empty());
     assert_eq!(snapshot.evidence_kernel, repeated.evidence_kernel);

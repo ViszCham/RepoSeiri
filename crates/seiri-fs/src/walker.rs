@@ -1,4 +1,4 @@
-use seiri_core::{FileKind, FileRecord};
+use seiri_core::{FileKind, FileRecord, IgnoredPathReason, IgnoredShallowRecord};
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
@@ -22,6 +22,7 @@ pub struct ScanOptions {
     pub max_depth: usize,
     pub max_entries: usize,
     pub ignore_policy: IgnorePolicy,
+    pub max_ignored_records: usize,
 }
 
 impl Default for ScanOptions {
@@ -30,6 +31,7 @@ impl Default for ScanOptions {
             max_depth: 32,
             max_entries: 100_000,
             ignore_policy: IgnorePolicy::default(),
+            max_ignored_records: 4_096,
         }
     }
 }
@@ -130,6 +132,7 @@ pub struct RepositoryWalkSummary {
     pub max_entries: usize,
     pub visited_entries: usize,
     pub ignored_entries: usize,
+    pub ignored_records_truncated: bool,
     pub max_depth_reached: usize,
     pub completion: WalkCompletion,
 }
@@ -139,6 +142,7 @@ pub struct RepositoryWalk {
     root: RepositoryRoot,
     records: Vec<FileRecord>,
     summary: RepositoryWalkSummary,
+    ignored_shallow: Vec<IgnoredShallowRecord>,
 }
 
 impl RepositoryWalk {
@@ -157,8 +161,15 @@ impl RepositoryWalk {
         &self.summary
     }
 
-    pub(crate) fn into_parts(self) -> (RepositoryRoot, Vec<FileRecord>, RepositoryWalkSummary) {
-        (self.root, self.records, self.summary)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        RepositoryRoot,
+        Vec<FileRecord>,
+        RepositoryWalkSummary,
+        Vec<IgnoredShallowRecord>,
+    ) {
+        (self.root, self.records, self.summary, self.ignored_shallow)
     }
 }
 
@@ -220,6 +231,7 @@ pub fn walk_repository_with_options(
         max_entries: options.max_entries,
         visited_entries: state.records.len(),
         ignored_entries: state.ignored_entries,
+        ignored_records_truncated: state.ignored_records_truncated,
         max_depth_reached: state.max_depth_reached,
         completion: state.completion.unwrap_or(WalkCompletion::Complete),
     };
@@ -227,6 +239,7 @@ pub fn walk_repository_with_options(
         root,
         records: state.records,
         summary,
+        ignored_shallow: state.ignored_shallow,
     })
 }
 
@@ -238,6 +251,8 @@ pub fn resolve_repo_root(path: &Path) -> Result<PathBuf, FsError> {
 struct WalkState {
     records: Vec<FileRecord>,
     ignored_entries: usize,
+    ignored_shallow: Vec<IgnoredShallowRecord>,
+    ignored_records_truncated: bool,
     max_depth_reached: usize,
     completion: Option<WalkCompletion>,
 }
@@ -269,8 +284,21 @@ fn walk_dir(
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name();
-        if should_ignore_name(&name.to_string_lossy(), options) {
+        let file_type = entry.file_type().map_err(|source| FsError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if let Some(reason) = ignore_reason(&name.to_string_lossy(), options) {
             state.ignored_entries += 1;
+            if state.ignored_shallow.len() < options.max_ignored_records {
+                state.ignored_shallow.push(IgnoredShallowRecord {
+                    path: normalize_relative_path(root, &path),
+                    kind: file_kind(file_type),
+                    reason,
+                });
+            } else {
+                state.ignored_records_truncated = true;
+            }
             continue;
         }
         if state.records.len() >= options.max_entries {
@@ -282,17 +310,7 @@ fn walk_dir(
             return Ok(());
         }
 
-        let file_type = entry.file_type().map_err(|source| FsError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let kind = if file_type.is_symlink() {
-            FileKind::Symlink
-        } else if file_type.is_dir() {
-            FileKind::Directory
-        } else {
-            FileKind::File
-        };
+        let kind = file_kind(file_type);
         let size_bytes = if matches!(kind, FileKind::File) {
             entry
                 .metadata()
@@ -327,8 +345,29 @@ fn walk_dir(
     Ok(())
 }
 
-fn should_ignore_name(name: &str, options: &ScanOptions) -> bool {
-    options.ignore_policy.ignores(name)
+fn ignore_reason(name: &str, options: &ScanOptions) -> Option<IgnoredPathReason> {
+    if !options.ignore_policy.ignores(name) {
+        return None;
+    }
+    Some(match name {
+        ".git" | ".hg" | ".svn" => IgnoredPathReason::GitMetadata,
+        "target" | "build" => IgnoredPathReason::BuildOutput,
+        "node_modules" => IgnoredPathReason::DependencyTree,
+        ".venv" => IgnoredPathReason::VirtualEnvironment,
+        ".idea" | ".vscode" => IgnoredPathReason::EditorState,
+        "dist" => IgnoredPathReason::DistributionOutput,
+        _ => IgnoredPathReason::UserConfigured,
+    })
+}
+
+fn file_kind(file_type: fs::FileType) -> FileKind {
+    if file_type.is_symlink() {
+        FileKind::Symlink
+    } else if file_type.is_dir() {
+        FileKind::Directory
+    } else {
+        FileKind::File
+    }
 }
 
 fn has_repo_boundary_marker(path: &Path) -> bool {

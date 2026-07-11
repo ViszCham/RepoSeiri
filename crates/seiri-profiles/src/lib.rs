@@ -5,9 +5,11 @@ pub use registry::{ProfileDefinition, ProfileRegistry, ProfileRegistryError};
 pub use weight::StaticProfileWeight;
 
 use seiri_core::{
-    facet_evidence_ids, BaselineReport, BaselineRuleResult, BaselineStatus, FacetAssessment,
-    FacetReport, FileKind, Finding, GateKind, ImportantFileKind, Observation, ProfileBranch,
-    ProfileBranchSummary, ProfileEvidenceBasis, ProfileKind, ProfilePriority,
+    facet_evidence_ids, BaselineReport, BaselineRuleResult, BaselineStatus, CalibrationKey,
+    CalibrationLookup, CalibrationPriorState, CalibrationProvider, FacetAssessment, FacetReport,
+    FileKind, Finding, GateKind, ImportantFileKind, NoCalibrationProvider, Observation,
+    ProfileBranch, ProfileBranchSemantics, ProfileBranchSummary, ProfileEvidenceBasis,
+    ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePriority, ProfileRankScore,
     ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, ProfileWeightBasis,
     RepoSnapshot, RepositoryFacet, RouteKind, Severity,
 };
@@ -23,11 +25,20 @@ pub struct ProfileRuleDefinition {
 
 #[must_use]
 pub fn evaluate_profile(snapshot: &RepoSnapshot, profile: ProfileKind) -> Option<ProfileReport> {
+    evaluate_profile_with_calibration(snapshot, profile, &NoCalibrationProvider)
+}
+
+#[must_use]
+pub fn evaluate_profile_with_calibration(
+    snapshot: &RepoSnapshot,
+    profile: ProfileKind,
+    calibration: &dyn CalibrationProvider,
+) -> Option<ProfileReport> {
     let baseline = snapshot.baseline.as_ref()?;
     let registry = common_profile_registry();
     let mut report =
         evaluate_profile_from_registry(baseline, &snapshot.findings, profile, &registry);
-    let branches = profile_branches(Some(snapshot), baseline, profile, &registry);
+    let branches = profile_branches(Some(snapshot), baseline, profile, &registry, calibration);
     report.branch_summary = profile_branch_summary(profile, &branches);
     report.branches = branches;
     Some(report)
@@ -98,7 +109,7 @@ fn evaluate_profile_from_registry(
     let score = score_view(&scoring_inputs);
     let recommendations = ordered_recommendations(&rules, &findings_by_id);
 
-    let branches = profile_branches(None, baseline, profile, registry);
+    let branches = profile_branches(None, baseline, profile, registry, &NoCalibrationProvider);
 
     ProfileReport {
         profile,
@@ -700,15 +711,15 @@ fn catalog_rules(profile: ProfileKind) -> Vec<ProfileRuleDefinition> {
 #[must_use]
 pub fn branch_profiles() -> &'static [(ProfileKind, u16)] {
     &[
-        (ProfileKind::Library, 280),
-        (ProfileKind::Infra, 170),
-        (ProfileKind::Cli, 110),
-        (ProfileKind::Product, 90),
-        (ProfileKind::Runtime, 45),
-        (ProfileKind::Docs, 95),
-        (ProfileKind::Tutorial, 100),
-        (ProfileKind::Ml, 75),
-        (ProfileKind::Template, 35),
+        (ProfileKind::Library, 0),
+        (ProfileKind::Infra, 0),
+        (ProfileKind::Cli, 0),
+        (ProfileKind::Product, 0),
+        (ProfileKind::Runtime, 0),
+        (ProfileKind::Docs, 0),
+        (ProfileKind::Tutorial, 0),
+        (ProfileKind::Ml, 0),
+        (ProfileKind::Template, 0),
     ]
 }
 
@@ -717,6 +728,7 @@ fn profile_branches(
     baseline: &BaselineReport,
     selected_profile: ProfileKind,
     registry: &ProfileRegistry,
+    calibration: &dyn CalibrationProvider,
 ) -> Vec<ProfileBranch> {
     let baseline_by_pattern = baseline
         .rules
@@ -726,7 +738,7 @@ fn profile_branches(
 
     let mut branches = branch_profiles()
         .iter()
-        .map(|(profile, prior_x1000)| {
+        .map(|(profile, _compatibility_prior)| {
             let definition = registry
                 .definition(*profile)
                 .expect("complete profile registry must contain branch profiles");
@@ -745,8 +757,18 @@ fn profile_branches(
             let score = score_view(&scoring_inputs);
             let (evidence_score_x100, matched_signals, missing_signals) =
                 profile_signal_score(snapshot, baseline, *profile);
-            let confidence_x100 =
-                confidence_score(*prior_x1000, evidence_score_x100, score.score_x100);
+            let (prior_weight_x100, calibration_prior) = match calibration
+                .prior(&CalibrationKey::ProfileBranch(*profile))
+            {
+                CalibrationLookup::NotRequested => (0, CalibrationPriorState::NotRequested),
+                CalibrationLookup::Available(prior) => (
+                    prior.rank_weight_x100(),
+                    CalibrationPriorState::AppliedRedacted,
+                ),
+                CalibrationLookup::Unavailable(_) => (0, CalibrationPriorState::Unavailable),
+            };
+            let rank_score_x100 =
+                profile_rank_score(prior_weight_x100, evidence_score_x100, score.score_x100);
             let selected_note = if *profile == selected_profile {
                 " Selected CLI/API profile; confidence remains evidence-weighted."
             } else {
@@ -756,14 +778,20 @@ fn profile_branches(
             ProfileBranch {
                 rank: 0,
                 profile: *profile,
-                prior_x1000: *prior_x1000,
-                confidence_x100,
+                prior_x1000: 0,
+                confidence_x100: rank_score_x100,
                 evidence_score_x100,
                 score_x100: score.score_x100,
+                semantics: ProfileBranchSemantics {
+                    fit: ProfileFit::from_bounded(score.score_x100),
+                    evidence_match: ProfileEvidenceMatch::from_bounded(evidence_score_x100),
+                    rank_score: ProfileRankScore::from_bounded(rank_score_x100),
+                    calibration_prior,
+                },
                 matched_signals,
                 missing_signals,
                 rationale: format!(
-                    "Combines Block J prior, observed route/file/path signals, and current profile score. This is a branch hint, not a repository type assertion.{selected_note}"
+                    "Combines observed route/file/path evidence and profile fit. An explicit local calibration prior may affect rank but is redacted from compatibility fields. This is a branch hint, not a repository type assertion.{selected_note}"
                 ),
             }
         })
@@ -771,10 +799,11 @@ fn profile_branches(
 
     branches.sort_by(|left, right| {
         right
-            .confidence_x100
-            .cmp(&left.confidence_x100)
+            .semantics
+            .rank_score
+            .get()
+            .cmp(&left.semantics.rank_score.get())
             .then_with(|| right.evidence_score_x100.cmp(&left.evidence_score_x100))
-            .then_with(|| right.prior_x1000.cmp(&left.prior_x1000))
             .then_with(|| left.profile.cmp(&right.profile))
     });
 
@@ -793,20 +822,25 @@ fn profile_branch_summary(
     let second = branches.get(1);
     let ambiguous = match (top, second) {
         (Some(top), Some(second)) => {
-            top.confidence_x100 < 60
-                || top.confidence_x100.saturating_sub(second.confidence_x100) < 15
+            top.semantics.rank_score.get() < 60
+                || top
+                    .semantics
+                    .rank_score
+                    .get()
+                    .saturating_sub(second.semantics.rank_score.get())
+                    < 15
         }
-        (Some(top), None) => top.confidence_x100 < 60,
+        (Some(top), None) => top.semantics.rank_score.get() < 60,
         _ => true,
     };
 
     ProfileBranchSummary {
         selected_profile,
         top_profile: top.map(|branch| branch.profile),
-        top_confidence_x100: top.map(|branch| branch.confidence_x100),
+        top_confidence_x100: top.map(|branch| branch.semantics.rank_score.get()),
         emitted_profiles: branches.len(),
         ambiguous,
-        boundary: "Profile branch confidence is a deterministic routing hint from observed evidence and fixed priors; it is not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
+        boundary: "Profile fit, evidence match, rank score, and calibration-prior state are separate typed values. The legacy confidence field is only a compatibility projection of rank score. It is not a probability and not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
     }
 }
 
@@ -1136,8 +1170,8 @@ fn profile_signal_score(
     (evidence_score.min(100), matched, missing)
 }
 
-fn confidence_score(prior_x1000: u16, evidence_score_x100: u8, score_x100: u8) -> u8 {
-    let prior_component = u32::from(prior_x1000) / 20;
+fn profile_rank_score(prior_weight_x100: u8, evidence_score_x100: u8, score_x100: u8) -> u8 {
+    let prior_component = u32::from(prior_weight_x100) * 15 / 100;
     let evidence_component = u32::from(evidence_score_x100) * 55 / 100;
     let score_component = u32::from(score_x100) * 30 / 100;
     prior_component

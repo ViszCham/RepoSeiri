@@ -25,6 +25,10 @@ pub enum ReviewGap {
         route: RouteKind,
         candidate_pattern_ids: Vec<String>,
     },
+    ContentSlot {
+        route: RouteKind,
+        slot_ids: Vec<crate::ContentSlotId>,
+    },
     Consistency {
         route: Option<RouteKind>,
         gap_ids: Vec<String>,
@@ -41,7 +45,7 @@ impl ReviewGap {
     pub const fn kind(&self) -> ReviewGapKind {
         match self {
             Self::Route { .. } => ReviewGapKind::Route,
-            Self::Content { .. } => ReviewGapKind::Content,
+            Self::Content { .. } | Self::ContentSlot { .. } => ReviewGapKind::Content,
             Self::Consistency { .. } => ReviewGapKind::Consistency,
             Self::ObservationUnknown { .. } => ReviewGapKind::ObservationUnknown,
         }
@@ -50,7 +54,9 @@ impl ReviewGap {
     #[must_use]
     pub const fn route(&self) -> Option<RouteKind> {
         match self {
-            Self::Route { route, .. } | Self::Content { route, .. } => Some(*route),
+            Self::Route { route, .. }
+            | Self::Content { route, .. }
+            | Self::ContentSlot { route, .. } => Some(*route),
             Self::Consistency { route, .. } | Self::ObservationUnknown { route, .. } => *route,
         }
     }

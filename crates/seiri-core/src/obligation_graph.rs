@@ -1,5 +1,6 @@
 use crate::{
-    CoverageStatus, DocumentId, EvidenceId, EvidenceSet, Observation, RepositoryFacet, RouteKind,
+    classify_target_relation, CoverageStatus, DocumentId, EvidenceId, EvidenceSet, Observation,
+    RepositoryFacet, RouteKind, RouteTargetRef, RouteTargetRole, SourceSpan, TargetRelation,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
@@ -36,6 +37,10 @@ pub struct DocumentConflictSide {
     pub document: DocumentId,
     pub evidence: EvidenceId,
     pub target: String,
+    #[serde(default)]
+    pub role: RouteTargetRole,
+    #[serde(default)]
+    pub span: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +49,12 @@ pub struct DocumentConflict {
     pub route: RouteKind,
     pub left: DocumentConflictSide,
     pub right: DocumentConflictSide,
+    #[serde(default = "competes_relation")]
+    pub relation: TargetRelation,
+}
+
+const fn competes_relation() -> TargetRelation {
+    TargetRelation::Competes
 }
 
 impl DocumentConflict {
@@ -64,6 +75,10 @@ impl DocumentConflict {
         if left.target == right.target {
             return Err(DocumentConsistencyError::EqualConflictTargets);
         }
+        let relation = relation_for_sides(route, &left, &right);
+        if relation != TargetRelation::Competes {
+            return Err(DocumentConsistencyError::NonCompetingTargets);
+        }
         if (right.document, right.evidence) < (left.document, left.evidence) {
             std::mem::swap(&mut left, &mut right);
         }
@@ -78,13 +93,51 @@ impl DocumentConflict {
             route,
             left,
             right,
+            relation,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentTargetRelation {
+    pub id: String,
+    pub route: RouteKind,
+    pub left: DocumentConflictSide,
+    pub right: DocumentConflictSide,
+    pub relation: TargetRelation,
+}
+
+impl DocumentTargetRelation {
+    #[must_use]
+    pub fn new(
+        route: RouteKind,
+        mut left: DocumentConflictSide,
+        mut right: DocumentConflictSide,
+        relation: TargetRelation,
+    ) -> Self {
+        if (right.document, right.evidence) < (left.document, left.evidence) {
+            std::mem::swap(&mut left, &mut right);
+        }
+        Self {
+            id: format!(
+                "document-relation.{}.{}.{}",
+                route_slug(route),
+                left.evidence.ordinal(),
+                right.evidence.ordinal()
+            ),
+            route,
+            left,
+            right,
+            relation,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentConsistencyReport {
     pub obligations: Vec<ConditionalObligation>,
+    #[serde(default)]
+    pub relations: Vec<DocumentTargetRelation>,
     pub conflicts: Vec<DocumentConflict>,
     pub conflict_coverage: CoverageStatus,
     pub boundary: String,
@@ -93,6 +146,7 @@ pub struct DocumentConsistencyReport {
 impl DocumentConsistencyReport {
     pub fn try_new(
         obligations: Vec<ConditionalObligation>,
+        relations: Vec<DocumentTargetRelation>,
         conflicts: Vec<DocumentConflict>,
         conflict_coverage: CoverageStatus,
     ) -> Result<Self, DocumentConsistencyError> {
@@ -101,22 +155,32 @@ impl DocumentConsistencyReport {
             "conditional obligations",
         )?;
         validate_unique_ordered(
+            relations.iter().map(|relation| relation.id.as_str()),
+            "document target relations",
+        )?;
+        validate_unique_ordered(
             conflicts.iter().map(|conflict| conflict.id.as_str()),
             "document conflicts",
         )?;
         Ok(Self {
             obligations,
+            relations,
             conflicts,
             conflict_coverage,
-            boundary: "Each conditional obligation is enabled only by observed facet evidence. A missing obligation observation requires complete repository coverage. Conflicts record competing observed route targets in different documents; their absence does not prove documents are consistent, correct, complete, or policy-compliant. Conflict coverage becomes partial when the bounded graph reaches its candidate or pair limit.".to_string(),
+            boundary: "Each conditional obligation is enabled only by observed facet evidence. A missing obligation observation requires complete repository coverage. Target relations distinguish equivalent, refining, shared-hub, competing, and unknown links. Only Competes becomes a document conflict; Unknown does not mean consistent. Conflict coverage becomes partial when the bounded graph reaches its candidate or pair limit.".to_string(),
         })
     }
 }
 
 impl Default for DocumentConsistencyReport {
     fn default() -> Self {
-        Self::try_new(Vec::new(), Vec::new(), CoverageStatus::NotRequested)
-            .expect("empty document consistency report is valid")
+        Self::try_new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            CoverageStatus::NotRequested,
+        )
+        .expect("empty document consistency report is valid")
     }
 }
 
@@ -126,6 +190,7 @@ pub enum DocumentConsistencyError {
     SameEvidenceConflict,
     EmptyConflictTarget,
     EqualConflictTargets,
+    NonCompetingTargets,
     NonCanonicalOrder(&'static str),
 }
 
@@ -142,12 +207,45 @@ impl Display for DocumentConsistencyError {
             Self::EqualConflictTargets => {
                 formatter.write_str("document conflict targets must differ")
             }
+            Self::NonCompetingTargets => formatter
+                .write_str("document conflicts require two competing canonical route targets"),
             Self::NonCanonicalOrder(kind) => write!(
                 formatter,
                 "{kind} must be strictly ordered by deterministic identifier"
             ),
         }
     }
+}
+
+fn relation_for_sides(
+    route: RouteKind,
+    left: &DocumentConflictSide,
+    right: &DocumentConflictSide,
+) -> TargetRelation {
+    let Some(left_span) = left.span else {
+        return TargetRelation::Unknown;
+    };
+    let Some(right_span) = right.span else {
+        return TargetRelation::Unknown;
+    };
+    classify_target_relation(
+        &RouteTargetRef {
+            route,
+            document: left.document,
+            evidence: left.evidence,
+            span: left_span,
+            role: left.role,
+            normalized_target: left.target.clone(),
+        },
+        &RouteTargetRef {
+            route,
+            document: right.document,
+            evidence: right.evidence,
+            span: right_span,
+            role: right.role,
+            normalized_target: right.target.clone(),
+        },
+    )
 }
 
 impl std::error::Error for DocumentConsistencyError {}

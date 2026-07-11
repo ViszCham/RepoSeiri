@@ -10,8 +10,8 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn q4_route_state_claims_are_evidence_linked() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
 
     assert!(!snapshot.claims.is_empty());
     assert!(snapshot
@@ -43,8 +43,8 @@ fn q4_route_state_claims_are_evidence_linked() {
 
 #[test]
 fn q4_missing_route_priority_can_emit_suggested_claims_with_evidence() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
 
     let priority = snapshot
         .missing_route_priority
@@ -74,8 +74,8 @@ fn q4_missing_route_priority_can_emit_suggested_claims_with_evidence() {
 
 #[test]
 fn q4_builder_skips_claims_without_evidence() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
 
     let security_state = snapshot
         .route_states
@@ -96,8 +96,8 @@ fn q4_builder_skips_claims_without_evidence() {
 
 #[test]
 fn q4_json_and_markdown_expose_content_claims() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
 
     let json = seiri_report::to_json(&snapshot).expect("render JSON");
     let parsed = serde_json::from_str::<Value>(&json).expect("valid JSON");
@@ -116,8 +116,8 @@ fn q4_json_and_markdown_expose_content_claims() {
 
 #[test]
 fn q5_markdown_report_binds_routes_and_priorities_to_claims() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
 
     let markdown = seiri_report::to_markdown(&snapshot);
     assert!(markdown.contains("- Summary: total `"));

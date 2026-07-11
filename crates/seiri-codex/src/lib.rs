@@ -19,8 +19,8 @@ pub use v4::{
 pub use v5::{
     render_native_v3_query_markdown, CodexNativeV3DocumentsQuery, CodexNativeV3EvidenceQuery,
     CodexNativeV3GovernanceQuery, CodexNativeV3PatchQuery, CodexNativeV3Query,
-    CodexNativeV3QueryKind, CodexNativeV3QueryView, CodexNativeV3RoutesQuery, CodexNativeV3Summary,
-    CodexNativeV3View,
+    CodexNativeV3QueryKind, CodexNativeV3QueryParseError, CodexNativeV3QueryView,
+    CodexNativeV3RoutesQuery, CodexNativeV3Summary, CodexNativeV3View,
 };
 
 #[must_use]
@@ -173,14 +173,16 @@ pub fn render_review_context_markdown(context: &CodexReviewContext) -> String {
         None => out.push_str("- Profile: not selected\n"),
     }
     if let Some(score) = context.audit.profile_score_x100 {
-        out.push_str(&format!("- Profile score view: `{score}` / `100`\n"));
+        out.push_str(&format!(
+            "- Profile fit view: `{score}` / `100` (legacy `profile_score_x100` projection)\n"
+        ));
     }
     if let (Some(profile), Some(confidence)) = (
         context.audit.top_profile,
         context.audit.top_profile_confidence_x100,
     ) {
         out.push_str(&format!(
-            "- Top profile branch: `{profile}` confidence `{confidence}` / `100` across `{}` candidates\n",
+            "- Top profile branch: `{profile}` rank_score `{confidence}` / `100` across `{}` candidates\n",
             context.audit.profile_branches
         ));
     }

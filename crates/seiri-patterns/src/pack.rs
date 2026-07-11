@@ -273,7 +273,7 @@ fn fingerprint_for(
     ];
     items.extend(registry.definitions().iter().map(|definition| {
         format!(
-            "pattern:{}:{:?}:{}:{:?}:{}:{}:{}",
+            "pattern:{}:{:?}:{}:{:?}:{}:{}:{}:{}",
             definition.id,
             definition.group,
             definition.title,
@@ -281,6 +281,10 @@ fn fingerprint_for(
             definition.detector.basis(),
             definition.detector.label(),
             definition.adoption_stage.as_str(),
+            definition
+                .predicate
+                .as_ref()
+                .map_or_else(|| "none".to_string(), |predicate| format!("{predicate:?}")),
         )
     }));
     items.extend(fixtures.iter().map(|fixture| {

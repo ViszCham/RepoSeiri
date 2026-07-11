@@ -50,7 +50,7 @@ fn q14_readme_assessment_keeps_axes_before_legacy_projection() {
 
 #[test]
 fn q14_repository_assessment_projects_every_legacy_route_state() {
-    let snapshot = seiri_report::audit_repository(fixture("readme-route-map-v2-repo"))
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-map-v2-repo"))
         .expect("audit route fixture");
 
     assert_eq!(
@@ -125,7 +125,7 @@ fn q14_native_wire_rejects_inconsistent_freshness_and_projection() {
     compatibility_count_json["stale_target_count"] = serde_json::json!(0);
     assert!(serde_json::from_value::<ReadmeRouteMapEntry>(compatibility_count_json).is_err());
 
-    let snapshot = seiri_report::audit_repository(fixture("readme-route-map-v2-repo"))
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-map-v2-repo"))
         .expect("audit route fixture");
     let aggregate_security = snapshot
         .route_assessments

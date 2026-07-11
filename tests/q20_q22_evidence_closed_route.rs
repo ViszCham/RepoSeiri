@@ -13,8 +13,8 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn q20_route_and_content_gaps_are_distinct() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     let security_state = snapshot
         .route_states
         .iter()
@@ -47,8 +47,8 @@ fn q20_route_and_content_gaps_are_distinct() {
 
 #[test]
 fn q20_nested_license_is_local_not_inherited() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("nested-license-only-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("nested-license-only-repo"))
+        .expect("audit fixture");
     let license = snapshot
         .route_assessments
         .iter()
@@ -66,8 +66,8 @@ fn q20_nested_license_is_local_not_inherited() {
 
 #[test]
 fn q21_typed_kernel_deduplicates_document_paths_and_stays_off_v1_wire() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
     assert_eq!(
         snapshot.evidence_kernel_v2.facts().len(),
         snapshot.evidence_kernel.facts().len()

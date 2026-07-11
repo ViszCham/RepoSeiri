@@ -10,8 +10,8 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn report_schema_is_stable_for_missing_readme_fixture() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("missing-readme-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("missing-readme-repo"))
+        .expect("audit fixture");
 
     assert_eq!(snapshot.schema_version, "seiri.block_p.v1");
     assert!(snapshot.readme.is_none());
@@ -59,8 +59,8 @@ fn report_schema_is_stable_for_missing_readme_fixture() {
 
 #[test]
 fn report_distinguishes_readme_routes_from_absent_routes() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("readme-route-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("readme-route-repo"))
+        .expect("audit fixture");
 
     assert!(snapshot.readme.is_some());
     assert!(snapshot
@@ -85,7 +85,7 @@ fn report_distinguishes_readme_routes_from_absent_routes() {
     assert!(markdown.contains("## Missing Route Priority"));
     assert!(markdown.contains("### Co-occurrence Gaps"));
     assert!(markdown.contains("## Profile"));
-    assert!(markdown.contains("### Profile Branch Confidence"));
+    assert!(markdown.contains("### Profile Branch Semantics"));
     assert!(markdown.contains("## Pattern Matches"));
     assert!(markdown.contains("## README"));
     assert!(markdown.contains("## Findings"));
@@ -93,8 +93,8 @@ fn report_distinguishes_readme_routes_from_absent_routes() {
 
 #[test]
 fn report_verifies_hygiene_when_root_files_and_readme_route_agree() {
-    let snapshot =
-        seiri_report::audit_repository(fixture("hygiene-self-audit-repo")).expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree(fixture("hygiene-self-audit-repo"))
+        .expect("audit fixture");
 
     let hygiene = snapshot
         .route_states

@@ -3,20 +3,23 @@ use seiri_core::{
     EvidenceFactV2, EvidenceId, Observation, RepoSnapshot, RouteContentAssessment,
     RouteContentAtom, UnknownReason,
 };
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 pub const MAX_PREDICATE_ATOMS: usize = 128;
 pub const MAX_PREDICATE_OPERATIONS: usize = 256;
 pub const MAX_PREDICATE_STACK: usize = 32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PredicateAtom {
     Evidence(EvidenceAtom),
     DocumentRole(DocumentRole),
     RouteContent(RouteContentAtom),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", content = "data", rename_all = "snake_case")]
 pub enum PredicateInstruction {
     PushAtom(u8),
     All(u8),
@@ -24,10 +27,34 @@ pub enum PredicateInstruction {
     AtLeast { arity: u8, minimum: u8 },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "PredicateProgramWire", into = "PredicateProgramWire")]
 pub struct PredicateProgram {
     atoms: Box<[PredicateAtom]>,
     instructions: Box<[PredicateInstruction]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PredicateProgramWire {
+    atoms: Vec<PredicateAtom>,
+    instructions: Vec<PredicateInstruction>,
+}
+
+impl TryFrom<PredicateProgramWire> for PredicateProgram {
+    type Error = PredicateProgramError;
+
+    fn try_from(value: PredicateProgramWire) -> Result<Self, Self::Error> {
+        Self::try_new(value.atoms, value.instructions)
+    }
+}
+
+impl From<PredicateProgram> for PredicateProgramWire {
+    fn from(value: PredicateProgram) -> Self {
+        Self {
+            atoms: value.atoms.into_vec(),
+            instructions: value.instructions.into_vec(),
+        }
+    }
 }
 
 impl PredicateProgram {

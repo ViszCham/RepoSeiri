@@ -11,7 +11,7 @@ Use this skill when the user asks for RepoSeiri review context, a RepoSeiri PR d
 
 - Use the Rust core through `cargo run -p seiri-cli`; do not reimplement audit, baseline, profile, planner, calibration, or Codex context logic in the skill.
 - Prefer `seiri codex` for Codex-facing output because it bundles audit, dry-run plan, user actions, and PR draft context.
-- Keep the default compatibility-v1 context for existing consumers. Use native-v2, query, or linter views when typed canonical evidence, route assessments, patch proposals, argv, or full wording findings are needed.
+- Keep the default compatibility-v1 context for existing consumers. Use native-v3 bounded queries when typed evidence, documents, governance, patch bindings, argv, remote status, or full wording findings are needed.
 - Do not create branches, commit, push, call GitHub, open PRs, apply safe operations, or mutate repository files unless the user explicitly requests that separate action.
 - Treat all output as a draft review artifact. Do not claim popularity, trust, security, quality, or external validation guarantees.
 - If the user requests a PR body, provide the generated body and state that it is a draft.
@@ -45,7 +45,14 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile common --schema nativ
 For a bounded query view:
 
 ```powershell
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --view query --query routes --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --schema native-v3 --view query --query routes --format json
+```
+
+For bounded evidence and remote-status views:
+
+```powershell
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --schema native-v3 --view query --query evidence --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile common --schema native-v3 --view query --query remote --format markdown
 ```
 
 For full linter context:
@@ -54,7 +61,11 @@ For full linter context:
 cargo run --quiet -p seiri-cli -- codex --path . --profile common --view linter --format markdown
 ```
 
-Query kinds are `summary`, `routes`, `patches`, `linter`, and `actions`. Native actions expose `program` plus `args`; they are review data and are not executed by RepoSeiri.
+Native-v3 query kinds are `summary`, `routes`, `evidence`, `documents`, `governance`, `patches`, `linter`, `actions`, and `remote`. Compatibility-v1 and native-v2 query views support only `summary`, `routes`, `patches`, `linter`, and `actions`; unsupported combinations fail instead of falling back to another schema or view.
+
+Native actions expose `program` plus `args` as review context only. The plugin does not execute them. The `remote` query reports canonical remote-evidence state; the default local audit returns `NotRequested` and does not initiate network access.
+
+Native-v3 is a borrowed, query-first projection over canonical local analysis. It does not retain document source text, write files, execute commands, call GitHub, adopt repository policy, or guarantee popularity, trust, security, quality, or publication readiness.
 
 Available profiles are:
 

@@ -13,9 +13,11 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
-    let snapshot =
-        seiri_report::audit_repository_with_profile(fixture("safe-plan-repo"), ProfileKind::Common)
-            .expect("audit fixture");
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
+        fixture("safe-plan-repo"),
+        ProfileKind::Common,
+    )
+    .expect("audit fixture");
     let plan = seiri_planner::plan_safe_patches(&snapshot);
 
     assert_eq!(plan.mode, seiri_core::PatchPlanMode::DryRun);
@@ -74,7 +76,7 @@ fn dry_run_plan_generates_safe_readme_docs_route_only_when_target_exists() {
 
 #[test]
 fn dry_run_plan_blocks_guarded_and_manual_items_without_generating_operations() {
-    let snapshot = seiri_report::audit_repository_with_profile(
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
         fixture("missing-readme-repo"),
         ProfileKind::Library,
     )
@@ -101,9 +103,11 @@ fn dry_run_plan_blocks_guarded_and_manual_items_without_generating_operations() 
 
 #[test]
 fn patch_plan_report_renders_json_and_markdown() {
-    let plan =
-        seiri_report::plan_repository_with_profile(fixture("safe-plan-repo"), ProfileKind::Common)
-            .expect("plan fixture");
+    let plan = seiri_report::plan_repository_subtree_with_profile(
+        fixture("safe-plan-repo"),
+        ProfileKind::Common,
+    )
+    .expect("plan fixture");
     let json = seiri_report::plan_to_json(&plan).expect("render plan JSON");
     let markdown = seiri_report::plan_to_markdown(&plan);
 
@@ -124,7 +128,7 @@ fn patch_plan_report_renders_json_and_markdown() {
 
 #[test]
 fn patch_plan_v2_adds_route_priority_review_items() {
-    let snapshot = seiri_report::audit_repository_with_profile(
+    let snapshot = seiri_report::audit_repository_subtree_with_profile(
         fixture("readme-route-repo"),
         ProfileKind::Common,
     )

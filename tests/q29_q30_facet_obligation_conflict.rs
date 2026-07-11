@@ -1,6 +1,6 @@
 use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, Observation, ProfileKind, RepositoryFacet, RouteKind,
-    UnknownReason,
+    TargetRelation, UnknownReason,
 };
 use seiri_fs::ScanOptions;
 use seiri_markdown::DocumentIndexOptions;
@@ -65,15 +65,16 @@ fn q29_coexisting_facets_retain_evidence_without_selecting_a_type() {
         .iter()
         .all(|obligation| matches!(obligation.observation, Observation::Present { .. })));
 
-    let docs_conflict = snapshot
+    let docs_relation = snapshot
         .document_consistency
-        .conflicts
+        .relations
         .iter()
-        .find(|conflict| conflict.route == RouteKind::Docs)
-        .expect("cross-document docs target disagreement");
-    assert_ne!(docs_conflict.left.document, docs_conflict.right.document);
-    assert_ne!(docs_conflict.left.evidence, docs_conflict.right.evidence);
-    assert_ne!(docs_conflict.left.target, docs_conflict.right.target);
+        .find(|relation| relation.route == RouteKind::Docs)
+        .expect("cross-document docs target relation");
+    assert_eq!(docs_relation.relation, TargetRelation::Refines);
+    assert_ne!(docs_relation.left.document, docs_relation.right.document);
+    assert_ne!(docs_relation.left.evidence, docs_relation.right.evidence);
+    assert!(snapshot.document_consistency.conflicts.is_empty());
     assert_eq!(
         snapshot.document_consistency.conflict_coverage,
         CoverageStatus::Complete
@@ -132,7 +133,7 @@ fn q30_conflict_pair_limit_is_visible_as_partial_coverage() {
     for index in 0..12 {
         repo.write(
             &format!("docs/route-{index}.md"),
-            &format!("# Documentation\n\n[Documentation](target-{index}.md)\n"),
+            &format!("# Documentation\n\n[Documentation](../DOCS-{index}.md)\n"),
         );
     }
 

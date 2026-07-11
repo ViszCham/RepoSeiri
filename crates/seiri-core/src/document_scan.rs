@@ -40,6 +40,9 @@ impl DocumentEvent {
 pub enum DocumentDiagnosticKind {
     UnclosedLinkLabel,
     UnclosedLinkTarget,
+    UnresolvedReferenceLink,
+    UnsupportedHtml,
+    HtmlAttributeLimitExceeded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,5 +219,8 @@ const fn diagnostic_kind_rank(kind: DocumentDiagnosticKind) -> u8 {
     match kind {
         DocumentDiagnosticKind::UnclosedLinkLabel => 0,
         DocumentDiagnosticKind::UnclosedLinkTarget => 1,
+        DocumentDiagnosticKind::UnresolvedReferenceLink => 2,
+        DocumentDiagnosticKind::UnsupportedHtml => 3,
+        DocumentDiagnosticKind::HtmlAttributeLimitExceeded => 4,
     }
 }
