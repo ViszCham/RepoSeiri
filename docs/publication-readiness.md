@@ -46,9 +46,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
 git diff --check
 ```
 
@@ -118,9 +118,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
 git diff --check
 ```
 

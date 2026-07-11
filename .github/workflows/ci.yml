@@ -59,14 +59,14 @@ jobs:
       - name: Render RepoSeiri dry-run plan
         run: cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markdown | tee target/reposeiri-self-audit/plan.md
 
-      - name: Build Codex review context
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown | tee target/reposeiri-self-audit/codex.md
+      - name: Build Codex summary
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown | tee target/reposeiri-self-audit/codex-summary.md
 
-      - name: Build Codex native v2 context
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --schema native-v2 --format json | tee target/reposeiri-self-audit/codex-native-v2.json
+      - name: Build Codex evidence query
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json | tee target/reposeiri-self-audit/codex-evidence.json
 
       - name: Build Codex linter context
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --view linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
+        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
 
       - name: Upload RepoSeiri self-audit artifacts
         if: always()

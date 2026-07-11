@@ -1,11 +1,11 @@
 {
   "name": "reposeiri",
-  "version": "0.1.0",
-  "description": "Codex adapter for RepoSeiri repository audit, dry-run planning, and PR draft context.",
+  "version": "0.2.0",
+  "description": "Codex adapter for canonical RepoSeiri audit queries, dry-run planning, and PR drafts.",
   "author": {
     "name": "RepoSeiri Maintainers"
   },
-  "license": "UNLICENSED",
+  "license": "MIT OR Apache-2.0",
   "keywords": [
     "github",
     "repository",
@@ -16,15 +16,15 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "RepoSeiri",
-    "shortDescription": "Draft repository quality reviews from RepoSeiri Rust core outputs.",
-    "longDescription": "RepoSeiri uses a Rust core to audit repository trust routes, generate dry-run patch plans, and render Codex-facing review context and draft PR bodies without rewriting core logic in the plugin.",
+    "shortDescription": "Review repository organization through typed RepoSeiri queries.",
+    "longDescription": "RepoSeiri uses one canonical Rust analysis and a bounded query surface to inspect repository routes, evidence, governance, dry-run patch plans, and draft PR bodies without reproducing decisions in the plugin.",
     "developerName": "RepoSeiri Maintainers",
     "category": "Productivity",
     "capabilities": [
       "Interactive"
     ],
     "defaultPrompt": [
-      "Run a RepoSeiri review context.",
+      "Run a RepoSeiri summary query.",
       "Draft a RepoSeiri PR body.",
       "Show safe and blocked repo fixes."
     ],
