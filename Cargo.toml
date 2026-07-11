@@ -48,7 +48,7 @@ clru = "=0.6.2"
 unicode-bom = "=2.0.2"
 gix-bitmap = "=0.2.11"
 gix-chunk = "=0.4.8"
-gix-validate = "=0.10.0"
+gix-validate = "=0.10.1"
 sha2 = "=0.10.9"
 
 [dev-dependencies]
