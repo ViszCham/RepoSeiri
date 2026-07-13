@@ -173,6 +173,19 @@ fn private_overlay_applies_locally_without_public_prior_values() {
         seiri_calibration::load_private_calibration_overlay(&fixture.pack_path, &prior_path)
             .expect("load private overlay");
     assert_eq!(overlay.registry_fingerprint(), pack.fingerprint());
+    let metadata = overlay.metadata();
+    assert_eq!(
+        metadata.schema_version,
+        seiri_calibration::PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION
+    );
+    assert_eq!(metadata.visibility, "local_only");
+    assert!(metadata.source_path_redacted);
+    assert!(metadata.source_body_redacted);
+    assert!(metadata.exact_priors_redacted);
+    assert_eq!(metadata.resource_trace.prior_count, 1);
+    let metadata_json = serde_json::to_string(&metadata).expect("metadata JSON");
+    assert!(!metadata_json.contains("PRIVATE_OVERLAY_SENTINEL"));
+    assert!(!metadata_json.contains(prior_path.to_string_lossy().as_ref()));
     assert!(matches!(
         overlay.prior(&CalibrationKey::RouteGap(RouteKind::Docs)),
         CalibrationLookup::Available(_)
@@ -192,6 +205,22 @@ fn private_overlay_applies_locally_without_public_prior_values() {
         assert!(!output.contains("rank_weight_x100"));
         assert!(!output.contains("0.700"));
     }
+}
+
+#[test]
+fn removed_v1_private_overlay_wire_is_rejected() {
+    let fixture = BlockZFixture::new();
+    let pack = load_executable_pattern_pack(&fixture.pack_path).expect("load executable pack");
+    let removed = json!({
+        "schema_version": "seiri.local-calibration-priors.v1",
+        "registry_fingerprint": pack.fingerprint(),
+        "priors": []
+    });
+    let path = fixture.write_variant("removed-v1-priors.json", &removed);
+    assert!(matches!(
+        seiri_calibration::load_local_calibration_provider_for_registry(path, pack.fingerprint()),
+        Err(seiri_calibration::LocalPriorLoadError::UnsupportedSchema)
+    ));
 }
 
 trait ActualTestString {

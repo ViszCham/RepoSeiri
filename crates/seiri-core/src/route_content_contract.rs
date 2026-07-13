@@ -1,6 +1,7 @@
 use crate::{
-    ClaimBoundaryKind, CoverageScope, EvidenceId, ImportantFileKind, MeaningAtom, Observation,
-    RepositoryFacet, RouteContentAtom, RouteKind, SourceSpan,
+    ClaimBoundaryKind, CoverageScope, DocumentRole, DocumentRoleMask, EvidenceId,
+    ImportantFileKind, MeaningAtom, Observation, RepositoryFacet, RouteContentAtom, RouteKind,
+    SourceSpan,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ pub struct ContentSlotSpec {
     pub kind: ContentSlotKind,
     pub sensitivity: PolicySensitivity,
     pub scope: CoverageScope,
+    pub document_roles: DocumentRoleMask,
     pub enabled_by_any_facet: &'static [RepositoryFacet],
     pub markers: &'static [&'static str],
     pub important_files: &'static [ImportantFileKind],
@@ -145,6 +147,7 @@ macro_rules! slot {
             kind: ContentSlotKind::$kind,
             sensitivity: PolicySensitivity::$sensitivity,
             scope: $scope,
+            document_roles: document_roles_for_route(RouteKind::$route),
             enabled_by_any_facet: $facets,
             markers: $markers,
             important_files: $files,
@@ -153,6 +156,44 @@ macro_rules! slot {
             pattern_atom: $pattern_atom,
         }
     };
+}
+
+const fn document_roles_for_route(route: RouteKind) -> DocumentRoleMask {
+    let root_and_docs =
+        DocumentRoleMask::only(DocumentRole::RootReadme).with(DocumentRole::Documentation);
+    match route {
+        RouteKind::Identity | RouteKind::Docs | RouteKind::Quickstart => root_and_docs,
+        RouteKind::Support => root_and_docs
+            .with(DocumentRole::SupportPolicy)
+            .with(DocumentRole::GithubConfiguration),
+        RouteKind::Intake => DocumentRoleMask::only(DocumentRole::RootReadme)
+            .with(DocumentRole::SupportPolicy)
+            .with(DocumentRole::ContributionGuide)
+            .with(DocumentRole::GithubConfiguration),
+        RouteKind::Contributing => DocumentRoleMask::only(DocumentRole::RootReadme)
+            .with(DocumentRole::ContributionGuide)
+            .with(DocumentRole::GithubConfiguration),
+        RouteKind::Security => DocumentRoleMask::only(DocumentRole::RootReadme)
+            .with(DocumentRole::SecurityPolicy)
+            .with(DocumentRole::GithubConfiguration),
+        RouteKind::Release => root_and_docs.with(DocumentRole::ReleaseNotes),
+        RouteKind::Lifecycle => root_and_docs
+            .with(DocumentRole::ReleaseNotes)
+            .with(DocumentRole::Governance)
+            .with(DocumentRole::SupportPolicy),
+        RouteKind::Governance => root_and_docs.with(DocumentRole::Governance),
+        RouteKind::License => {
+            DocumentRoleMask::only(DocumentRole::RootReadme).with(DocumentRole::OtherMarkdown)
+        }
+        RouteKind::Automation => {
+            DocumentRoleMask::only(DocumentRole::RootReadme).with(DocumentRole::GithubConfiguration)
+        }
+        RouteKind::Ownership => DocumentRoleMask::only(DocumentRole::RootReadme)
+            .with(DocumentRole::Governance)
+            .with(DocumentRole::GithubConfiguration),
+        RouteKind::Hygiene => root_and_docs.with(DocumentRole::GithubConfiguration),
+        RouteKind::Unknown => DocumentRoleMask::ALL,
+    }
 }
 
 const PACKAGE_OR_BINARY: &[RepositoryFacet] = &[RepositoryFacet::Package, RepositoryFacet::Binary];
@@ -934,6 +975,7 @@ pub static ROUTE_CONTENT_CONTRACT: &[ContentSlotSpec] = &[
         kind: ContentSlotKind::Artifact,
         sensitivity: PolicySensitivity::ExecutionSensitive,
         scope: CoverageScope::RepositoryFiles,
+        document_roles: document_roles_for_route(RouteKind::Automation),
         enabled_by_any_facet: EMPTY_FACETS,
         markers: &["release", "docs", "codeql", "audit"],
         important_files: &[
@@ -1063,6 +1105,7 @@ pub static ROUTE_CONTENT_CONTRACT: &[ContentSlotSpec] = &[
         kind: ContentSlotKind::Policy,
         sensitivity: PolicySensitivity::MaintainerDecision,
         scope: CoverageScope::RepositoryFiles,
+        document_roles: document_roles_for_route(RouteKind::Hygiene),
         enabled_by_any_facet: PRODUCT_OR_BINARY,
         markers: &[
             "artifact storage",

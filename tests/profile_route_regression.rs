@@ -12,7 +12,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn profile_fixture_matrix_locks_9_profile_branch_cases() {
+fn profile_fixture_matrix_locks_10_profile_branch_cases() {
     let branch_profiles = seiri_profiles::branch_profiles()
         .iter()
         .map(|(profile, _)| *profile)
@@ -26,6 +26,7 @@ fn profile_fixture_matrix_locks_9_profile_branch_cases() {
         ProfileKind::Docs,
         ProfileKind::Tutorial,
         ProfileKind::Ml,
+        ProfileKind::Research,
         ProfileKind::Template,
     ]
     .into_iter()
@@ -41,6 +42,7 @@ fn profile_fixture_matrix_locks_9_profile_branch_cases() {
         ("profile-docs-regression", ProfileKind::Docs, 73),
         ("profile-tutorial-regression", ProfileKind::Tutorial, 79),
         ("profile-ml-regression", ProfileKind::Ml, 79),
+        ("profile-research-regression", ProfileKind::Research, 71),
         ("profile-template-regression", ProfileKind::Template, 74),
     ];
 
@@ -52,8 +54,8 @@ fn profile_fixture_matrix_locks_9_profile_branch_cases() {
         .expect("audit profile fixture");
         assert_eq!(snapshot.schema_version, ANALYSIS_SCHEMA_VERSION);
         let profile = snapshot.profile.as_ref().expect("profile report");
-        assert_eq!(profile.branch_summary.emitted_profiles, 9);
-        assert_eq!(profile.branches.len(), 9);
+        assert_eq!(profile.branch_summary.emitted_profiles, 10);
+        assert_eq!(profile.branches.len(), 10);
         let top = profile.branches.first().expect("top profile branch");
         assert_eq!(
             top.profile, expected_profile,
@@ -69,7 +71,7 @@ fn profile_fixture_matrix_locks_9_profile_branch_cases() {
             profile.branch_summary.top_rank_score_x100,
             Some(expected_confidence)
         );
-        assert_eq!(top.semantics.evidence_match.get(), 100);
+        assert_eq!(top.semantics.purpose_affinity.get(), 100);
         assert_eq!(
             top.semantics.calibration_prior,
             CalibrationPriorState::NotRequested

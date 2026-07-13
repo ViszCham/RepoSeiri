@@ -94,6 +94,12 @@ fn registry_covers_all_routes_and_claim_boundaries() {
     assert!(security
         .does_not_indicate
         .contains(&ClaimBoundaryKind::NotSecurityGuarantee));
+    assert!(security
+        .document_roles
+        .contains(seiri_core::DocumentRole::SecurityPolicy));
+    assert!(!security
+        .document_roles
+        .contains(seiri_core::DocumentRole::ReleaseNotes));
     let expected = registry
         .iter()
         .find(|slot| slot.code == "quickstart.expected_output")

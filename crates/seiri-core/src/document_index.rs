@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentRole {
     RootReadme,
@@ -18,6 +19,48 @@ pub enum DocumentRole {
     Governance,
     GithubConfiguration,
     OtherMarkdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DocumentRoleMask(u16);
+
+impl DocumentRoleMask {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self((1 << DocumentRole::ALL.len()) - 1);
+
+    #[must_use]
+    pub const fn only(role: DocumentRole) -> Self {
+        Self(1 << role as u8)
+    }
+
+    #[must_use]
+    pub const fn with(self, role: DocumentRole) -> Self {
+        Self(self.0 | (1 << role as u8))
+    }
+
+    #[must_use]
+    pub const fn contains(self, role: DocumentRole) -> bool {
+        self.0 & (1 << role as u8) != 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentScopeClass {
+    Repository,
+    NestedPackage,
+    Fixture,
+    Test,
+    Generated,
+    SupportingExample,
+}
+
+impl DocumentScopeClass {
+    #[must_use]
+    pub const fn is_repository_content(self) -> bool {
+        matches!(self, Self::Repository)
+    }
 }
 
 impl DocumentRole {
@@ -68,6 +111,7 @@ impl DocumentScanStatus {
 pub struct IndexedDocument {
     pub path: String,
     pub role: DocumentRole,
+    pub scope_class: DocumentScopeClass,
     pub declared_bytes: u64,
     pub document_id: Option<DocumentId>,
     pub status: DocumentScanStatus,
@@ -81,12 +125,14 @@ impl IndexedDocument {
     pub fn scanned(
         path: String,
         role: DocumentRole,
+        scope_class: DocumentScopeClass,
         declared_bytes: u64,
         scan: DocumentScan,
     ) -> Self {
         Self {
             path,
             role,
+            scope_class,
             declared_bytes,
             document_id: None,
             status: DocumentScanStatus::Scanned,
@@ -100,6 +146,7 @@ impl IndexedDocument {
     pub fn unavailable(
         path: String,
         role: DocumentRole,
+        scope_class: DocumentScopeClass,
         declared_bytes: u64,
         status: DocumentScanStatus,
     ) -> Self {
@@ -107,6 +154,7 @@ impl IndexedDocument {
         Self {
             path,
             role,
+            scope_class,
             declared_bytes,
             document_id: None,
             status,
@@ -120,12 +168,14 @@ impl IndexedDocument {
     pub fn unparsed(
         path: String,
         role: DocumentRole,
+        scope_class: DocumentScopeClass,
         declared_bytes: u64,
         base: TextDocumentBase,
     ) -> Self {
         Self {
             path,
             role,
+            scope_class,
             declared_bytes,
             document_id: None,
             status: DocumentScanStatus::NotMarkdown,
@@ -147,10 +197,20 @@ pub struct DocumentRoleCoverage {
     pub status: CoverageStatus,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentSelectionSummary {
+    pub candidates: usize,
+    pub selected: usize,
+    pub skipped_document_budget: usize,
+    pub skipped_byte_budget: usize,
+    pub selected_source_bytes: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentIndex {
     entries: Vec<IndexedDocument>,
     role_coverage: Vec<DocumentRoleCoverage>,
+    selection: DocumentSelectionSummary,
 }
 
 impl DocumentIndex {
@@ -187,9 +247,42 @@ impl DocumentIndex {
             }
             previous_role = Some(coverage.role);
         }
+        let selection = DocumentSelectionSummary {
+            candidates: entries.len(),
+            selected: entries
+                .iter()
+                .filter(|entry| {
+                    !matches!(
+                        entry.status,
+                        DocumentScanStatus::SkippedDocumentBudget
+                            | DocumentScanStatus::SkippedByteBudget
+                    )
+                })
+                .count(),
+            skipped_document_budget: entries
+                .iter()
+                .filter(|entry| entry.status == DocumentScanStatus::SkippedDocumentBudget)
+                .count(),
+            skipped_byte_budget: entries
+                .iter()
+                .filter(|entry| entry.status == DocumentScanStatus::SkippedByteBudget)
+                .count(),
+            selected_source_bytes: entries
+                .iter()
+                .filter(|entry| {
+                    !matches!(
+                        entry.status,
+                        DocumentScanStatus::SkippedDocumentBudget
+                            | DocumentScanStatus::SkippedByteBudget
+                    )
+                })
+                .map(|entry| entry.declared_bytes)
+                .sum(),
+        };
         Ok(Self {
             entries,
             role_coverage,
+            selection,
         })
     }
 
@@ -220,6 +313,11 @@ impl DocumentIndex {
     #[must_use]
     pub fn role_coverage(&self) -> &[DocumentRoleCoverage] {
         &self.role_coverage
+    }
+
+    #[must_use]
+    pub const fn selection(&self) -> DocumentSelectionSummary {
+        self.selection
     }
 
     #[must_use]

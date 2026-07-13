@@ -191,7 +191,7 @@ fn calibration_report_renders_json_and_markdown() {
     let json = seiri_report::calibration_to_json(&run).expect("render calibration JSON");
     let markdown = seiri_report::calibration_to_markdown(&run);
 
-    assert!(json.contains("\"schema_version\": \"seiri.calibration.v1\""));
+    assert!(json.contains("\"schema_version\": \"seiri.calibration.v2\""));
     assert!(json.contains("\"sources\""));
     assert!(json.contains("\"route_requirements\""));
     assert!(json.contains("\"profile_branches\""));

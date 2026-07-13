@@ -10,6 +10,7 @@ pub use local_prior::{
 };
 pub use private_overlay::{
     load_private_calibration_overlay, PrivateCalibrationOverlay, PrivateOverlayLoadError,
+    PrivateOverlayMetadata, PrivateOverlayResourceTrace, PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION,
 };
 
 pub use streaming::{
@@ -23,8 +24,8 @@ use seiri_core::{
     CalibrationRecordIdentity, CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun,
     CalibrationScale, CalibrationSource, CalibrationSourceKind, CalibrationSourceVisibility,
     CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence,
-    PatternStats, PendingPatternCandidate, ProfileBranch, ProfileBranchSemantics,
-    ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePatternCorrelation, ProfilePriority,
+    PatternStats, PendingPatternCandidate, ProfileBranch, ProfileBranchSemantics, ProfileFit,
+    ProfileKind, ProfilePatternCorrelation, ProfilePriority, ProfilePurposeAffinity,
     ProfileRankScore, RouteKind, RouteRequirement, WeightSuggestion, CALIBRATION_SCHEMA_VERSION,
     EVIDENCE_SCHEMA_VERSION,
 };
@@ -760,7 +761,7 @@ fn build_profile_branches(
                 profile: *profile,
                 semantics: ProfileBranchSemantics {
                     fit: ProfileFit::from_bounded(rank_score_x100),
-                    evidence_match: ProfileEvidenceMatch::from_bounded(
+                    purpose_affinity: ProfilePurposeAffinity::from_bounded(
                         (prior_x1000 / 10).min(100) as u8,
                     ),
                     rank_score: ProfileRankScore::from_bounded(rank_score_x100),
@@ -784,9 +785,9 @@ fn build_profile_branches(
             .then_with(|| {
                 right
                     .semantics
-                    .evidence_match
+                    .purpose_affinity
                     .get()
-                    .cmp(&left.semantics.evidence_match.get())
+                    .cmp(&left.semantics.purpose_affinity.get())
             })
             .then_with(|| left.profile.cmp(&right.profile))
     });

@@ -1,9 +1,9 @@
 use seiri_core::{
     BaselineRequirement, BaselineRuleResult, BaselineStatus, CalibrationKey, CalibrationLookup,
-    CalibrationPriorState, CalibrationProvider, FileKind, GateKind, MissingRoutePriority,
-    MissingRoutePriorityReport, MissingRoutePrioritySummary, ProfileKind, ProfilePriority,
-    RepositoryAnalysis, ReviewGap, ReviewPriority, ReviewPriorityReport, RouteCoOccurrenceGap,
-    RouteKind, RouteState, Severity,
+    CalibrationPriorState, CalibrationProvider, CoverageScope, CoverageStatus, FileKind, GateKind,
+    MissingRoutePriority, MissingRoutePriorityReport, MissingRoutePrioritySummary, ProfileKind,
+    ProfilePriority, RepositoryAnalysis, ReviewGap, ReviewPriority, ReviewPriorityReport,
+    RouteAvailability, RouteCoOccurrenceGap, RouteKind, RouteState, Severity,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -391,19 +391,28 @@ fn build_co_occurrence_gaps(
     let mut gaps = Vec::new();
     for rule in co_occurrence_rules() {
         let mut present_routes = BTreeSet::new();
+        let mut degraded_routes = BTreeSet::new();
         let mut missing_routes = BTreeSet::new();
+        let mut unknown_routes = BTreeSet::new();
         let mut present_signals = Vec::new();
         let mut missing_signals = Vec::new();
 
         for expected in rule.expected {
             match expected {
-                ExpectedSignal::Route(route) => {
-                    if route_is_present(snapshot, *route) {
+                ExpectedSignal::Route(route) => match route_availability(snapshot, *route) {
+                    RouteAvailability::Present => {
                         present_routes.insert(*route);
-                    } else {
+                    }
+                    RouteAvailability::Degraded => {
+                        degraded_routes.insert(*route);
+                    }
+                    RouteAvailability::Absent => {
                         missing_routes.insert(*route);
                     }
-                }
+                    RouteAvailability::Unknown => {
+                        unknown_routes.insert(*route);
+                    }
+                },
                 ExpectedSignal::Path(signal) => {
                     if path_signal_present(snapshot, *signal) {
                         present_signals.push(signal.label().to_string());
@@ -414,7 +423,7 @@ fn build_co_occurrence_gaps(
             }
         }
 
-        let present_count = present_routes.len() + present_signals.len();
+        let present_count = present_routes.len() + degraded_routes.len() + present_signals.len();
         let missing_count = missing_routes.len() + missing_signals.len();
         if present_count == 0 || missing_count == 0 {
             continue;
@@ -439,7 +448,9 @@ fn build_co_occurrence_gaps(
             gate: rule.gate,
             priority: priority_from_score(rank_weight_x100),
             present_routes: present_routes.into_iter().collect(),
+            degraded_routes: degraded_routes.into_iter().collect(),
             missing_routes: missing_routes.into_iter().collect(),
+            unknown_routes: unknown_routes.into_iter().collect(),
             present_signals,
             missing_signals,
             reason: rule.reason.to_string(),
@@ -632,18 +643,25 @@ fn route_needs_priority(state: RouteState) -> bool {
     )
 }
 
-fn route_is_present(snapshot: &RepositoryAnalysis, route: RouteKind) -> bool {
-    snapshot.route_assessments.iter().any(|assessment| {
-        let state = assessment.summary_projection().state;
-        assessment.route() == route
-            && matches!(
-                state,
-                RouteState::Routed
-                    | RouteState::Structured
-                    | RouteState::Verified
-                    | RouteState::Overridden
-            )
-    })
+fn route_availability(snapshot: &RepositoryAnalysis, route: RouteKind) -> RouteAvailability {
+    let Some(assessment) = snapshot
+        .route_assessments
+        .iter()
+        .find(|assessment| assessment.route() == route)
+    else {
+        return RouteAvailability::Unknown;
+    };
+    let availability = assessment.condition().availability;
+    if availability == RouteAvailability::Absent
+        && snapshot
+            .coverage
+            .record(CoverageScope::RootReadme)
+            .map_or(true, |record| record.status != CoverageStatus::Complete)
+    {
+        RouteAvailability::Unknown
+    } else {
+        availability
+    }
 }
 
 fn path_signal_present(snapshot: &RepositoryAnalysis, signal: PathSignal) -> bool {

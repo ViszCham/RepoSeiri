@@ -2,9 +2,11 @@
 
 use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, DocumentEvent, DocumentIndex, DocumentRole,
-    DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus, FileKind,
-    FileRecord, IndexedDocument, ReadmeSummary, RouteKind, SourceSpan, TextDocumentBase,
+    DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus,
+    DocumentScopeClass, FileKind, FileRecord, IndexedDocument, ReadmeSummary, RouteKind,
+    SourceSpan, TextDocumentBase,
 };
+use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
@@ -173,21 +175,39 @@ pub fn scan_document_index_with_options(
         .iter()
         .filter(|record| record.kind == FileKind::File)
         .filter_map(|record| {
-            classify_document_role(&record.path)
-                .map(|role| (record.path.clone(), role, record.size_bytes))
+            classify_document_role(&record.path).map(|role| DocumentCandidate {
+                path: record.path.clone(),
+                role,
+                scope_class: classify_scope_class(&record.path),
+                declared_bytes: record.size_bytes,
+            })
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| left.0.cmp(&right.0));
-    candidates.dedup_by(|left, right| left.0 == right.0);
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    candidates.dedup_by(|left, right| left.path == right.path);
+
+    let readme_links = readme_linked_targets(repo_root, &candidates, options);
+    candidates.sort_by(|left, right| {
+        selection_rank(left, &readme_links)
+            .cmp(&selection_rank(right, &readme_links))
+            .then_with(|| left.path.cmp(&right.path))
+    });
 
     let mut indexed_documents = 0usize;
     let mut used_source_bytes = 0usize;
     let mut entries = Vec::with_capacity(candidates.len());
-    for (path, role, declared_bytes) in candidates {
+    for candidate in candidates {
+        let DocumentCandidate {
+            path,
+            role,
+            scope_class,
+            declared_bytes,
+        } = candidate;
         if indexed_documents >= options.max_documents {
             entries.push(IndexedDocument::unavailable(
                 path,
                 role,
+                scope_class,
                 declared_bytes,
                 DocumentScanStatus::SkippedDocumentBudget,
             ));
@@ -202,6 +222,7 @@ pub fn scan_document_index_with_options(
             entries.push(IndexedDocument::unavailable(
                 path,
                 role,
+                scope_class,
                 declared_bytes,
                 DocumentScanStatus::SkippedByteBudget,
             ));
@@ -217,6 +238,7 @@ pub fn scan_document_index_with_options(
                     entries.push(IndexedDocument::unparsed(
                         path,
                         role,
+                        scope_class,
                         declared_bytes,
                         TextDocumentBase::from_bytes(&bytes),
                     ));
@@ -224,6 +246,7 @@ pub fn scan_document_index_with_options(
                 Err(error) => entries.push(IndexedDocument::unavailable(
                     path,
                     role,
+                    scope_class,
                     declared_bytes,
                     if error.kind() == io::ErrorKind::PermissionDenied {
                         DocumentScanStatus::PermissionDenied
@@ -238,17 +261,25 @@ pub fn scan_document_index_with_options(
             Ok(scan) => {
                 used_source_bytes = used_source_bytes.saturating_add(scan.source_bytes());
                 indexed_documents += 1;
-                entries.push(IndexedDocument::scanned(path, role, declared_bytes, scan));
+                entries.push(IndexedDocument::scanned(
+                    path,
+                    role,
+                    scope_class,
+                    declared_bytes,
+                    scan,
+                ));
             }
             Err(error) => entries.push(IndexedDocument::unavailable(
                 path,
                 role,
+                scope_class,
                 declared_bytes,
                 scan_status_for_error(&error),
             )),
         }
     }
 
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
     let role_coverage = DocumentRole::ALL
         .into_iter()
         .map(|role| DocumentRoleCoverage {
@@ -257,6 +288,112 @@ pub fn scan_document_index_with_options(
         })
         .collect();
     DocumentIndex::try_new(entries, role_coverage)
+}
+
+#[derive(Debug)]
+struct DocumentCandidate {
+    path: String,
+    role: DocumentRole,
+    scope_class: DocumentScopeClass,
+    declared_bytes: u64,
+}
+
+fn readme_linked_targets(
+    repo_root: &Path,
+    candidates: &[DocumentCandidate],
+    options: &DocumentIndexOptions,
+) -> BTreeSet<String> {
+    let Some(readme) = candidates
+        .iter()
+        .find(|candidate| candidate.role == DocumentRole::RootReadme)
+    else {
+        return BTreeSet::new();
+    };
+    if options.max_documents == 0
+        || usize::try_from(readme.declared_bytes).unwrap_or(usize::MAX)
+            > options.max_total_source_bytes
+    {
+        return BTreeSet::new();
+    }
+    let Ok(scan) = scan_document_file_with_options(
+        &repo_root.join(&readme.path),
+        readme.path.clone(),
+        &options.document,
+    ) else {
+        return BTreeSet::new();
+    };
+    scan.events()
+        .iter()
+        .filter_map(|event| match event {
+            DocumentEvent::Link(link) => local_target_key(&link.target),
+            _ => None,
+        })
+        .collect()
+}
+
+fn local_target_key(target: &str) -> Option<String> {
+    let trimmed = target.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:")
+    {
+        return None;
+    }
+    let path = trimmed
+        .split(['#', '?'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_start_matches("./")
+        .replace('\\', "/");
+    (!path.is_empty()).then(|| path.to_ascii_lowercase())
+}
+
+fn selection_rank(candidate: &DocumentCandidate, readme_links: &BTreeSet<String>) -> (u8, u8) {
+    let normalized = candidate.path.replace('\\', "/").to_ascii_lowercase();
+    if candidate.role == DocumentRole::RootReadme {
+        return (0, 0);
+    }
+    if !normalized.contains('/')
+        && matches!(
+            candidate.role,
+            DocumentRole::SecurityPolicy
+                | DocumentRole::SupportPolicy
+                | DocumentRole::ContributionGuide
+                | DocumentRole::ReleaseNotes
+                | DocumentRole::Governance
+        )
+    {
+        return (1, candidate.role as u8);
+    }
+    if readme_links.contains(&normalized) {
+        return (2, candidate.role as u8);
+    }
+    if matches!(normalized.as_str(), "docs/readme.md" | "docs/index.md") {
+        return (3, candidate.role as u8);
+    }
+    if candidate.scope_class.is_repository_content() {
+        (4, candidate.role as u8)
+    } else {
+        (5, candidate.role as u8)
+    }
+}
+
+fn classify_scope_class(path: &str) -> DocumentScopeClass {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let first = normalized.split('/').next().unwrap_or_default();
+    match first {
+        "fixtures" | "fixture" => DocumentScopeClass::Fixture,
+        "tests" | "test" => DocumentScopeClass::Test,
+        "examples" | "example" | "samples" | "sample" => DocumentScopeClass::SupportingExample,
+        "target" | "generated" | "dist" | "build" | "node_modules" | "vendor" => {
+            DocumentScopeClass::Generated
+        }
+        "crates" | "packages" => DocumentScopeClass::NestedPackage,
+        _ => DocumentScopeClass::Repository,
+    }
 }
 
 pub fn scan_document(path: impl Into<String>, text: &str) -> Result<DocumentScan, MarkdownError> {
