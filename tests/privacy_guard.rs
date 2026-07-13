@@ -62,6 +62,13 @@ fn privacy_guard_covers_tracked_public_text_surfaces() {
     for expected in [
         "README.md",
         "docs/design/roadmap-v5-legacy-removal.md",
+        "docs/design/roadmap-v6-completion.md",
+        "docs/design/completion-batch-protocol.md",
+        "docs/design/rcbp-v1-template.json",
+        "docs/migration-v2.md",
+        "schemas/seiri.analysis.v2.json",
+        "schemas/seiri.codex.v2.json",
+        "schemas/seiri.completion.v1.json",
         "fixtures/verified-security-route-repo/README.md",
         "fixtures/verified-security-route-repo/SECURITY.md",
         "fixtures/wording-safe-repo/README.md",
@@ -70,6 +77,10 @@ fn privacy_guard_covers_tracked_public_text_surfaces() {
         "tests/canonical_evidence.rs",
         "tests/canonical_report.rs",
         "tests/semantic_privacy.rs",
+        "tests/completion_batch_protocol.rs",
+        "tests/hostile_input_corpus.rs",
+        "tests/release_completion.rs",
+        "fuzz/fuzz_targets/markdown.rs",
     ] {
         assert!(
             files.contains(expected),

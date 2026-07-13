@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.analysis.v2",
+  "owner": "seiri-core::RepositoryAnalysis",
+  "compatibility": "v2-only",
+  "partial_coverage": "unknown_or_partial_never_implies_absence"
+}

@@ -9,8 +9,9 @@ Use this skill for repository organization reviews backed by the RepoSeiri Rust 
 
 ## Rules
 
-- Run the Rust core through `cargo run --quiet -p seiri-cli`; do not reproduce audit, pattern, profile, calibration, delta, planner, or claim decisions in the skill.
-- Use the single `seiri.codex.v1` query surface. Do not add schema selectors, view selectors, or fallback behavior.
+- Run the Rust core through the bundle launcher. On Windows use `scripts/reposeiri-codex.ps1`; on Linux use `scripts/reposeiri-codex.sh`. Do not reproduce audit, pattern, profile, calibration, delta, planner, or claim decisions in the skill.
+- Use the single `seiri.codex.v2` query surface. Do not add schema selectors, view selectors, legacy aliases, or fallback behavior.
+- The launcher resolves `REPOSEIRI_BIN`, then the bundle-local binary, then `PATH`. A missing binary, invalid contract, schema mismatch, or native command failure must remain a non-zero failure.
 - Select the narrowest query that answers the request.
 - Treat actions and patch operations as review data. Do not execute commands, write files, create branches, commit, push, call GitHub, or merge unless the user explicitly authorizes those separate operations.
 - Standard audit is local and does not initiate remote access. `remote` reports the current typed terminal state.
@@ -20,19 +21,19 @@ Use this skill for repository organization reviews backed by the RepoSeiri Rust 
 
 ## Commands
 
-Run from the RepoSeiri repository root or replace `--path .` with the target repository.
+Run from the installed plugin root and replace `--path .` with the target repository. The launcher does not require a RepoSeiri checkout or Rust toolchain.
 
 ```powershell
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query summary --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query routes --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query evidence --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query documents --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query governance --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query patches --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query linter --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query actions --format json
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query remote --format markdown
-cargo run --quiet -p seiri-cli -- codex --path . --profile common --query pr-body --format markdown
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query summary -Format markdown
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query routes -Format json
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query evidence -Format json
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query documents -Format json
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query governance -Format json
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query patches -Format markdown
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query linter -Format markdown
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query actions -Format json
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query remote -Format markdown
+powershell -NoProfile -File scripts/reposeiri-codex.ps1 -Path . -Profile common -Query pr-body -Format markdown
 ```
 
 Query kinds are `summary`, `routes`, `evidence`, `documents`, `governance`, `patches`, `linter`, `actions`, `remote`, and `pr-body`.

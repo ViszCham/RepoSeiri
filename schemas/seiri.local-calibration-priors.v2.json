@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.local-calibration-priors.v2",
+  "owner": "seiri-calibration::LocalCalibrationProvider",
+  "compatibility": "v2-only",
+  "visibility": "local_only"
+}

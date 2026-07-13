@@ -18,6 +18,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
+cargo run --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -33,6 +34,10 @@ CI は次を実行します。
 | `seiri codex --query summary` | `codex-summary.md` artifact | canonical summary と boundary を見る。 |
 | `seiri codex --query evidence` | `codex-evidence.json` artifact | typed evidence と coverage を見る。 |
 | `seiri codex --query linter` | `codex-linter.md` artifact | evidence-scoped wording findings を見る。 |
+| `xtask completion` | `completion.json` artifact | blocking checkにskipがなく、同一worktreeが`ready_for_git`か`incomplete`かを見る。 |
+| Windows / Linux bundle matrix | plugin bundle artifact | standalone binary、runtime manifest、SHA-256、launcher smokeを見る。 |
+
+ローカルloopは利用可能なhostだけを検証します。両required host manifestがない状態をpassへ昇格せず、CI completion jobが二つのhost evidenceを統合します。
 
 ### Review loop
 
@@ -61,6 +66,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
+cargo run --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -76,6 +82,10 @@ CI runs the following.
 | `seiri codex --query summary` | `codex-summary.md` artifact | Review the canonical summary and boundary. |
 | `seiri codex --query evidence` | `codex-evidence.json` artifact | Review typed evidence and coverage. |
 | `seiri codex --query linter` | `codex-linter.md` artifact | Review evidence-scoped wording findings. |
+| `xtask completion` | `completion.json` artifact | Confirm that no blocking check was skipped and the same worktree is `ready_for_git` or `incomplete`. |
+| Windows / Linux bundle matrix | plugin bundle artifact | Review the standalone binary, runtime manifest, SHA-256, and launcher smoke. |
+
+The local loop verifies only available hosts. It does not promote missing required-host manifests to pass; the CI completion job integrates both host-evidence artifacts.
 
 ### Review loop
 

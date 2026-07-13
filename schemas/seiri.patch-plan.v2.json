@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.patch-plan.v2",
+  "owner": "seiri-core::PatchPlan",
+  "compatibility": "v2-only",
+  "mutation": "preview_only"
+}

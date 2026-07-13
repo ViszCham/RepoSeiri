@@ -35,7 +35,7 @@ fn codex_queries_and_plan_use_single_cli_surface() {
             .output()
             .expect("codex");
         assert!(output.status.success(), "query {query}: {:?}", output);
-        assert!(String::from_utf8_lossy(&output.stdout).contains("seiri.codex.v1"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("seiri.codex.v2"));
     }
 
     let plan = Command::new(env!("CARGO_BIN_EXE_seiri"))
@@ -51,6 +51,30 @@ fn codex_queries_and_plan_use_single_cli_surface() {
             .expect("removed CLI");
         assert!(!output.status.success());
     }
+
+    let contract = Command::new(env!("CARGO_BIN_EXE_seiri"))
+        .args(["contract", "--format", "json"])
+        .output()
+        .expect("contract");
+    assert!(contract.status.success());
+    let contract_json: serde_json::Value =
+        serde_json::from_slice(&contract.stdout).expect("contract JSON");
+    assert_eq!(contract_json["codex_schema"], "seiri.codex.v2");
+    assert!(!String::from_utf8_lossy(&contract.stderr).contains("seiri.error.v1"));
+
+    let failure = Command::new(env!("CARGO_BIN_EXE_seiri"))
+        .args([
+            "audit",
+            "--path",
+            root.join("missing").to_str().expect("path"),
+        ])
+        .output()
+        .expect("typed failure");
+    assert!(!failure.status.success());
+    assert!(failure.stdout.is_empty());
+    let error: serde_json::Value =
+        serde_json::from_slice(&failure.stderr).expect("typed error JSON");
+    assert_eq!(error["schema_version"], "seiri.error.v1");
     fs::remove_dir_all(root).expect("remove temp repository");
 }
 

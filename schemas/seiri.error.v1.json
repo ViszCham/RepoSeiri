@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.error.v1",
+  "owner": "seiri-core::ErrorEnvelope",
+  "required": ["schema_version", "class", "code", "message"],
+  "stream": "stderr"
+}

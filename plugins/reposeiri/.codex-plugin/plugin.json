@@ -1,6 +1,6 @@
 {
   "name": "reposeiri",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Codex adapter for canonical RepoSeiri audit queries, dry-run planning, and PR drafts.",
   "author": {
     "name": "RepoSeiri Maintainers"

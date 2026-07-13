@@ -7,7 +7,6 @@ use std::process::ExitCode;
 
 mod codex;
 
-use codex::CodexError;
 use seiri_report::CodexQueryKind;
 
 #[derive(Debug, Parser)]
@@ -20,6 +19,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Contract {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
     Audit {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -124,15 +127,76 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("seiri: {error}");
-            ExitCode::FAILURE
+            let envelope = seiri_core::ErrorEnvelope::new(error.class, error.code, error.message);
+            match serde_json::to_string(&envelope) {
+                Ok(rendered) => eprintln!("{rendered}"),
+                Err(_) => eprintln!(
+                    "{{\"schema_version\":\"seiri.error.v1\",\"class\":\"internal\",\"code\":\"error_render_failed\",\"message\":\"failed to render typed error\"}}"
+                ),
+            }
+            ExitCode::from(error.class.exit_code())
         }
     }
 }
 
-fn run() -> Result<String, CodexError> {
+#[derive(Debug)]
+struct CliError {
+    class: seiri_core::ErrorClass,
+    code: &'static str,
+    message: String,
+}
+
+impl From<seiri_report::AuditError> for CliError {
+    fn from(error: seiri_report::AuditError) -> Self {
+        let class = match &error {
+            seiri_report::AuditError::Fs(_)
+            | seiri_report::AuditError::Markdown(_)
+            | seiri_report::AuditError::LocalPrior(_)
+            | seiri_report::AuditError::Io { .. } => seiri_core::ErrorClass::Io,
+            seiri_report::AuditError::Calibration(_)
+            | seiri_report::AuditError::DocumentIndex(_)
+            | seiri_report::AuditError::GithubLocal(_)
+            | seiri_report::AuditError::Coverage(_)
+            | seiri_report::AuditError::RouteAssessment(_)
+            | seiri_report::AuditError::DocumentConsistency(_)
+            | seiri_report::AuditError::Delta(_) => seiri_core::ErrorClass::InvalidInput,
+            seiri_report::AuditError::EvidenceKernel(_)
+            | seiri_report::AuditError::GitLocal(_)
+            | seiri_report::AuditError::Json(_) => seiri_core::ErrorClass::Internal,
+        };
+        Self {
+            class,
+            code: "audit_failed",
+            message: error.to_string(),
+        }
+    }
+}
+
+fn run() -> Result<String, CliError> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Contract { format } => {
+            let contract = seiri_core::ContractManifest::current(env!("CARGO_PKG_VERSION"));
+            match format {
+                OutputFormat::Json => serde_json::to_string_pretty(&contract).map_err(|error| {
+                    CliError {
+                        class: seiri_core::ErrorClass::Internal,
+                        code: "contract_render_failed",
+                        message: error.to_string(),
+                    }
+                }),
+                OutputFormat::Markdown => Ok(format!(
+                    "# RepoSeiri Contract\n\n- Tool: `{}`\n- Analysis: `{}`\n- Patch plan: `{}`\n- Codex: `{}`\n- Error: `{}`\n- Completion: `{}`\n- Compatibility: {}",
+                    contract.tool_version,
+                    contract.analysis_schema,
+                    contract.patch_plan_schema,
+                    contract.codex_schema,
+                    contract.error_schema,
+                    contract.completion_schema,
+                    contract.compatibility
+                )),
+            }
+        }
         Command::Audit {
             path,
             profile,

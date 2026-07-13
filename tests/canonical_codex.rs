@@ -19,7 +19,7 @@ fn every_codex_query_uses_one_borrowed_schema() {
         let view = adapter.query(kind);
         assert_eq!(view.schema_version, CODEX_SCHEMA_VERSION);
         let json = serde_json::to_string(&view).expect("query JSON");
-        assert!(json.contains("seiri.codex.v1"));
+        assert!(json.contains("seiri.codex.v2"));
         for removed in ["compatibility-v1", "native-v2", "native-v3"] {
             assert!(!json.contains(removed));
         }

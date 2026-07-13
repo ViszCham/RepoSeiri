@@ -12,7 +12,7 @@ fn audit_builds_typed_evidence_directly_with_canonical_ids() {
     let analysis =
         seiri_report::audit_repository_with_profile(&fixture, ProfileKind::Library).expect("audit");
 
-    assert_eq!(analysis.schema_version, "seiri.analysis.v1");
+    assert_eq!(analysis.schema_version, "seiri.analysis.v2");
     assert!(!analysis.evidence_kernel.is_empty());
     for (index, fact) in analysis.evidence_kernel.facts().iter().enumerate() {
         assert_eq!(fact.id.ordinal(), (index + 1) as u32);
