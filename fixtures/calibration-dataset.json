@@ -1,5 +1,5 @@
 {
-  "schema_version": "seiri.calibration.v1",
+  "schema_version": "seiri.calibration.v2",
   "dataset_id": "fixture-calibration-0001",
   "name": "Fixture Calibration Dataset",
   "collected_at": "2026-07-09",

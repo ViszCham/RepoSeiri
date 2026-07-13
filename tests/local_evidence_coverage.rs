@@ -1,6 +1,6 @@
 use seiri_core::{
     CoverageIncompleteReason, CoverageScope, CoverageStatus, DocumentRole, DocumentScanStatus,
-    Observation, ProfileKind, UnknownReason,
+    DocumentScopeClass, Observation, ProfileKind, UnknownReason,
 };
 use seiri_fs::ScanOptions;
 use seiri_markdown::DocumentIndexOptions;
@@ -39,6 +39,76 @@ fn document_index_bounds_scan_budget_and_preserves_role_coverage() {
             CoverageIncompleteReason::LimitExceeded
         ))
     );
+}
+
+#[test]
+fn document_index_prioritizes_core_roles_and_readme_targets_before_path_order() {
+    let repo = TempRepo::new("document-priority");
+    repo.write("README.md", "# Tool\n\n[Deep guide](z-last/guide.md)\n");
+    repo.write("SECURITY.md", "# Security\n");
+    repo.write("SUPPORT.md", "# Support\n");
+    repo.write("docs/index.md", "# Documentation\n");
+    repo.write("z-last/guide.md", "# Deep guide\n");
+    for index in 0..40 {
+        repo.write(&format!("a-noise/{index:02}.md"), "# Noise\n");
+    }
+
+    let fs_scan = seiri_fs::scan_repository(repo.path()).expect("filesystem scan");
+    let index = seiri_markdown::scan_document_index_with_options(
+        repo.path(),
+        &fs_scan.files,
+        true,
+        &DocumentIndexOptions {
+            max_documents: 5,
+            ..DocumentIndexOptions::default()
+        },
+    )
+    .expect("document index");
+
+    for path in [
+        "README.md",
+        "SECURITY.md",
+        "SUPPORT.md",
+        "docs/index.md",
+        "z-last/guide.md",
+    ] {
+        assert!(
+            index
+                .entries()
+                .iter()
+                .any(|entry| entry.path == path && entry.scan.is_some()),
+            "priority document {path} was not selected"
+        );
+    }
+    assert_eq!(index.selection().selected, 5);
+    assert!(index.selection().skipped_document_budget >= 40);
+}
+
+#[test]
+fn scope_class_separates_supporting_documents_from_repository_content() {
+    let repo = TempRepo::new("document-scope");
+    repo.write("README.md", "# Tool\n");
+    repo.write("fixtures/example/docs/guide.md", "<table><tr><td>broken\n");
+
+    let snapshot = seiri_report::audit_repository(repo.path()).expect("audit");
+    let fixture = snapshot
+        .document_index
+        .entries()
+        .iter()
+        .find(|entry| entry.path == "fixtures/example/docs/guide.md")
+        .expect("fixture document");
+    assert_eq!(fixture.scope_class, DocumentScopeClass::Fixture);
+
+    let docs_slot = snapshot
+        .route_content
+        .assessments
+        .iter()
+        .find(|assessment| assessment.code == "docs.user_guide")
+        .expect("docs slot");
+    assert!(!matches!(
+        docs_slot.observation,
+        Observation::Unknown(UnknownReason::UnsupportedSyntax)
+    ));
 }
 
 #[test]

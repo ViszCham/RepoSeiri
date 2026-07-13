@@ -74,7 +74,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
         .find(|pair| pair.document_path == readme.path());
 
     for (ordinal, route) in PATCH_ROUTES.iter().copied().enumerate() {
-        if readme_has_local_route(analysis, route) {
+        if readme_has_route(analysis, route) {
             continue;
         }
         let Some(target_path) = existing_target(analysis, route) else {
@@ -198,18 +198,12 @@ fn hold_all(report: &mut PatchPlan, reason: PatchHoldReason) {
         }));
 }
 
-fn readme_has_local_route(analysis: &RepositoryAnalysis, route: RouteKind) -> bool {
+fn readme_has_route(analysis: &RepositoryAnalysis, route: RouteKind) -> bool {
     analysis
         .route_assessments
         .iter()
         .find(|assessment| assessment.route() == route)
-        .is_some_and(|assessment| {
-            assessment
-                .readme()
-                .target_reachability()
-                .repository_local_present()
-                > 0
-        })
+        .is_some_and(|assessment| assessment.readme().routing().is_present())
 }
 
 fn existing_target(analysis: &RepositoryAnalysis, route: RouteKind) -> Option<&str> {

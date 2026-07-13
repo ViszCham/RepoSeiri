@@ -1,0 +1,136 @@
+{
+  "schema_version": "reposeiri.completion-batch.v1",
+  "protocol": "RCBP-v1",
+  "roadmap": "docs/design/roadmap-v6-completion.md",
+  "protocol_document": "docs/design/completion-batch-protocol.md",
+  "trigger_phrases": [
+    "RCBP-v1でCF0-CF7を一括実装してください",
+    "Implement CF0-CF7 as one batch under RCBP-v1"
+  ],
+  "blocks": [
+    {
+      "id": "CF0",
+      "group": "runtime",
+      "depends_on": []
+    },
+    {
+      "id": "CF1",
+      "group": "runtime",
+      "depends_on": [
+        "CF0"
+      ]
+    },
+    {
+      "id": "CF2",
+      "group": "semantics",
+      "depends_on": [
+        "CF1"
+      ]
+    },
+    {
+      "id": "CF3",
+      "group": "semantics",
+      "depends_on": [
+        "CF2"
+      ]
+    },
+    {
+      "id": "CF4",
+      "group": "semantics",
+      "depends_on": [
+        "CF3"
+      ]
+    },
+    {
+      "id": "CF5",
+      "group": "hardening",
+      "depends_on": [
+        "CF4"
+      ]
+    },
+    {
+      "id": "CF6",
+      "group": "hardening",
+      "depends_on": [
+        "CF5"
+      ]
+    },
+    {
+      "id": "CF7",
+      "group": "completion",
+      "depends_on": [
+        "CF6"
+      ]
+    }
+  ],
+  "authority_defaults": {
+    "mutation": true,
+    "tests": true,
+    "execution_ledger": true,
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "release": false,
+    "plugin_install": false,
+    "restart": false,
+    "visibility": false
+  },
+  "execution": {
+    "mode": "integrated_worktree",
+    "max_in_progress_slices": 1,
+    "ledger_path": "target/rcbp/<execution-id>/state.json",
+    "intermediate_commits": false,
+    "blocking_checks_may_be_skipped": false,
+    "user_change_policy": "preserve_and_reconcile",
+    "failure_policy": "repair_backflow_or_block"
+  },
+  "group_gates": [
+    {
+      "id": "runtime",
+      "blocks": [
+        "CF0",
+        "CF1"
+      ]
+    },
+    {
+      "id": "semantics",
+      "blocks": [
+        "CF2",
+        "CF3",
+        "CF4"
+      ]
+    },
+    {
+      "id": "hardening",
+      "blocks": [
+        "CF5",
+        "CF6"
+      ]
+    },
+    {
+      "id": "completion",
+      "blocks": [
+        "CF7"
+      ]
+    }
+  ],
+  "slice_states": [
+    "pending",
+    "in_progress",
+    "repairing",
+    "passed",
+    "blocked",
+    "superseded"
+  ],
+  "final_states": [
+    "ready_for_git",
+    "incomplete"
+  ],
+  "privacy": {
+    "store_source_bodies": false,
+    "store_diff_bodies": false,
+    "store_private_analysis": false,
+    "store_private_calibration_values": false,
+    "store_credentials": false
+  }
+}

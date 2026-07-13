@@ -12,7 +12,7 @@ fn audit_wire_contains_canonical_analysis_without_private_inputs() {
     let json = seiri_report::to_json(&analysis).expect("JSON");
     let value: serde_json::Value = serde_json::from_str(&json).expect("value");
 
-    assert_eq!(value["schema_version"], "seiri.analysis.v1");
+    assert_eq!(value["schema_version"], "seiri.analysis.v2");
     assert!(value["evidence_kernel"]["facts"].is_array());
     assert!(value["route_content"]["assessments"].is_array());
     assert!(value["route_assessments"].is_array());

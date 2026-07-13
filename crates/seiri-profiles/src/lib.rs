@@ -10,10 +10,10 @@ use seiri_core::{
     facet_evidence_ids, BaselineReport, BaselineRuleResult, BaselineStatus, CalibrationKey,
     CalibrationLookup, CalibrationPriorState, CalibrationProvider, FacetAssessment, FacetReport,
     FileKind, Finding, GateKind, ImportantFileKind, NoCalibrationProvider, Observation,
-    ProfileBranch, ProfileBranchSemantics, ProfileBranchSummary, ProfileEvidenceBasis,
-    ProfileEvidenceMatch, ProfileFit, ProfileKind, ProfilePriority, ProfileRankScore,
-    ProfileRecommendation, ProfileReport, ProfileRuleResult, ProfileScoreView, ProfileWeightBasis,
-    RepositoryAnalysis, RepositoryFacet, RouteKind, Severity,
+    ProfileBranch, ProfileBranchSemantics, ProfileBranchSummary, ProfileEvidenceBasis, ProfileFit,
+    ProfileKind, ProfilePriority, ProfilePurposeAffinity, ProfileRankScore, ProfileRecommendation,
+    ProfileReport, ProfileRuleResult, ProfileScoreView, ProfileWeightBasis, RepositoryAnalysis,
+    RepositoryFacet, RouteKind, Severity,
 };
 use std::collections::BTreeMap;
 
@@ -724,6 +724,7 @@ pub fn branch_profiles() -> &'static [(ProfileKind, u16)] {
         (ProfileKind::Docs, 0),
         (ProfileKind::Tutorial, 0),
         (ProfileKind::Ml, 0),
+        (ProfileKind::Research, 0),
         (ProfileKind::Template, 0),
     ]
 }
@@ -785,7 +786,7 @@ fn profile_branches(
                 profile: *profile,
                 semantics: ProfileBranchSemantics {
                     fit: ProfileFit::from_bounded(score.score_x100),
-                    evidence_match: ProfileEvidenceMatch::from_bounded(evidence_score_x100),
+                    purpose_affinity: ProfilePurposeAffinity::from_bounded(evidence_score_x100),
                     rank_score: ProfileRankScore::from_bounded(rank_score_x100),
                     calibration_prior,
                 },
@@ -807,9 +808,9 @@ fn profile_branches(
             .then_with(|| {
                 right
                     .semantics
-                    .evidence_match
+                    .purpose_affinity
                     .get()
-                    .cmp(&left.semantics.evidence_match.get())
+                    .cmp(&left.semantics.purpose_affinity.get())
             })
             .then_with(|| left.profile.cmp(&right.profile))
     });
@@ -847,7 +848,7 @@ fn profile_branch_summary(
         top_rank_score_x100: top.map(|branch| branch.semantics.rank_score.get()),
         emitted_profiles: branches.len(),
         ambiguous,
-        boundary: "Profile fit, evidence match, rank score, and calibration-prior state are separate typed values. Rank score is not a probability and not a repository type assertion, popularity claim, trust claim, security claim, or quality guarantee.".to_string(),
+        boundary: "Profile fit, typed purpose affinity, rank score, and calibration-prior state are separate values. Purpose affinity excludes fixture, test, generated, and supporting-example paths. Rank score is not a probability or a repository type, popularity, trust, security, or quality assertion.".to_string(),
     }
 }
 
@@ -863,12 +864,14 @@ fn profile_signal_score(
 
     macro_rules! signal {
         ($label:expr, $weight:expr, $condition:expr) => {{
-            total += $weight;
-            if $condition {
-                score += $weight;
-                matched.push($label.to_string());
-            } else {
-                missing.push($label.to_string());
+            if is_purpose_signal($label) {
+                total += $weight;
+                if $condition {
+                    score += $weight;
+                    matched.push($label.to_string());
+                } else {
+                    missing.push($label.to_string());
+                }
             }
         }};
     }
@@ -1082,7 +1085,7 @@ fn profile_signal_score(
                 )
             );
         }
-        ProfileKind::Ml | ProfileKind::Research => {
+        ProfileKind::Ml => {
             signal!(
                 "docs route",
                 14,
@@ -1101,22 +1104,22 @@ fn profile_signal_score(
             signal!(
                 "model data or paper path",
                 18,
-                path_or_readme_contains(
-                    snapshot,
-                    &[
-                        "model",
-                        "dataset",
-                        "data",
-                        "notebook",
-                        "paper",
-                        "experiment"
-                    ]
-                )
+                path_or_readme_contains(snapshot, &["model", "dataset", "data", "notebook"])
             );
             signal!(
                 "release or artifact route",
                 8,
                 has_route(snapshot, baseline, RouteKind::Release)
+            );
+        }
+        ProfileKind::Research => {
+            signal!(
+                "research artifact path",
+                18,
+                path_or_readme_contains(
+                    snapshot,
+                    &["paper", "papers", "experiment", "experiments", "research"]
+                )
             );
         }
         ProfileKind::Template => {
@@ -1187,6 +1190,24 @@ fn profile_rank_score(prior_weight_x100: u8, evidence_score_x100: u8, score_x100
         .min(100) as u8
 }
 
+fn is_purpose_signal(label: &str) -> bool {
+    matches!(
+        label,
+        "package manifest"
+            | "examples or API wording"
+            | "binary or command path"
+            | "deployment or infra path"
+            | "app or product wording"
+            | "runtime or compiler path"
+            | "docs directory"
+            | "spec or guide wording"
+            | "examples or tutorial path"
+            | "model data or paper path"
+            | "research artifact path"
+            | "template or action path"
+    )
+}
+
 fn has_route(
     snapshot: Option<&RepositoryAnalysis>,
     baseline: &BaselineReport,
@@ -1228,9 +1249,13 @@ fn path_or_readme_contains(snapshot: Option<&RepositoryAnalysis>, needles: &[&st
         return false;
     };
     snapshot.files.iter().any(|record| {
-        let path = record.path.to_ascii_lowercase();
+        let path = record.path.replace('\\', "/").to_ascii_lowercase();
         let kind_match = matches!(record.kind, FileKind::Directory | FileKind::File);
-        kind_match && needles.iter().any(|needle| path.contains(needle))
+        kind_match
+            && is_primary_artifact_path(&path)
+            && needles
+                .iter()
+                .any(|needle| typed_path_signal(&path, needle))
     }) || snapshot.readme_summary.as_ref().is_some_and(|readme| {
         readme
             .headings
@@ -1250,8 +1275,45 @@ fn path_or_readme_contains(snapshot: Option<&RepositoryAnalysis>, needles: &[&st
 }
 
 fn contains_signal(value: &str, needles: &[&str]) -> bool {
-    let value = value.to_ascii_lowercase();
-    needles.iter().any(|needle| value.contains(needle))
+    let words = value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    needles.iter().any(|needle| {
+        let needle = needle.trim_matches('/').to_ascii_lowercase();
+        words.iter().any(|word| word == &needle)
+    })
+}
+
+fn is_primary_artifact_path(path: &str) -> bool {
+    !matches!(
+        path.split('/').next().unwrap_or_default(),
+        "fixtures"
+            | "fixture"
+            | "tests"
+            | "test"
+            | "examples"
+            | "example"
+            | "samples"
+            | "sample"
+            | "target"
+            | "generated"
+            | "dist"
+            | "build"
+            | "vendor"
+            | "node_modules"
+    )
+}
+
+fn typed_path_signal(path: &str, needle: &str) -> bool {
+    let needle = needle.trim_matches('/').to_ascii_lowercase();
+    if needle.contains('/') {
+        return path == needle || path.ends_with(&format!("/{needle}"));
+    }
+    path.split('/').any(|segment| {
+        segment == needle || segment.split('.').next().is_some_and(|stem| stem == needle)
+    })
 }
 
 fn rule(

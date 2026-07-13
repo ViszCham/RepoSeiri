@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod audit_delta;
 mod calibration_prior;
 mod codex_view;
+mod contracts;
 mod document_index;
 mod document_scan;
 mod evidence_kernel;
@@ -29,9 +30,13 @@ pub use calibration_prior::{
 };
 
 pub use codex_view::{CodexAction, CodexCommand, CodexCommandError, CODEX_SCHEMA_VERSION};
+pub use contracts::{
+    ContractManifest, ErrorClass, ErrorEnvelope, COMPLETION_SCHEMA_VERSION,
+    CONTRACT_SCHEMA_VERSION, ERROR_SCHEMA_VERSION,
+};
 pub use document_index::{
-    DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentScanStatus,
-    IndexedDocument,
+    DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentRoleMask,
+    DocumentScanStatus, DocumentScopeClass, DocumentSelectionSummary, IndexedDocument,
 };
 pub use document_scan::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan,
@@ -73,7 +78,7 @@ pub use patch_proposal::{
     UnresolvedPolicySlot, PATCH_ANCHOR_CONTEXT_BYTES, PATCH_PROPOSAL_SCHEMA_VERSION,
 };
 pub use profile_semantics::{
-    CalibrationPriorState, ProfileBranchSemantics, ProfileEvidenceMatch, ProfileFit,
+    CalibrationPriorState, ProfileBranchSemantics, ProfileFit, ProfilePurposeAffinity,
     ProfileRankScore,
 };
 pub use remote_evidence::{
@@ -94,8 +99,9 @@ pub use review_priority::{
 };
 pub use route_assessment::{
     ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment, RouteAssessmentError,
-    RouteConflictAssessment, RouteEvidenceGroups, RouteFreshness, RoutePolicyBoundary,
-    RoutePresenceAssessment, RouteSummaryProjection, TargetReachabilityAssessment,
+    RouteAvailability, RouteCondition, RouteConflictAssessment, RouteEvidenceGroups,
+    RouteFreshness, RoutePolicyBoundary, RoutePresenceAssessment, RouteSummaryProjection,
+    TargetReachabilityAssessment,
 };
 pub use route_content::RouteContentAtom;
 pub use route_content_contract::{
@@ -105,8 +111,8 @@ pub use route_content_contract::{
 };
 pub use route_target::{classify_target_relation, RouteTargetRef, RouteTargetRole, TargetRelation};
 
-pub const ANALYSIS_SCHEMA_VERSION: &str = "seiri.analysis.v1";
-pub const CALIBRATION_SCHEMA_VERSION: &str = "seiri.calibration.v1";
+pub const ANALYSIS_SCHEMA_VERSION: &str = "seiri.analysis.v2";
+pub const CALIBRATION_SCHEMA_VERSION: &str = "seiri.calibration.v2";
 pub const EVIDENCE_SCHEMA_VERSION: &str = "seiri.evidence.v1";
 pub const TOOL_NAME: &str = "RepoSeiri";
 pub const WORDING_LINT_SCHEMA_VERSION: &str = "seiri.wording-lint.v1";
@@ -445,6 +451,7 @@ pub struct ReadmeRouteMapEntry {
     pub state: RouteState,
     #[serde(default)]
     pub gap_estimate: Option<AggregateRepositoryEstimate>,
+    pub raw_candidate_count: usize,
     pub candidate_count: usize,
     pub heading_count: usize,
     pub link_count: usize,
@@ -470,6 +477,7 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
             state: RouteState,
             #[serde(default)]
             gap_estimate: Option<AggregateRepositoryEstimate>,
+            raw_candidate_count: usize,
             candidate_count: usize,
             heading_count: usize,
             link_count: usize,
@@ -484,6 +492,7 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
 
         let wire = WireEntry::deserialize(deserializer)?;
         let derived = ReadmeRouteAssessment::from_observations(
+            wire.raw_candidate_count,
             wire.candidate_count,
             wire.heading_count,
             wire.link_count,
@@ -517,6 +526,7 @@ impl<'de> Deserialize<'de> for ReadmeRouteMapEntry {
             assessment: derived,
             state: projected_state,
             gap_estimate: wire.gap_estimate,
+            raw_candidate_count: wire.raw_candidate_count,
             candidate_count: wire.candidate_count,
             heading_count: wire.heading_count,
             link_count: wire.link_count,
@@ -766,7 +776,9 @@ pub struct RouteCoOccurrenceGap {
     pub gate: GateKind,
     pub priority: ProfilePriority,
     pub present_routes: Vec<RouteKind>,
+    pub degraded_routes: Vec<RouteKind>,
     pub missing_routes: Vec<RouteKind>,
+    pub unknown_routes: Vec<RouteKind>,
     pub present_signals: Vec<String>,
     pub missing_signals: Vec<String>,
     pub reason: String,

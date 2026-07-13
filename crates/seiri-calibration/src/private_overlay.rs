@@ -3,6 +3,7 @@ use crate::{
 };
 use seiri_core::{CalibrationKey, CalibrationLookup, CalibrationProvider, PriorVisibility};
 use seiri_patterns::{load_executable_pattern_pack, ExecutablePatternPack, PatternPackLoadError};
+use serde::Serialize;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
@@ -21,6 +22,43 @@ impl PrivateCalibrationOverlay {
     pub fn registry_fingerprint(&self) -> &str {
         self.calibration.registry_fingerprint()
     }
+
+    #[must_use]
+    pub fn metadata(&self) -> PrivateOverlayMetadata {
+        PrivateOverlayMetadata {
+            schema_version: PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION,
+            visibility: "local_only",
+            registry_fingerprint: self.calibration.registry_fingerprint().to_string(),
+            pattern_pack_fingerprint: self.pattern_pack.fingerprint().to_string(),
+            resource_trace: PrivateOverlayResourceTrace {
+                source_bytes: self.calibration.source_bytes(),
+                prior_count: self.calibration.prior_count(),
+            },
+            source_path_redacted: true,
+            source_body_redacted: true,
+            exact_priors_redacted: true,
+        }
+    }
+}
+
+pub const PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION: &str = "seiri.private-overlay-metadata.v2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PrivateOverlayMetadata {
+    pub schema_version: &'static str,
+    pub visibility: &'static str,
+    pub registry_fingerprint: String,
+    pub pattern_pack_fingerprint: String,
+    pub resource_trace: PrivateOverlayResourceTrace,
+    pub source_path_redacted: bool,
+    pub source_body_redacted: bool,
+    pub exact_priors_redacted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PrivateOverlayResourceTrace {
+    pub source_bytes: u64,
+    pub prior_count: usize,
 }
 
 impl CalibrationProvider for PrivateCalibrationOverlay {

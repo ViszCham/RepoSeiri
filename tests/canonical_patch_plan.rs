@@ -13,7 +13,7 @@ fn patch_plan_links_only_existing_targets_and_is_stale_bound() {
     let analysis =
         seiri_report::audit_repository_with_profile(&root, ProfileKind::Library).expect("audit");
     let plan = seiri_planner::plan_patches(&analysis);
-    assert_eq!(plan.schema_version, "seiri.patch-plan.v1");
+    assert_eq!(plan.schema_version, "seiri.patch-plan.v2");
     assert!(!plan.writes_files);
     let docs = plan
         .operations

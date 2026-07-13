@@ -27,6 +27,7 @@ impl RoutePresenceAssessment {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadmeRoutingAssessment {
+    pub(crate) raw_candidate_count: usize,
     pub(crate) candidate_count: usize,
     pub(crate) heading_count: usize,
     pub(crate) link_count: usize,
@@ -36,6 +37,7 @@ pub struct ReadmeRoutingAssessment {
 
 impl ReadmeRoutingAssessment {
     pub fn new(
+        raw_candidate_count: usize,
         candidate_count: usize,
         heading_count: usize,
         link_count: usize,
@@ -52,7 +54,14 @@ impl ReadmeRoutingAssessment {
                 classified_count,
             });
         }
+        if raw_candidate_count < candidate_count {
+            return Err(RouteAssessmentError::RawCandidateCountUnderflow {
+                raw_candidate_count,
+                logical_candidate_count: candidate_count,
+            });
+        }
         Ok(Self {
+            raw_candidate_count,
             candidate_count,
             heading_count,
             link_count,
@@ -74,6 +83,11 @@ impl ReadmeRoutingAssessment {
     #[must_use]
     pub const fn candidate_count(self) -> usize {
         self.candidate_count
+    }
+
+    #[must_use]
+    pub const fn raw_candidate_count(self) -> usize {
+        self.raw_candidate_count
     }
 
     #[must_use]
@@ -209,6 +223,7 @@ pub struct ReadmeRouteAssessment {
 
 impl ReadmeRouteAssessment {
     pub fn from_observations(
+        raw_candidate_count: usize,
         candidate_count: usize,
         heading_count: usize,
         link_count: usize,
@@ -217,6 +232,7 @@ impl ReadmeRouteAssessment {
         targets: &[ReadmeRouteTarget],
     ) -> Result<Self, RouteAssessmentError> {
         let routing = ReadmeRoutingAssessment::new(
+            raw_candidate_count,
             candidate_count,
             heading_count,
             link_count,
@@ -337,6 +353,7 @@ impl<'de> Deserialize<'de> for ReadmeRouteAssessment {
 
         let wire = WireAssessment::deserialize(deserializer)?;
         ReadmeRoutingAssessment::new(
+            wire.routing.raw_candidate_count,
             wire.routing.candidate_count,
             wire.routing.heading_count,
             wire.routing.link_count,
@@ -459,6 +476,7 @@ impl RouteEvidenceGroups {
 pub struct RouteAssessment {
     pub(crate) route: RouteKind,
     pub(crate) presence: RoutePresenceAssessment,
+    pub(crate) condition: RouteCondition,
     pub(crate) readme: ReadmeRouteAssessment,
     pub(crate) policy: RoutePolicyBoundary,
     pub(crate) missing_pattern: bool,
@@ -479,14 +497,17 @@ impl RouteAssessment {
             readme_routing_evidence,
             inherited_evidence,
         )?;
-        Ok(Self {
+        let mut assessment = Self {
             route,
             presence: evidence.presence(),
+            condition: RouteCondition::default(),
             readme,
             policy: RoutePolicyBoundary::for_route(route),
             missing_pattern,
             evidence,
-        })
+        };
+        assessment.condition = RouteCondition::from_projection(assessment.summary_projection());
+        Ok(assessment)
     }
 
     #[must_use]
@@ -605,6 +626,11 @@ impl RouteAssessment {
     }
 
     #[must_use]
+    pub const fn condition(&self) -> RouteCondition {
+        self.condition
+    }
+
+    #[must_use]
     pub const fn readme(&self) -> ReadmeRouteAssessment {
         self.readme
     }
@@ -634,6 +660,7 @@ impl<'de> Deserialize<'de> for RouteAssessment {
         struct WireAssessment {
             route: RouteKind,
             presence: RoutePresenceAssessment,
+            condition: RouteCondition,
             readme: ReadmeRouteAssessment,
             policy: RoutePolicyBoundary,
             missing_pattern: bool,
@@ -657,14 +684,21 @@ impl<'de> Deserialize<'de> for RouteAssessment {
         if wire.policy != expected_policy {
             return Err(D::Error::custom(RouteAssessmentError::PolicyMismatch));
         }
-        Ok(Self {
+        let mut assessment = Self {
             route: wire.route,
             presence: wire.presence,
+            condition: RouteCondition::default(),
             readme: wire.readme,
             policy: wire.policy,
             missing_pattern: wire.missing_pattern,
             evidence: wire.evidence,
-        })
+        };
+        let expected_condition = RouteCondition::from_projection(assessment.summary_projection());
+        if wire.condition != expected_condition {
+            return Err(D::Error::custom(RouteAssessmentError::ConditionMismatch));
+        }
+        assessment.condition = expected_condition;
+        Ok(assessment)
     }
 }
 
@@ -673,6 +707,48 @@ pub struct RouteSummaryProjection {
     pub state: RouteState,
     pub confidence: EvidenceConfidence,
     pub reason: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteAvailability {
+    Present,
+    Degraded,
+    Absent,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteCondition {
+    pub state: Option<RouteState>,
+    pub availability: RouteAvailability,
+    pub confidence: Option<EvidenceConfidence>,
+}
+
+impl RouteCondition {
+    #[must_use]
+    pub const fn from_projection(projection: RouteSummaryProjection) -> Self {
+        let availability = match projection.state {
+            RouteState::Routed
+            | RouteState::Structured
+            | RouteState::Verified
+            | RouteState::Overridden => RouteAvailability::Present,
+            RouteState::Implicit
+            | RouteState::Weak
+            | RouteState::Inherited
+            | RouteState::Conflicting
+            | RouteState::Overloaded
+            | RouteState::Stale => RouteAvailability::Degraded,
+            RouteState::Absent | RouteState::UnsafeToInvent => RouteAvailability::Absent,
+        };
+        Self {
+            state: Some(projection.state),
+            availability,
+            confidence: Some(projection.confidence),
+        }
+    }
 }
 
 impl RouteSummaryProjection {
@@ -692,6 +768,10 @@ pub enum RouteAssessmentError {
         candidate_count: usize,
         classified_count: usize,
     },
+    RawCandidateCountUnderflow {
+        raw_candidate_count: usize,
+        logical_candidate_count: usize,
+    },
     FreshnessMismatch {
         expected: RouteFreshness,
         actual: RouteFreshness,
@@ -702,6 +782,7 @@ pub enum RouteAssessmentError {
     NonCanonicalEvidenceOrder,
     PresenceMismatch,
     PolicyMismatch,
+    ConditionMismatch,
 }
 
 impl Display for RouteAssessmentError {
@@ -714,6 +795,13 @@ impl Display for RouteAssessmentError {
             } => write!(
                 formatter,
                 "README candidate count {candidate_count} does not match classified source count {classified_count}"
+            ),
+            Self::RawCandidateCountUnderflow {
+                raw_candidate_count,
+                logical_candidate_count,
+            } => write!(
+                formatter,
+                "README raw candidate count {raw_candidate_count} is smaller than logical candidate count {logical_candidate_count}"
             ),
             Self::FreshnessMismatch { expected, actual } => write!(
                 formatter,
@@ -730,6 +818,9 @@ impl Display for RouteAssessmentError {
             ),
             Self::PolicyMismatch => {
                 formatter.write_str("route policy boundary does not match the route kind")
+            }
+            Self::ConditionMismatch => {
+                formatter.write_str("route condition does not match its deterministic projection")
             }
         }
     }

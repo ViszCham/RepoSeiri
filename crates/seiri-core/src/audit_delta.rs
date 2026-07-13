@@ -9,7 +9,7 @@ use std::fmt::{Display, Formatter};
 
 pub const PORTABLE_AUDIT_SCHEMA_VERSION: &str = "seiri.portable-audit.v1";
 pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v1";
-pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v1";
+pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest32([u8; 32]);

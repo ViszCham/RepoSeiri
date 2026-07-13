@@ -1,6 +1,7 @@
 use seiri_core::{
     BaselineStatus, CalibrationPriorState, ProfileEvidenceBasis, ProfileKind, ProfileWeightBasis,
 };
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -70,7 +71,7 @@ fn profile_score_view_is_deterministic_and_bounded() {
         .any(|rule| rule.status == BaselineStatus::Missing));
     assert!(profile.score.note.contains("Calibration estimates remain"));
     assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Docs);
-    assert_eq!(profile.branches.len(), 9);
+    assert_eq!(profile.branches.len(), 10);
     assert!(profile.branch_summary.top_profile.is_some());
     assert!(profile.branch_summary.top_rank_score_x100.is_some());
 }
@@ -101,12 +102,12 @@ fn profile_branch_semantics_emit_multiple_candidates_without_implicit_priors() {
     let profile = snapshot.profile.expect("profile report");
 
     assert_eq!(profile.branch_summary.selected_profile, ProfileKind::Common);
-    assert_eq!(profile.branch_summary.emitted_profiles, 9);
-    assert_eq!(profile.branches.len(), 9);
+    assert_eq!(profile.branch_summary.emitted_profiles, 10);
+    assert_eq!(profile.branches.len(), 10);
     assert!(profile
         .branch_summary
         .boundary
-        .contains("not a repository type assertion"));
+        .contains("not a probability"));
     assert!(profile.branches.windows(2).all(|window| {
         window[0].semantics.rank_score.get() >= window[1].semantics.rank_score.get()
     }));
@@ -146,4 +147,25 @@ fn profile_branch_semantics_emit_multiple_candidates_without_implicit_priors() {
     assert!(library.semantics.rank_score.get() > 0);
     assert!(cli.semantics.rank_score.get() > 0);
     assert!(!library.matched_signals.is_empty());
+}
+
+#[test]
+fn supporting_examples_do_not_create_primary_profile_affinity() {
+    let root = tempfile::tempdir().expect("repository");
+    fs::create_dir_all(root.path().join("examples/runtime/compiler")).expect("example path");
+    fs::write(root.path().join("README.md"), "# Neutral repository\n").expect("README");
+    fs::write(
+        root.path().join("examples/runtime/compiler/guide.md"),
+        "# Runtime compiler toolchain\n",
+    )
+    .expect("supporting example");
+
+    let snapshot = seiri_report::audit_repository(root.path()).expect("audit");
+    let profile = snapshot.profile.expect("profile report");
+    let runtime = profile
+        .branches
+        .iter()
+        .find(|branch| branch.profile == ProfileKind::Runtime)
+        .expect("runtime branch");
+    assert_eq!(runtime.semantics.purpose_affinity.get(), 0);
 }

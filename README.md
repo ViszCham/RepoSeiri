@@ -45,7 +45,7 @@ cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summa
 RepoSeiri 自身を対象にした Codex summary の短縮例です。件数はリポジトリ状態で変わり、外部評価や安全性を保証しません。
 
 ```text
-Schema: seiri.codex.v1
+Schema: seiri.codex.v2
 Query: summary
 Evidence facts: <count>
 Route assessments: 14
@@ -66,6 +66,10 @@ Patch operations / holds: <count> / <count>
 | Codex PR body draft | `cargo run --quiet -p seiri-cli -- codex --path . --profile library --query pr-body --format markdown` |
 | pattern registry | `cargo run --quiet -p seiri-cli -- patterns --format markdown` |
 | calibration ingest | `cargo run --quiet -p seiri-cli -- calibrate --input fixtures/calibration-dataset.json --format markdown` |
+| contract確認 | `cargo run --quiet -p seiri-cli -- contract --format json` |
+| completion gate | `cargo run --quiet -p xtask -- completion --format json` |
+
+ローカルcompletionはrequired host evidenceが不足していれば`incomplete`を返します。CIはWindows/Linux bundle smokeとchecksum manifestを収集し、`--host-evidence`付きで最終gateを実行します。
 
 ### 結果の読み方
 
@@ -100,7 +104,7 @@ Patch operations / holds: <count> / <count>
 - Plugin root: `plugins/reposeiri`
 - Skill file: [RepoSeiri Skill](plugins/reposeiri/skills/reposeiri/SKILL.md)
 - Codex 側では `seiri codex` の出力を優先して使います。
-- plugin は `seiri.codex.v1` の query を使い、repository policy を推測で作らず、Rust CLI の typed observation と dry-run plan を作業文脈へ渡します。
+- plugin は `seiri.codex.v2` の queryを使います。launcherは`REPOSEIRI_BIN`、bundle-local binary、`PATH`の順でstandalone runtimeを解決し、repository policyを推測で作らず、Rust CLIのtyped observationとdry-run planを作業文脈へ渡します。
 
 ### 公開リポジトリとしての境界
 
@@ -121,6 +125,7 @@ cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -171,7 +176,7 @@ Run these two commands first. The first checks the workspace baseline, and the s
 This is an abbreviated Codex summary for RepoSeiri itself. Counts change with repository state and do not guarantee external evaluation or safety.
 
 ```text
-Schema: seiri.codex.v1
+Schema: seiri.codex.v2
 Query: summary
 Evidence facts: <count>
 Route assessments: 14
@@ -192,6 +197,10 @@ Patch operations / holds: <count> / <count>
 | Codex PR body draft | `cargo run --quiet -p seiri-cli -- codex --path . --profile library --query pr-body --format markdown` |
 | Pattern registry | `cargo run --quiet -p seiri-cli -- patterns --format markdown` |
 | Calibration ingest | `cargo run --quiet -p seiri-cli -- calibrate --input fixtures/calibration-dataset.json --format markdown` |
+| Contract manifest | `cargo run --quiet -p seiri-cli -- contract --format json` |
+| Completion gate | `cargo run --quiet -p xtask -- completion --format json` |
+
+Local completion returns `incomplete` when required host evidence is missing. CI collects Windows/Linux bundle-smoke and checksum manifests, then runs the final gate with `--host-evidence`.
 
 ### Reading Results
 
@@ -226,7 +235,7 @@ Detailed publication-state checks, design docs, and release procedures are route
 - Plugin root: `plugins/reposeiri`
 - Skill file: [RepoSeiri Skill](plugins/reposeiri/skills/reposeiri/SKILL.md)
 - In Codex, prefer the output from `seiri codex`.
-- The plugin uses `seiri.codex.v1` queries. It does not invent repository policy and passes typed observations and the dry-run plan into the working context.
+- The plugin uses `seiri.codex.v2` queries. Its launcher resolves the standalone runtime in the order `REPOSEIRI_BIN`, bundle-local binary, then `PATH`. It does not invent repository policy and passes typed observations and the dry-run plan into the working context.
 
 ### Public Repository Boundary
 
@@ -247,6 +256,7 @@ cargo +1.76.0 check --workspace --all-targets --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --quiet -p xtask -- completion --format json
 git diff --check
 ```
 

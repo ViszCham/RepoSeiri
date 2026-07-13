@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.codex.v2",
+  "owner": "seiri-codex::CodexQuery",
+  "compatibility": "v2-only",
+  "mutation": "bounded_projection_only"
+}

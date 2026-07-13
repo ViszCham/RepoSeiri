@@ -25,9 +25,9 @@ impl ProfileFit {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProfileEvidenceMatch(u8);
+pub struct ProfilePurposeAffinity(u8);
 
-impl ProfileEvidenceMatch {
+impl ProfilePurposeAffinity {
     #[must_use]
     pub const fn from_bounded(value: u8) -> Self {
         Self(if value > 100 { 100 } else { value })
@@ -58,7 +58,7 @@ impl ProfileRankScore {
 #[serde(deny_unknown_fields)]
 pub struct ProfileBranchSemantics {
     pub fit: ProfileFit,
-    pub evidence_match: ProfileEvidenceMatch,
+    pub purpose_affinity: ProfilePurposeAffinity,
     pub rank_score: ProfileRankScore,
     pub calibration_prior: CalibrationPriorState,
 }

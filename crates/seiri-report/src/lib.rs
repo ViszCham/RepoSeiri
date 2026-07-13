@@ -1039,11 +1039,11 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     } else {
         for branch in &run.profile_branches {
             out.push_str(&format!(
-                "- rank `{}` profile `{}` fit `{}` evidence_match `{}` rank_score `{}` calibration `{:?}`\n",
+                "- rank `{}` profile `{}` fit `{}` purpose_affinity `{}` rank_score `{}` calibration `{:?}`\n",
                 branch.rank,
                 branch.profile,
                 branch.semantics.fit.get(),
-                branch.semantics.evidence_match.get(),
+                branch.semantics.purpose_affinity.get(),
                 branch.semantics.rank_score.get(),
                 branch.semantics.calibration_prior
             ));

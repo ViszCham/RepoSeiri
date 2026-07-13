@@ -1,5 +1,5 @@
 {
-  "schema_version": "seiri.calibration.v1",
+  "schema_version": "seiri.calibration.v2",
   "dataset_id": "SYNTHETIC_LOCAL_ONLY_DATASET_ID_SHOULD_NOT_RENDER",
   "name": "Synthetic Local-only Calibration Fixture",
   "collected_at": "2026-07-10",

@@ -17,15 +17,16 @@ pub(crate) fn build_route_map(
             .iter()
             .filter(|candidate| candidate.route == route)
             .collect::<Vec<_>>();
-        let heading_count = route_candidates
+        let logical_candidates = logical_candidates(&route_candidates);
+        let heading_count = logical_candidates
             .iter()
             .filter(|candidate| candidate.source == RouteSource::Heading)
             .count();
-        let link_count = route_candidates
+        let link_count = logical_candidates
             .iter()
             .filter(|candidate| candidate.source == RouteSource::Link)
             .count();
-        let badge_count = route_candidates
+        let badge_count = logical_candidates
             .iter()
             .filter(|candidate| candidate.source == RouteSource::Badge)
             .count();
@@ -49,8 +50,10 @@ pub(crate) fn build_route_map(
             .iter()
             .filter(|target| target.routes.len() > 1)
             .count();
-        let candidate_count = route_candidates.len();
+        let raw_candidate_count = route_candidates.len();
+        let candidate_count = logical_candidates.len();
         let assessment = ReadmeRouteAssessment::from_observations(
+            raw_candidate_count,
             candidate_count,
             heading_count,
             link_count,
@@ -66,6 +69,7 @@ pub(crate) fn build_route_map(
             assessment,
             state,
             gap_estimate: None,
+            raw_candidate_count,
             candidate_count,
             heading_count,
             link_count,
@@ -110,6 +114,23 @@ pub(crate) fn build_route_map(
     ReadmeRouteMap { summary, entries }
 }
 
+fn logical_candidates<'a>(candidates: &[&'a RouteCandidate]) -> Vec<&'a RouteCandidate> {
+    let mut seen = BTreeSet::new();
+    let mut logical = Vec::new();
+    for candidate in candidates {
+        let target = candidate
+            .target
+            .as_deref()
+            .map(normalize_target_key)
+            .filter(|target| !target.is_empty())
+            .unwrap_or_else(|| "route-hub".to_string());
+        if seen.insert((candidate.source, target)) {
+            logical.push(*candidate);
+        }
+    }
+    logical
+}
+
 fn target_routes(route_candidates: &[RouteCandidate]) -> BTreeMap<String, Vec<RouteKind>> {
     let mut map = BTreeMap::<String, BTreeSet<RouteKind>>::new();
     for candidate in route_candidates {
@@ -148,6 +169,10 @@ fn route_targets(
             .cmp(&right.target)
             .then_with(|| left.line.cmp(&right.line))
             .then_with(|| left.source.cmp(&right.source))
+    });
+    targets.dedup_by(|left, right| {
+        left.source == right.source
+            && normalize_target_key(&left.target) == normalize_target_key(&right.target)
     });
     targets
 }
@@ -200,6 +225,7 @@ fn classify_target_status(target: &str, repo_root: Option<&Path>) -> ReadmeRoute
 
 fn normalize_target_key(target: &str) -> String {
     strip_target_fragment(target.trim())
+        .trim_start_matches("./")
         .replace('\\', "/")
         .to_ascii_lowercase()
 }

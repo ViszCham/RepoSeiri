@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-pub const EXECUTABLE_PATTERN_PACK_SCHEMA_VERSION: &str = "seiri.executable-pattern-pack.v1";
+pub const EXECUTABLE_PATTERN_PACK_SCHEMA_VERSION: &str = "seiri.executable-pattern-pack.v2";
 pub const MAX_EXECUTABLE_FIXTURES: usize = 512;
 pub const MAX_FIXTURE_EXPECTATIONS: usize = 64;
 pub const MAX_DATA_PATTERN_DEFINITIONS: usize = 256;

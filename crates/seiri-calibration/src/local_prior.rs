@@ -9,7 +9,7 @@ use std::fs;
 use std::num::NonZeroU64;
 use std::path::Path;
 
-pub const LOCAL_PRIOR_SCHEMA_VERSION: &str = "seiri.local-calibration-priors.v1";
+pub const LOCAL_PRIOR_SCHEMA_VERSION: &str = "seiri.local-calibration-priors.v2";
 const MAX_LOCAL_PRIOR_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_LOCAL_PRIORS: usize = 4096;
 const MAX_RULE_ID_BYTES: usize = 128;
@@ -17,12 +17,23 @@ const MAX_RULE_ID_BYTES: usize = 128;
 pub struct LocalCalibrationProvider {
     priors: BTreeMap<CalibrationKey, AggregatePrior>,
     registry_fingerprint: Box<str>,
+    source_bytes: u64,
 }
 
 impl LocalCalibrationProvider {
     #[must_use]
     pub fn registry_fingerprint(&self) -> &str {
         &self.registry_fingerprint
+    }
+
+    #[must_use]
+    pub const fn source_bytes(&self) -> u64 {
+        self.source_bytes
+    }
+
+    #[must_use]
+    pub fn prior_count(&self) -> usize {
+        self.priors.len()
     }
 }
 
@@ -183,5 +194,6 @@ pub fn load_local_calibration_provider_for_registry(
     Ok(LocalCalibrationProvider {
         priors,
         registry_fingerprint: wire.registry_fingerprint.into_boxed_str(),
+        source_bytes: bytes.len() as u64,
     })
 }

@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.executable-pattern-pack.v2",
+  "owner": "seiri-patterns::ExecutablePatternPack",
+  "compatibility": "v2-only",
+  "adoption": "maintainer_review_required"
+}

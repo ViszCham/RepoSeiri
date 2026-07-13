@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.completion.v1",
+  "owner": "xtask::CompletionRecord",
+  "required": ["schema_version", "state", "checks", "required_hosts", "skipped_checks"],
+  "allowed_states": ["ready_for_git", "incomplete"]
+}

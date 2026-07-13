@@ -108,22 +108,27 @@ fn diagnostic_unknown_reason(
     ) {
         return None;
     }
-    documents.scanned_documents().find_map(|entry| {
-        entry
-            .scan
-            .as_ref()?
-            .diagnostics()
-            .iter()
-            .find_map(|diagnostic| match diagnostic.kind {
-                DocumentDiagnosticKind::UnsupportedHtml => Some(UnknownReason::UnsupportedSyntax),
-                DocumentDiagnosticKind::HtmlAttributeLimitExceeded => {
-                    Some(UnknownReason::LimitExceeded)
-                }
-                DocumentDiagnosticKind::UnclosedLinkLabel
-                | DocumentDiagnosticKind::UnclosedLinkTarget
-                | DocumentDiagnosticKind::UnresolvedReferenceLink => None,
-            })
-    })
+    documents
+        .scanned_documents()
+        .filter(|entry| slot_allows_document(spec, entry))
+        .find_map(|entry| {
+            entry
+                .scan
+                .as_ref()?
+                .diagnostics()
+                .iter()
+                .find_map(|diagnostic| match diagnostic.kind {
+                    DocumentDiagnosticKind::UnsupportedHtml => {
+                        Some(UnknownReason::UnsupportedSyntax)
+                    }
+                    DocumentDiagnosticKind::HtmlAttributeLimitExceeded => {
+                        Some(UnknownReason::LimitExceeded)
+                    }
+                    DocumentDiagnosticKind::UnclosedLinkLabel
+                    | DocumentDiagnosticKind::UnclosedLinkTarget
+                    | DocumentDiagnosticKind::UnresolvedReferenceLink => None,
+                })
+        })
 }
 
 fn matching_evidence(
@@ -143,6 +148,9 @@ fn matching_evidence(
         .collect::<Vec<_>>();
 
     for entry in documents.scanned_documents() {
+        if !slot_allows_document(spec, entry) {
+            continue;
+        }
         let Some(scan) = entry.scan.as_ref() else {
             continue;
         };
@@ -158,6 +166,21 @@ fn matching_evidence(
     evidence.sort_unstable();
     evidence.dedup();
     evidence
+}
+
+fn slot_allows_document(spec: &ContentSlotSpec, entry: &seiri_core::IndexedDocument) -> bool {
+    if !spec.document_roles.contains(entry.role) {
+        return false;
+    }
+    match spec.scope {
+        seiri_core::CoverageScope::RootReadme => entry.role == seiri_core::DocumentRole::RootReadme,
+        seiri_core::CoverageScope::MarkdownDocuments => entry.scope_class.is_repository_content(),
+        seiri_core::CoverageScope::DocumentRole(role) => entry.role == role,
+        seiri_core::CoverageScope::Document(document) => entry.document_id == Some(document),
+        seiri_core::CoverageScope::RepositoryFiles | seiri_core::CoverageScope::RemoteMetadata => {
+            false
+        }
+    }
 }
 
 fn searchable_event(event: &DocumentEvent) -> Option<(MarkdownEvidenceKind, SourceSpan, String)> {
@@ -215,6 +238,9 @@ fn structural_pairs(
 ) -> Vec<BilingualStructuralPair> {
     let mut pairs = Vec::new();
     for entry in documents.scanned_documents() {
+        if !entry.scope_class.is_repository_content() {
+            continue;
+        }
         let Some(scan) = entry.scan.as_ref() else {
             continue;
         };

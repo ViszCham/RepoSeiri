@@ -24,7 +24,7 @@ jobs:
   rust:
     name: Rust workspace
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -74,4 +74,98 @@ jobs:
         with:
           name: reposeiri-self-audit
           path: target/reposeiri-self-audit/*
+          if-no-files-found: error
+
+  plugin-bundle:
+    name: Plugin bundle (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: target/release/seiri
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: target/release/seiri.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Select Rust toolchain
+        run: rustup default stable
+
+      - name: Build standalone binary
+        run: cargo build --release -p seiri-cli
+
+      - name: Test standalone launcher
+        run: cargo test -p seiri-cli --test standalone_launcher
+
+      - name: Build plugin bundle
+        run: cargo run --quiet -p xtask -- bundle --target ${{ matrix.target }} --binary ${{ matrix.binary }} --output target/reposeiri-bundle-${{ matrix.target }}
+
+      - name: Smoke bundled launcher on Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p target/unrelated-repository
+          printf '# Unrelated\n' > target/unrelated-repository/README.md
+          cd target/unrelated-repository
+          sh ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.sh --path . --query summary --format json
+
+      - name: Smoke bundled launcher on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target/unrelated-repository | Out-Null
+          Set-Content target/unrelated-repository/README.md '# Unrelated'
+          Push-Location target/unrelated-repository
+          & ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.ps1 -Path . -Query summary -Format json
+          Pop-Location
+
+      - name: Upload plugin bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: reposeiri-plugin-${{ matrix.target }}
+          path: target/reposeiri-bundle-${{ matrix.target }}/reposeiri
+          if-no-files-found: error
+
+  completion:
+    name: Completion gate
+    needs:
+      - rust
+      - plugin-bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.76.0 --profile minimal
+          rustup default stable
+
+      - name: Download host evidence
+        uses: actions/download-artifact@v7
+        with:
+          pattern: reposeiri-plugin-*
+          path: target/host-evidence
+
+      - name: Run completion gate
+        run: cargo run --quiet -p xtask -- completion --format json --host-evidence target/host-evidence | tee target/completion.json
+
+      - name: Upload completion record
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: reposeiri-completion
+          path: target/completion.json
           if-no-files-found: error

@@ -1,0 +1,6 @@
+{
+  "schema_version": "seiri.calibration.v2",
+  "owner": "seiri-calibration::CalibrationRun",
+  "compatibility": "v2-only",
+  "claim_boundary": "local_calibration_is_review_evidence_not_performance_proof"
+}

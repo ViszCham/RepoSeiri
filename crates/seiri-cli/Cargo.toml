@@ -10,10 +10,11 @@ publish.workspace = true
 clap.workspace = true
 seiri-core = { path = "../seiri-core" }
 seiri-report = { path = "../seiri-report" }
+serde_json.workspace = true
 
 [[bin]]
 name = "seiri"
 path = "src/main.rs"
 
 [dev-dependencies]
-serde_json.workspace = true
+tempfile.workspace = true
