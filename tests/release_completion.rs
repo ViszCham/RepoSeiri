@@ -50,6 +50,8 @@ fn plugin_surface_has_no_workspace_or_cargo_runtime_fallback() {
 fn completion_ci_and_fuzz_surfaces_cover_required_hosts_and_boundaries() {
     let ci = read(".github/workflows/ci.yml");
     assert!(ci.contains("cargo run --quiet -p xtask -- completion --format json"));
+    assert!(ci.contains("cargo audit"));
+    assert!(ci.contains("- dependency-audit"));
     assert!(ci.contains("x86_64-unknown-linux-gnu"));
     assert!(ci.contains("x86_64-pc-windows-msvc"));
     assert!(
@@ -71,6 +73,17 @@ fn completion_ci_and_fuzz_surfaces_cover_required_hosts_and_boundaries() {
             .join(format!("{target}.rs"))
             .is_file());
     }
+}
+
+#[test]
+fn security_dependency_floor_and_msrv_are_explicit() {
+    let workspace = read("Cargo.toml");
+    assert!(workspace.contains("rust-version = \"1.88\""));
+    assert!(workspace.contains("gix = { version = \"=0.83.0\""));
+    assert!(workspace.contains("time = \"=0.3.47\""));
+
+    let ci = read(".github/workflows/ci.yml");
+    assert!(ci.contains("cargo +1.88.0 check --workspace --all-targets --locked"));
 }
 
 #[test]

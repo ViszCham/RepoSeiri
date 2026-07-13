@@ -186,7 +186,7 @@ fn observe_references(
             tags_seen += 1;
         }
         let target = match reference.target() {
-            gix::refs::TargetRef::Peeled(id) => id.to_string(),
+            gix::refs::TargetRef::Object(id) => id.to_string(),
             gix::refs::TargetRef::Symbolic(name) => name.as_bstr().to_str_lossy().into_owned(),
         };
         observation
@@ -217,7 +217,9 @@ fn observe_commits(
     };
     let walk = repository
         .rev_walk([head.detach()])
-        .sorting(gix::traverse::commit::simple::Sorting::ByCommitTimeNewestFirst)
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            Default::default(),
+        ))
         .use_commit_graph(false)
         .all();
     let Ok(walk) = walk else {
@@ -340,7 +342,7 @@ mod tests {
         let signature = gix::actor::SignatureRef {
             name: b"RepoSeiri".as_bstr(),
             email: b"local@example.invalid".as_bstr(),
-            time: gix::date::Time::new(1_700_000_000, 5_400),
+            time: "1700000000 +0130",
         };
         repository
             .commit_as(

@@ -47,8 +47,8 @@ jobs:
 
       - name: Check minimum supported Rust version
         run: |
-          rustup toolchain install 1.76.0 --profile minimal
-          cargo +1.76.0 check --workspace --all-targets --locked
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 check --workspace --all-targets --locked
 
       - name: Prepare RepoSeiri self-audit artifacts
         run: mkdir -p target/reposeiri-self-audit
@@ -75,6 +75,27 @@ jobs:
           name: reposeiri-self-audit
           path: target/reposeiri-self-audit/*
           if-no-files-found: error
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Select Rust toolchain
+        run: rustup default stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Audit locked dependencies
+        run: cargo audit
 
   plugin-bundle:
     name: Plugin bundle (${{ matrix.target }})
@@ -139,6 +160,7 @@ jobs:
     name: Completion gate
     needs:
       - rust
+      - dependency-audit
       - plugin-bundle
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -150,7 +172,7 @@ jobs:
       - name: Install Rust toolchains
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup toolchain install 1.76.0 --profile minimal
+          rustup toolchain install 1.88.0 --profile minimal
           rustup default stable
 
       - name: Download host evidence
