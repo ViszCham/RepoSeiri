@@ -26,6 +26,16 @@
 - benchmark aggregate の数値は、初期設計の重み付けとして扱い、実測済みの完全証明として扱いません。
 - ユーザーや別作業の未関係な変更を戻さないでください。
 
+### RCBP-v1 一括完成実装
+
+- ユーザーが `RCBP-v1でCF0-CF7を一括実装してください`、または同じ意味の指示を出した場合、[Roadmap v6](docs/design/roadmap-v6-completion.md)、[RCBP-v1](docs/design/completion-batch-protocol.md)、[機械可読 template](docs/design/rcbp-v1-template.json) をこの順で読みます。
+- trigger は CF0-CF7 の source、test、fixture、公開文書を変更する `MutationAuthority` と、必要なlocal verificationを実行する `TestAuthority` を付与します。
+- trigger だけでは commit、push、merge、release、plugin再インストール、Codex再起動、repository visibility変更の権限を付与しません。これらは個別の明示指示を必要とします。
+- 実装前にbase HEAD、worktree、roadmap digest、既存変更の所有境界を確認し、内部sliceへ分解します。同時に進行中にするsliceは一つだけです。
+- execution ledgerは `target/rcbp/<execution-id>/state.json` に置き、source本文、private analysis本文、credential、private calibration値を保存しません。
+- sliceごとにtargeted verificationを行い、block間の失敗は契約ownerへbackflowします。blocking checkをskipした状態を完成と呼びません。
+- 最終状態は `ready_for_git` または `incomplete` です。`ready_for_git` はGit操作の許可ではありません。
+
 ---
 
 ## English
@@ -53,3 +63,13 @@ Work in this repository while preserving the fixed premises for RepoSeiri.
 - After implementation is added, run the relevant Rust verification commands.
 - Treat benchmark aggregate numbers as initial design weights, not as measured complete proof.
 - Do not revert unrelated changes made by the user or by other work.
+
+### RCBP-v1 Completion Batch
+
+- When the user says `Implement CF0-CF7 as one batch under RCBP-v1`, `RCBP-v1でCF0-CF7を一括実装してください`, or gives an equivalent instruction, read [Roadmap v6](docs/design/roadmap-v6-completion.md), [RCBP-v1](docs/design/completion-batch-protocol.md), and the [machine-readable template](docs/design/rcbp-v1-template.json) in that order.
+- The trigger grants `MutationAuthority` for CF0-CF7 source, tests, fixtures, and public documentation, plus `TestAuthority` for the required local verification.
+- The trigger alone does not grant authority to commit, push, merge, release, reinstall the plugin, restart Codex, or change repository visibility. Each requires a separate explicit instruction.
+- Before editing, record the base HEAD, worktree state, roadmap digest, and ownership boundary for existing changes, then expand the blocks into internal slices. Keep at most one slice in progress.
+- Store the execution ledger at `target/rcbp/<execution-id>/state.json`. Do not store source bodies, private-analysis bodies, credentials, or private-calibration values in it.
+- Run targeted verification for every slice and backflow cross-block failures to the contract owner. Never call a run complete after skipping a blocking check.
+- The only final states are `ready_for_git` and `incomplete`. `ready_for_git` does not authorize Git operations.
