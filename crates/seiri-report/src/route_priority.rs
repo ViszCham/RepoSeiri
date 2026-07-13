@@ -656,7 +656,7 @@ fn route_availability(snapshot: &RepositoryAnalysis, route: RouteKind) -> RouteA
         && snapshot
             .coverage
             .record(CoverageScope::RootReadme)
-            .map_or(true, |record| record.status != CoverageStatus::Complete)
+            .is_none_or(|record| record.status != CoverageStatus::Complete)
     {
         RouteAvailability::Unknown
     } else {

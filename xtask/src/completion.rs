@@ -21,7 +21,7 @@ const CHECKS: &[CheckSpec] = &[
     ),
     CheckSpec::cargo_toolchain(
         "msrv",
-        "+1.76.0",
+        "+1.88.0",
         &["check", "--workspace", "--all-targets", "--locked"],
     ),
     CheckSpec::cargo(
