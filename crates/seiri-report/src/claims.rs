@@ -1,6 +1,7 @@
 use seiri_core::{
-    route_meaning_rule, ClaimStrength, ContentClaim, EvidenceId, MeaningAtom, MissingRoutePriority,
-    RepositoryAnalysis, RouteAssessment, RouteState,
+    resolve_claim_boundaries, route_meaning_rule, ClaimStrength, ContentClaim, EvidenceId,
+    MeaningAtom, MeaningMask, MissingRoutePriority, RepositoryAnalysis, RouteAssessment,
+    RouteState,
 };
 
 pub(crate) fn build_content_claims(snapshot: &RepositoryAnalysis) -> Vec<ContentClaim> {
@@ -25,6 +26,12 @@ fn push_route_claim(claims: &mut Vec<ContentClaim>, assessment: &RouteAssessment
     }
 
     let rule = route_meaning_rule(assessment.route(), summary.state);
+    let boundaries = resolve_claim_boundaries(
+        assessment.route(),
+        summary.state,
+        route_state_strength(summary.state),
+        MeaningMask::from_atoms(rule.indicates),
+    );
     let index = claims.len() + 1;
     claims.push(ContentClaim::new(
         index,
@@ -33,7 +40,7 @@ fn push_route_claim(claims: &mut Vec<ContentClaim>, assessment: &RouteAssessment
         route_state_strength(summary.state),
         evidence_ids,
         rule.indicates.to_vec(),
-        rule.does_not_indicate.to_vec(),
+        boundaries.to_vec(),
     ));
 }
 
@@ -48,6 +55,12 @@ fn push_priority_claim(claims: &mut Vec<ContentClaim>, priority: &MissingRoutePr
     if !allowed_meanings.contains(&MeaningAtom::CalibrationCandidate) {
         allowed_meanings.push(MeaningAtom::CalibrationCandidate);
     }
+    let boundaries = resolve_claim_boundaries(
+        priority.route,
+        priority.state,
+        ClaimStrength::Suggested,
+        MeaningMask::from_atoms(&allowed_meanings),
+    );
 
     let index = claims.len() + 1;
     claims.push(ContentClaim::new(
@@ -57,7 +70,7 @@ fn push_priority_claim(claims: &mut Vec<ContentClaim>, priority: &MissingRoutePr
         ClaimStrength::Suggested,
         evidence_ids,
         allowed_meanings,
-        rule.does_not_indicate.to_vec(),
+        boundaries.to_vec(),
     ));
 }
 

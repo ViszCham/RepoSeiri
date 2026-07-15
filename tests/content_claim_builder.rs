@@ -36,7 +36,7 @@ fn route_state_claims_are_evidence_linked() {
     assert!(docs
         .boundaries
         .contains(&ClaimBoundaryKind::NotQualityGuarantee));
-    assert!(docs
+    assert!(!docs
         .boundaries
         .contains(&ClaimBoundaryKind::NotTrustGuarantee));
 }

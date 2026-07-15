@@ -33,20 +33,20 @@ fn verified_security_route_does_not_become_a_guarantee() {
         .contains(&MeaningAtom::RepositoryLocalTargetPresent));
 
     for boundary in [
-        ClaimBoundaryKind::NotPopularityGuarantee,
-        ClaimBoundaryKind::NotTrustGuarantee,
         ClaimBoundaryKind::NotSecurityGuarantee,
-        ClaimBoundaryKind::NotQualityGuarantee,
-        ClaimBoundaryKind::NotLegalFitnessGuarantee,
-        ClaimBoundaryKind::NotMaintenanceGuarantee,
-        ClaimBoundaryKind::NotRuntimeVerification,
-        ClaimBoundaryKind::NotPublicationReadiness,
+        ClaimBoundaryKind::NotProductionReadiness,
     ] {
         assert!(
             rule.does_not_indicate.contains(&boundary),
             "missing boundary: {boundary:?}"
         );
     }
+    assert!(!rule
+        .does_not_indicate
+        .contains(&ClaimBoundaryKind::NotPopularityGuarantee));
+    assert!(!rule
+        .does_not_indicate
+        .contains(&ClaimBoundaryKind::NotLegalFitnessGuarantee));
 }
 
 #[test]
@@ -74,15 +74,15 @@ fn route_meaning_rule_serializes_to_stable_json_surface() {
     assert_eq!(json["route"], "docs");
     assert_eq!(json["state"], "structured");
     assert_eq!(json["indicates"][0], "structured_file_present");
-    assert_eq!(json["does_not_indicate"][0], "not_popularity_guarantee");
+    assert_eq!(json["does_not_indicate"][0], "not_quality_guarantee");
 }
 
 #[test]
 fn non_claim_boundaries_are_available_from_route_state_pair() {
     let boundaries = route_state_does_not_indicate(RouteKind::License, RouteState::Verified);
     assert!(boundaries.contains(&ClaimBoundaryKind::NotLegalAdvice));
-    assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticPolicyAdoption));
-    assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticWeightAdoption));
+    assert!(boundaries.contains(&ClaimBoundaryKind::NotLegalFitnessGuarantee));
+    assert!(!boundaries.contains(&ClaimBoundaryKind::NotAutomaticWeightAdoption));
 }
 
 #[test]
