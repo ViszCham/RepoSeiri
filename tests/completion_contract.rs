@@ -15,7 +15,7 @@ fn public_contract_is_v2_only() {
     assert_eq!(PATCH_PLAN_SCHEMA_VERSION, "seiri.patch-plan.v2");
     assert_eq!(CODEX_SCHEMA_VERSION, "seiri.codex.v2");
     assert_eq!(ERROR_SCHEMA_VERSION, "seiri.error.v1");
-    assert_eq!(COMPLETION_SCHEMA_VERSION, "seiri.completion.v1");
+    assert_eq!(COMPLETION_SCHEMA_VERSION, "seiri.completion.v2");
 
     let manifest = ContractManifest::current("1.0.0");
     let json = serde_json::to_string(&manifest).expect("contract JSON");
@@ -23,6 +23,14 @@ fn public_contract_is_v2_only() {
     assert!(!json.contains("patch-plan.v1"));
     assert!(!json.contains("codex.v1"));
     assert!(manifest.compatibility.starts_with("v2-only"));
+    assert_eq!(
+        manifest.semantic_revisions.claim_projection,
+        seiri_core::CLAIM_SEMANTIC_REVISION
+    );
+    assert_eq!(
+        manifest.semantic_revisions.patch_planner,
+        "seiri.patch-planner.v3"
+    );
 }
 
 #[test]
@@ -32,13 +40,19 @@ fn active_schema_snapshots_match_owned_constants() {
         ("seiri.patch-plan.v2.json", PATCH_PLAN_SCHEMA_VERSION),
         ("seiri.codex.v2.json", CODEX_SCHEMA_VERSION),
         ("seiri.error.v1.json", ERROR_SCHEMA_VERSION),
-        ("seiri.completion.v1.json", COMPLETION_SCHEMA_VERSION),
+        ("seiri.completion.v2.json", COMPLETION_SCHEMA_VERSION),
     ];
     for (file, expected) in cases {
         let body = fs::read_to_string(repository_root().join("schemas").join(file))
             .expect("schema snapshot");
         let value: serde_json::Value = serde_json::from_str(&body).expect("valid schema JSON");
         assert_eq!(value["schema_version"], expected);
+        assert_eq!(
+            value["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(value["type"], "object");
+        assert_eq!(value["properties"]["schema_version"]["const"], expected);
         assert_ne!(value["compatibility"], "v1-compatible");
     }
     for (file, expected) in [
@@ -56,6 +70,11 @@ fn active_schema_snapshots_match_owned_constants() {
             .expect("extension schema snapshot");
         let value: serde_json::Value = serde_json::from_str(&body).expect("valid schema JSON");
         assert_eq!(value["schema_version"], expected);
+        assert_eq!(
+            value["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(value["properties"]["schema_version"]["const"], expected);
         assert_eq!(value["compatibility"], "v2-only");
     }
 }

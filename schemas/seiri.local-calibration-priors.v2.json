@@ -1,6 +1,18 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.local-calibration-priors.v2.json",
+  "title": "RepoSeiri local calibration priors v2",
   "schema_version": "seiri.local-calibration-priors.v2",
   "owner": "seiri-calibration::LocalCalibrationProvider",
   "compatibility": "v2-only",
-  "visibility": "local_only"
+  "visibility": "local_only",
+  "type": "object",
+  "required": ["schema_version", "registry_fingerprint", "priors"],
+  "properties": {
+    "schema_version": { "const": "seiri.local-calibration-priors.v2" },
+    "registry_fingerprint": { "type": "string" },
+    "_private_note": { "type": "string" },
+    "priors": { "type": "array", "maxItems": 4096 }
+  },
+  "additionalProperties": false
 }

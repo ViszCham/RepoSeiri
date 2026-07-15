@@ -49,7 +49,7 @@ fn plugin_surface_has_no_workspace_or_cargo_runtime_fallback() {
 #[test]
 fn completion_ci_and_fuzz_surfaces_cover_required_hosts_and_boundaries() {
     let ci = read(".github/workflows/ci.yml");
-    assert!(ci.contains("cargo run --quiet -p xtask -- completion --format json"));
+    assert!(ci.contains("cargo run --locked --quiet -p xtask -- completion --format json"));
     assert!(ci.contains("cargo audit"));
     assert!(ci.contains("- dependency-audit"));
     assert!(ci.contains("x86_64-unknown-linux-gnu"));

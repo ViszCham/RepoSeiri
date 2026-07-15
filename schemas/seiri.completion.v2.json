@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.completion.v2.json",
+  "title": "RepoSeiri completion record v2",
+  "schema_version": "seiri.completion.v2",
+  "owner": "xtask::CompletionRecord",
+  "compatibility": "v2-only",
+  "type": "object",
+  "required": ["schema_version", "state", "tool_version", "source", "checks", "required_hosts", "skipped_checks", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.completion.v2" },
+    "state": { "enum": ["ready_for_git", "incomplete"] },
+    "tool_version": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["git_head", "worktree_dirty", "source_digest", "cargo_lock_digest"],
+      "properties": {
+        "git_head": { "type": "string" },
+        "worktree_dirty": { "type": "boolean" },
+        "source_digest": { "$ref": "#/$defs/sha256" },
+        "cargo_lock_digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "required_hosts": { "type": "array" },
+    "skipped_checks": { "type": "array", "items": { "type": "string" } },
+    "boundary": { "type": "string" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "check": {
+      "type": "object",
+      "required": ["name", "status", "elapsed_ms", "command"],
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "enum": ["passed", "failed", "could_not_start"] },
+        "exit_code": { "type": ["integer", "null"] },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

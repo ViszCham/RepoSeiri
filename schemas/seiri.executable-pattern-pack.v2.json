@@ -1,6 +1,19 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.executable-pattern-pack.v2.json",
+  "title": "RepoSeiri executable pattern pack v2",
   "schema_version": "seiri.executable-pattern-pack.v2",
   "owner": "seiri-patterns::ExecutablePatternPack",
   "compatibility": "v2-only",
-  "adoption": "maintainer_review_required"
+  "adoption": "maintainer_review_required",
+  "type": "object",
+  "required": ["schema_version", "id", "version", "definitions", "fixtures"],
+  "properties": {
+    "schema_version": { "const": "seiri.executable-pattern-pack.v2" },
+    "id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "definitions": { "type": "array" },
+    "fixtures": { "type": "array" }
+  },
+  "additionalProperties": false
 }

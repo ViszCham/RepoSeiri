@@ -1,6 +1,18 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.codex.v2.json",
+  "title": "RepoSeiri Codex query v2",
   "schema_version": "seiri.codex.v2",
   "owner": "seiri-codex::CodexQuery",
   "compatibility": "v2-only",
-  "mutation": "bounded_projection_only"
+  "mutation": "bounded_projection_only",
+  "type": "object",
+  "required": ["schema_version", "repo_root", "query", "actions", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.codex.v2" },
+    "repo_root": { "const": "." },
+    "query": { "type": "object" },
+    "actions": { "type": "array" },
+    "boundary": { "type": "string" }
+  }
 }

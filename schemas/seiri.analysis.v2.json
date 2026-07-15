@@ -1,6 +1,21 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.analysis.v2.json",
+  "title": "RepoSeiri repository analysis v2",
   "schema_version": "seiri.analysis.v2",
   "owner": "seiri-core::RepositoryAnalysis",
   "compatibility": "v2-only",
-  "partial_coverage": "unknown_or_partial_never_implies_absence"
+  "partial_coverage": "unknown_or_partial_never_implies_absence",
+  "type": "object",
+  "required": ["schema_version", "tool", "repo_root", "coverage", "evidence_kernel", "route_assessments", "claims"],
+  "properties": {
+    "schema_version": { "const": "seiri.analysis.v2" },
+    "tool": { "type": "string" },
+    "repo_root": { "const": "." },
+    "coverage": { "type": "object" },
+    "evidence_kernel": { "type": "object" },
+    "route_assessments": { "type": "array" },
+    "claims": { "type": "array" },
+    "claim_projections": { "type": "array" }
+  }
 }
