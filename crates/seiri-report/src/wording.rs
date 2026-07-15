@@ -279,7 +279,7 @@ fn generated_report_targets(
             source: WordingLintSourceKind::GeneratedReport,
             path: "generated/codex.md".to_string(),
             text: seiri_codex::render_query_markdown(
-                &view.query(seiri_codex::CodexQueryKind::Summary),
+                &view.query(seiri_codex::CodexQueryKind::Governance),
             ),
         },
     ])
