@@ -130,6 +130,17 @@ fn patch_plan_only_links_existing_targets_and_binding_rejects_stale_bytes() {
         .find(|item| item.route == RouteKind::Docs)
         .unwrap();
     assert_eq!(operation.target_path, "docs/");
+    assert_eq!(operation.decision_basis.gate, seiri_core::GateKind::Safe);
+    assert!(!operation.decision_basis.claim_ids.is_empty());
+    assert!(!operation.decision_basis.evidence_fingerprints.is_empty());
+    assert_eq!(
+        operation.decision_basis.claim_semantic_revision,
+        seiri_core::CLAIM_SEMANTIC_REVISION
+    );
+    assert_eq!(
+        operation.decision_basis.planner_semantic_revision,
+        "seiri.patch-planner.v3"
+    );
     assert!(!plan.writes_files);
     let stale = b"# Demo changed\n";
     assert_ne!(

@@ -30,15 +30,20 @@ pub use calibration_prior::{
     CalibrationUnavailableReason, NoCalibrationProvider, PriorBasis, PriorVisibility,
 };
 pub use claim_calibration::{
-    calibrate_content_claim, evaluate_underclaim_loss, resolve_claim_boundaries,
-    route_claim_boundaries, CalibratedClaimProjection, ClaimAssertion, ClaimAssertionKind,
-    ClaimBoundaryMask, ClaimEvidencePosture, ClaimProjectionCandidate, MeaningMask,
-    ProjectedAssertionLevel, UnderclaimCauseMask, UnderclaimLoss,
+    calibrate_content_claim, evaluate_projection_admissibility, evaluate_underclaim_loss,
+    project_content_claim, resolve_claim_boundaries, route_claim_boundaries,
+    CalibratedClaimProjection, ClaimAssertion, ClaimAssertionKind, ClaimBoundaryMask,
+    ClaimEvidencePosture, ClaimProjectionCandidate, ContentClaimProjection, MeaningMask,
+    ProjectedAssertionLevel, ProjectionAdmissibility, ProjectionRejectMask, ProjectionRejectReason,
+    UnderclaimCauseMask, UnderclaimLoss, CLAIM_SEMANTIC_REVISION,
 };
 
-pub use codex_view::{CodexAction, CodexCommand, CodexCommandError, CODEX_SCHEMA_VERSION};
+pub use codex_view::{
+    CodexAction, CodexCommand, CodexCommandError, CodexExecutableRole, CodexRuntimeRequirement,
+    CodexRuntimeResolver, CODEX_SCHEMA_VERSION,
+};
 pub use contracts::{
-    ContractManifest, ErrorClass, ErrorEnvelope, COMPLETION_SCHEMA_VERSION,
+    ContractManifest, ErrorClass, ErrorEnvelope, SemanticRevisions, COMPLETION_SCHEMA_VERSION,
     CONTRACT_SCHEMA_VERSION, ERROR_SCHEMA_VERSION,
 };
 pub use document_index::{
@@ -554,7 +559,22 @@ pub struct ReadmeRouteTarget {
     pub line: usize,
     pub source: RouteSource,
     pub status: ReadmeRouteTargetStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<RouteTargetRejection>,
     pub routes: Vec<RouteKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteTargetRejection {
+    Absolute,
+    EscapesRepository,
+    InvalidPercentEncoding,
+    InvalidUtf8,
+    NonPortableSeparator,
+    NonPortablePrefix,
+    SymlinkEscape,
+    ProbeFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1533,15 +1553,14 @@ pub struct ClaimBoundary {
     pub blocked_claims: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentClaim {
-    pub id: ClaimId,
-    pub route: RouteKind,
-    pub state: RouteState,
-    pub strength: ClaimStrength,
-    pub evidence_ids: Vec<EvidenceId>,
-    pub allowed_meanings: Vec<MeaningAtom>,
-    pub boundaries: Vec<ClaimBoundaryKind>,
+    id: ClaimId,
+    route: RouteKind,
+    state: RouteState,
+    strength: ClaimStrength,
+    evidence_ids: Vec<EvidenceId>,
+    allowed_meanings: Vec<MeaningAtom>,
 }
 
 impl ContentClaim {
@@ -1553,17 +1572,168 @@ impl ContentClaim {
         strength: ClaimStrength,
         evidence_ids: Vec<EvidenceId>,
         allowed_meanings: Vec<MeaningAtom>,
-        boundaries: Vec<ClaimBoundaryKind>,
     ) -> Self {
-        Self {
+        Self::try_new(
+            index,
+            route,
+            state,
+            strength,
+            evidence_ids,
+            allowed_meanings,
+        )
+        .expect("content claim constructor requires canonical evidence")
+    }
+
+    pub fn try_new(
+        index: usize,
+        route: RouteKind,
+        state: RouteState,
+        strength: ClaimStrength,
+        mut evidence_ids: Vec<EvidenceId>,
+        allowed_meanings: Vec<MeaningAtom>,
+    ) -> Result<Self, ContentClaimInvariantError> {
+        if strength == ClaimStrength::Observed && evidence_ids.is_empty() {
+            return Err(ContentClaimInvariantError::ObservedWithoutEvidence);
+        }
+        evidence_ids.sort_unstable();
+        evidence_ids.dedup();
+        let allowed_meanings = MeaningMask::from_atoms(&allowed_meanings)
+            .iter()
+            .collect::<Vec<_>>();
+        Ok(Self {
             id: stable_claim_id(index),
             route,
             state,
             strength,
             evidence_ids,
             allowed_meanings,
-            boundaries,
+        })
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &ClaimId {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn route(&self) -> RouteKind {
+        self.route
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> RouteState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn strength(&self) -> ClaimStrength {
+        self.strength
+    }
+
+    #[must_use]
+    pub fn evidence_ids(&self) -> &[EvidenceId] {
+        &self.evidence_ids
+    }
+
+    #[must_use]
+    pub fn allowed_meanings(&self) -> &[MeaningAtom] {
+        &self.allowed_meanings
+    }
+
+    #[must_use]
+    pub fn boundaries(&self) -> Vec<ClaimBoundaryKind> {
+        resolve_claim_boundaries(
+            self.route,
+            self.state,
+            self.strength,
+            MeaningMask::from_atoms(&self.allowed_meanings),
+        )
+        .to_vec()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentClaimInvariantError {
+    ObservedWithoutEvidence,
+    BoundaryMismatch,
+}
+
+impl std::fmt::Display for ContentClaimInvariantError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ObservedWithoutEvidence => "observed content claim requires evidence",
+            Self::BoundaryMismatch => "content claim boundaries do not match canonical semantics",
+        })
+    }
+}
+
+impl std::error::Error for ContentClaimInvariantError {}
+
+impl Serialize for ContentClaim {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            id: &'a ClaimId,
+            route: RouteKind,
+            state: RouteState,
+            strength: ClaimStrength,
+            evidence_ids: &'a [EvidenceId],
+            allowed_meanings: &'a [MeaningAtom],
+            boundaries: Vec<ClaimBoundaryKind>,
         }
+        Wire {
+            id: &self.id,
+            route: self.route,
+            state: self.state,
+            strength: self.strength,
+            evidence_ids: &self.evidence_ids,
+            allowed_meanings: &self.allowed_meanings,
+            boundaries: self.boundaries(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ContentClaim {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            id: ClaimId,
+            route: RouteKind,
+            state: RouteState,
+            strength: ClaimStrength,
+            evidence_ids: Vec<EvidenceId>,
+            allowed_meanings: Vec<MeaningAtom>,
+            boundaries: Vec<ClaimBoundaryKind>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let index = wire
+            .id
+            .strip_prefix("claim-")
+            .and_then(|value| value.parse::<usize>().ok())
+            .ok_or_else(|| serde::de::Error::custom("content claim id is not canonical"))?;
+        let claim = Self::try_new(
+            index,
+            wire.route,
+            wire.state,
+            wire.strength,
+            wire.evidence_ids,
+            wire.allowed_meanings,
+        )
+        .map_err(serde::de::Error::custom)?;
+        if claim.id != wire.id || claim.boundaries() != wire.boundaries {
+            return Err(serde::de::Error::custom(
+                ContentClaimInvariantError::BoundaryMismatch,
+            ));
+        }
+        Ok(claim)
     }
 }
 
@@ -1723,7 +1893,7 @@ impl<'a> ClaimRefIndex<'a> {
         self.claims
             .iter()
             .filter(|claim| claim.route == route && claim.state == state)
-            .flat_map(|claim| claim.boundaries.iter().copied())
+            .flat_map(|claim| claim.boundaries().into_iter())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -1734,7 +1904,7 @@ impl<'a> ClaimRefIndex<'a> {
         self.claims
             .iter()
             .filter(|claim| claim.route == route)
-            .flat_map(|claim| claim.boundaries.iter().copied())
+            .flat_map(|claim| claim.boundaries().into_iter())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -1745,7 +1915,7 @@ impl<'a> ClaimRefIndex<'a> {
         self.claims
             .iter()
             .filter(|claim| claim_ids.contains(&claim.id))
-            .flat_map(|claim| claim.boundaries.iter().copied())
+            .flat_map(|claim| claim.boundaries().into_iter())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -1755,7 +1925,7 @@ impl<'a> ClaimRefIndex<'a> {
     pub fn boundary_kinds(self) -> Vec<ClaimBoundaryKind> {
         self.claims
             .iter()
-            .flat_map(|claim| claim.boundaries.iter().copied())
+            .flat_map(|claim| claim.boundaries().into_iter())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -1951,10 +2121,10 @@ fn default_observation_count() -> u32 {
 pub use audit_delta::{
     AddExistingRouteLink, AnalysisBudgetConfiguration, AnalysisConfiguration, AnalysisVisibility,
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
-    DeltaUnknownReason, Digest32, ExistingTargetId, ImprovementCandidate, PatchHold,
-    PatchHoldReason, PatchPlan, PortableAuditSnapshot, PortableConflictRecord,
-    PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
-    PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
-    RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION,
-    PORTABLE_AUDIT_SCHEMA_VERSION,
+    DeltaUnknownReason, Digest32, EvidenceFingerprint, ExistingTargetId, ImprovementCandidate,
+    PatchDecisionBasis, PatchHold, PatchHoldReason, PatchPlan, PortableAuditSnapshot,
+    PortableConflictRecord, PortableContentSlotRecord, PortableCoverageRecord,
+    PortableDocumentRecord, PortableFacetRecord, PortableObligationRecord,
+    PortableObservationState, PortableRouteRecord, RegressionCandidate, RouteDelta,
+    AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
 };

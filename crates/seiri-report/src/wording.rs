@@ -164,7 +164,7 @@ pub(crate) fn lint_repository_with_profile(
     profile: ProfileKind,
 ) -> Result<WordingLintReport, AuditError> {
     let fs_scan = seiri_fs::scan_repository(path)?;
-    let repo_root = fs_scan.repo_root.to_string_lossy().replace('\\', "/");
+    let repo_root = ".".to_string();
     let mut targets = Vec::new();
 
     for record in &fs_scan.files {

@@ -98,7 +98,7 @@ fn evaluate_expectation(
             let actual_present = snapshot
                 .claims
                 .iter()
-                .any(|claim| claim.boundaries.contains(boundary));
+                .any(|claim| claim.boundaries().contains(boundary));
             (
                 actual_present == *present,
                 FixtureExpectationActual::Boundary {

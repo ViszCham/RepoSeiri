@@ -1,8 +1,28 @@
 use serde::{Deserialize, Serialize};
 
 pub const ERROR_SCHEMA_VERSION: &str = "seiri.error.v1";
-pub const COMPLETION_SCHEMA_VERSION: &str = "seiri.completion.v1";
-pub const CONTRACT_SCHEMA_VERSION: &str = "seiri.contract.v1";
+pub const COMPLETION_SCHEMA_VERSION: &str = "seiri.completion.v2";
+pub const CONTRACT_SCHEMA_VERSION: &str = "seiri.contract.v2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticRevisions {
+    pub repository_identity: String,
+    pub route_target: String,
+    pub claim_projection: String,
+    pub patch_planner: String,
+}
+
+impl Default for SemanticRevisions {
+    fn default() -> Self {
+        Self {
+            repository_identity: "seiri.repository-identity.v2".to_string(),
+            route_target: "seiri.route-target.v3".to_string(),
+            claim_projection: crate::CLAIM_SEMANTIC_REVISION.to_string(),
+            patch_planner: "seiri.patch-planner.v3".to_string(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +76,7 @@ pub struct ContractManifest {
     pub codex_schema: String,
     pub error_schema: String,
     pub completion_schema: String,
+    pub semantic_revisions: SemanticRevisions,
     pub compatibility: String,
 }
 
@@ -70,6 +91,7 @@ impl ContractManifest {
             codex_schema: crate::CODEX_SCHEMA_VERSION.to_string(),
             error_schema: ERROR_SCHEMA_VERSION.to_string(),
             completion_schema: COMPLETION_SCHEMA_VERSION.to_string(),
+            semantic_revisions: SemanticRevisions::default(),
             compatibility: "v2-only; v1 inputs, aliases, and silent conversions are rejected"
                 .to_string(),
         }

@@ -679,7 +679,7 @@ pub fn to_json(snapshot: &RepositoryAnalysis) -> Result<String, AuditError> {
 struct AuditWire<'a> {
     schema_version: &'a str,
     tool: &'a str,
-    repo_root: &'a str,
+    repo_root: &'static str,
     entry_count: usize,
     files: &'a [seiri_core::FileRecord],
     important_files: &'a [seiri_core::ImportantFile],
@@ -702,6 +702,7 @@ struct AuditWire<'a> {
     missing_route_priority: &'a seiri_core::MissingRoutePriorityReport,
     review_priority: &'a seiri_core::ReviewPriorityReport,
     claims: &'a [seiri_core::ContentClaim],
+    claim_projections: Vec<seiri_core::ContentClaimProjection>,
     baseline: Option<&'a seiri_core::BaselineReport>,
     profile: Option<&'a seiri_core::ProfileReport>,
     findings: &'a [seiri_core::Finding],
@@ -712,7 +713,7 @@ impl<'a> From<&'a RepositoryAnalysis> for AuditWire<'a> {
         Self {
             schema_version: &value.schema_version,
             tool: &value.tool,
-            repo_root: &value.repo_root,
+            repo_root: ".",
             entry_count: value.entry_count,
             files: &value.files,
             important_files: &value.important_files,
@@ -735,6 +736,11 @@ impl<'a> From<&'a RepositoryAnalysis> for AuditWire<'a> {
             missing_route_priority: &value.missing_route_priority,
             review_priority: &value.review_priority,
             claims: &value.claims,
+            claim_projections: value
+                .claims
+                .iter()
+                .map(seiri_core::project_content_claim)
+                .collect(),
             baseline: value.baseline.as_ref(),
             profile: value.profile.as_ref(),
             findings: &value.findings,
@@ -1145,7 +1151,7 @@ pub fn plan_to_markdown(plan: &PatchPlan) -> String {
 pub fn to_markdown(analysis: &RepositoryAnalysis) -> String {
     let mut out = String::from("# RepoSeiri Audit\n\n");
     out.push_str(&format!("- Schema: `{}`\n", analysis.schema_version));
-    out.push_str(&format!("- Repository: `{}`\n", analysis.repo_root));
+    out.push_str("- Repository: `.`\n");
     out.push_str(&format!(
         "- Analysis scope: `{:?}`\n",
         analysis.analysis_configuration.scope
@@ -1288,11 +1294,11 @@ pub fn to_markdown(analysis: &RepositoryAnalysis) -> String {
             .join("`, `");
         out.push_str(&format!(
             "- `{}`: {} State `{:?}`; strength `{:?}`; evidence `{}`. Boundaries: `{}`.\n",
-            claim.id,
+            claim.id(),
             projection.assertion.render_sentence(),
-            claim.state,
-            claim.strength,
-            claim.evidence_ids.len(),
+            claim.state(),
+            claim.strength(),
+            claim.evidence_ids().len(),
             boundaries,
         ));
     }

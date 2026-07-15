@@ -1,6 +1,6 @@
 use seiri_core::{
-    calibrate_content_claim, evaluate_underclaim_loss, AggregatePrior, CalibrationKey,
-    CalibrationLookup, CalibrationProvider, ClaimAssertionKind, ClaimBoundaryKind,
+    calibrate_content_claim, evaluate_underclaim_loss, project_content_claim, AggregatePrior,
+    CalibrationKey, CalibrationLookup, CalibrationProvider, ClaimAssertionKind, ClaimBoundaryKind,
     ClaimProjectionCandidate, ClaimStrength, PriorBasis, PriorVisibility, ProjectedAssertionLevel,
     RouteKind, UnderclaimCauseMask,
 };
@@ -21,15 +21,19 @@ fn observed_claims_project_positive_first_at_evidence_strength() {
     let observed = snapshot
         .claims
         .iter()
-        .filter(|claim| claim.strength == ClaimStrength::Observed)
+        .filter(|claim| claim.strength() == ClaimStrength::Observed)
         .collect::<Vec<_>>();
     assert!(!observed.is_empty());
     for claim in observed {
         let projection = calibrate_content_claim(claim);
-        assert!(projection.assertion.kind.is_positive());
+        let machine = project_content_claim(claim);
+        assert!(projection.assertion.kind.has_primary_assertion());
+        assert!(machine.admissible);
+        assert_eq!(machine.claim_id, *claim.id());
+        assert_eq!(machine.evidence_ids, claim.evidence_ids());
         assert_eq!(projection.underclaim_loss.score_x100(), 0);
         assert!(!projection.assertion.render_sentence().is_empty());
-        assert!(!claim.evidence_ids.is_empty());
+        assert!(!claim.evidence_ids().is_empty());
     }
 }
 
@@ -40,7 +44,9 @@ fn claim_local_boundaries_are_relevance_scoped() {
     let docs = snapshot
         .claims
         .iter()
-        .find(|claim| claim.route == RouteKind::Docs && claim.strength == ClaimStrength::Observed)
+        .find(|claim| {
+            claim.route() == RouteKind::Docs && claim.strength() == ClaimStrength::Observed
+        })
         .expect("observed docs claim");
     let docs_projection = calibrate_content_claim(docs);
     assert!(docs_projection
@@ -56,7 +62,7 @@ fn claim_local_boundaries_are_relevance_scoped() {
     let suggested = snapshot
         .claims
         .iter()
-        .find(|claim| claim.strength == ClaimStrength::Suggested)
+        .find(|claim| claim.strength() == ClaimStrength::Suggested)
         .expect("suggested claim");
     let suggested_projection = calibrate_content_claim(suggested);
     assert_eq!(
@@ -78,7 +84,7 @@ fn boundary_only_wording_has_underclaim_loss() {
     let claim = snapshot
         .claims
         .iter()
-        .find(|claim| claim.strength == ClaimStrength::Observed)
+        .find(|claim| claim.strength() == ClaimStrength::Observed)
         .expect("observed claim");
     let loss = evaluate_underclaim_loss(
         claim,
@@ -167,12 +173,12 @@ fn private_calibration_cannot_weaken_observed_claims() {
         snapshot
             .claims
             .iter()
-            .filter(|claim| claim.strength == ClaimStrength::Observed)
+            .filter(|claim| claim.strength() == ClaimStrength::Observed)
             .map(|claim| {
                 let projection = calibrate_content_claim(claim);
                 (
-                    claim.route,
-                    claim.state,
+                    claim.route(),
+                    claim.state(),
                     projection.assertion.kind,
                     projection.underclaim_loss.score_x100(),
                 )
