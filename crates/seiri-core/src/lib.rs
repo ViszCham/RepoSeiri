@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod audit_delta;
 mod calibration_prior;
+mod claim_calibration;
 mod codex_view;
 mod contracts;
 mod document_index;
@@ -27,6 +28,12 @@ mod route_target;
 pub use calibration_prior::{
     AggregatePrior, AggregatePriorError, CalibrationKey, CalibrationLookup, CalibrationProvider,
     CalibrationUnavailableReason, NoCalibrationProvider, PriorBasis, PriorVisibility,
+};
+pub use claim_calibration::{
+    calibrate_content_claim, evaluate_underclaim_loss, resolve_claim_boundaries,
+    route_claim_boundaries, CalibratedClaimProjection, ClaimAssertion, ClaimAssertionKind,
+    ClaimBoundaryMask, ClaimEvidencePosture, ClaimProjectionCandidate, MeaningMask,
+    ProjectedAssertionLevel, UnderclaimCauseMask, UnderclaimLoss,
 };
 
 pub use codex_view::{CodexAction, CodexCommand, CodexCommandError, CODEX_SCHEMA_VERSION};
@@ -1831,22 +1838,6 @@ const MEANING_UNSAFE_TO_INVENT: &[MeaningAtom] = &[
     MeaningAtom::PatchPreviewOnly,
 ];
 
-const ROUTE_NON_CLAIM_BOUNDARIES: &[ClaimBoundaryKind] = &[
-    ClaimBoundaryKind::NotPopularityGuarantee,
-    ClaimBoundaryKind::NotTrustGuarantee,
-    ClaimBoundaryKind::NotSecurityGuarantee,
-    ClaimBoundaryKind::NotQualityGuarantee,
-    ClaimBoundaryKind::NotLegalFitnessGuarantee,
-    ClaimBoundaryKind::NotLegalAdvice,
-    ClaimBoundaryKind::NotMaintenanceGuarantee,
-    ClaimBoundaryKind::NotRuntimeVerification,
-    ClaimBoundaryKind::NotPublicationReadiness,
-    ClaimBoundaryKind::NotOwnerApproval,
-    ClaimBoundaryKind::NotProductionReadiness,
-    ClaimBoundaryKind::NotAutomaticPolicyAdoption,
-    ClaimBoundaryKind::NotAutomaticWeightAdoption,
-];
-
 #[must_use]
 pub fn route_meaning_rule(route: RouteKind, state: RouteState) -> RouteMeaningRule {
     RouteMeaningRule {
@@ -1889,23 +1880,7 @@ pub fn route_state_does_not_indicate(
     state: RouteState,
 ) -> &'static [ClaimBoundaryKind] {
     let _indicates = route_state_indicates(state);
-    match route {
-        RouteKind::Identity
-        | RouteKind::Docs
-        | RouteKind::Quickstart
-        | RouteKind::Support
-        | RouteKind::Intake
-        | RouteKind::Contributing
-        | RouteKind::Security
-        | RouteKind::Release
-        | RouteKind::Lifecycle
-        | RouteKind::Governance
-        | RouteKind::License
-        | RouteKind::Automation
-        | RouteKind::Ownership
-        | RouteKind::Hygiene
-        | RouteKind::Unknown => ROUTE_NON_CLAIM_BOUNDARIES,
-    }
+    route_claim_boundaries(route)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

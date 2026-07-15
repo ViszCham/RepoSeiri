@@ -78,6 +78,8 @@ Patch operations / holds: <count> / <count>
 - `Routed` は、README 内に入口がある状態です。これだけでは repository-local target の存在を示しません。
 - `Weak`、`Overloaded`、`Stale`、`Conflicting` は、入口が薄い、多すぎる、古い、または意図が曖昧な状態です。
 - `Absent` と `UnsafeToInvent` は、RepoSeiri が自動生成すべきではない、または人間の方針決定が先に必要な状態です。
+- observed claim は、evidence が支える肯定文を先に表示し、そのclaimに関連するboundaryだけを続けます。
+- 人気、信頼、安全性、品質、法務適合などの広域保証は、個々の肯定文を消さずにglobal boundaryで遮断します。
 
 ### リポジトリの入口
 
@@ -210,6 +212,8 @@ Local completion returns `incomplete` when required host evidence is missing. CI
 - `Routed` means the README contains an entry point. It does not by itself indicate that a repository-local target exists.
 - `Weak`, `Overloaded`, `Stale`, and `Conflicting` mean the entry point is thin, too broad, old, or ambiguous.
 - `Absent` and `UnsafeToInvent` mean RepoSeiri should not create the route automatically, or that a human policy decision must come first.
+- Observed claims state the evidence-backed positive proposition first, followed only by boundaries relevant to that claim.
+- The global boundary continues to block broad claims about popularity, trust, security, quality, and legal decisions without erasing the local positive statement.
 
 ### Repository Entry Points
 

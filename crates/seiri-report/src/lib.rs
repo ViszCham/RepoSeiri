@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 
 use seiri_core::{
-    CalibrationProvider, CalibrationRun, ClaimRefIndex, ClaimStrength, NoCalibrationProvider,
-    PatchPlan, ProfileKind, RepositoryAnalysis, RouteKind, WordingLintReport,
+    calibrate_content_claim, CalibrationProvider, CalibrationRun, ClaimRefIndex, ClaimStrength,
+    NoCalibrationProvider, PatchPlan, ProfileKind, RepositoryAnalysis, RouteKind,
+    WordingLintReport,
 };
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
@@ -1278,16 +1279,17 @@ pub fn to_markdown(analysis: &RepositoryAnalysis) -> String {
         claim_refs.strength_count(ClaimStrength::Blocked),
     ));
     for claim in &analysis.claims {
-        let boundaries = claim
+        let projection = calibrate_content_claim(claim);
+        let boundaries = projection
             .boundaries
             .iter()
             .map(|boundary| format!("{boundary:?}"))
             .collect::<Vec<_>>()
             .join("`, `");
         out.push_str(&format!(
-            "- `{}`: route `{:?}`; state `{:?}`; strength `{:?}`; evidence `{}`. Boundaries: `{}`.\n",
+            "- `{}`: {} State `{:?}`; strength `{:?}`; evidence `{}`. Boundaries: `{}`.\n",
             claim.id,
-            claim.route,
+            projection.assertion.render_sentence(),
             claim.state,
             claim.strength,
             claim.evidence_ids.len(),

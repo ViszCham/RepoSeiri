@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
 use seiri_core::{
-    stable_id, CodexAction, CodexCommand, ContentClaim, CoverageIndex, DocumentConsistencyReport,
-    DocumentIndex, EvidenceKernel, FacetReport, FreshnessReport, GithubLocalDocuments,
-    GithubSemanticsReport, MissingRoutePriorityReport, PatchPlan, ProfileKind,
-    RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport, RouteAssessment,
-    RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
+    calibrate_content_claim, stable_id, ClaimStrength, CodexAction, CodexCommand, ContentClaim,
+    CoverageIndex, DocumentConsistencyReport, DocumentIndex, EvidenceKernel, FacetReport,
+    FreshnessReport, GithubLocalDocuments, GithubSemanticsReport, MissingRoutePriorityReport,
+    PatchPlan, ProfileKind, RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport,
+    RouteAssessment, RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
@@ -337,8 +337,26 @@ fn build_actions(analysis: &RepositoryAnalysis) -> Vec<CodexAction> {
 
 fn build_pr_body(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexPrBody {
     let summary = summary(analysis, plan);
+    let observed_claims = analysis
+        .claims
+        .iter()
+        .filter(|claim| claim.strength == ClaimStrength::Observed)
+        .count();
+    let examples = analysis
+        .claims
+        .iter()
+        .filter(|claim| claim.strength == ClaimStrength::Observed)
+        .take(3)
+        .map(|claim| {
+            format!(
+                "- {}",
+                calibrate_content_claim(claim).assertion.render_sentence()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let body = format!(
-        "## Summary\n\n- Reviewed {} repository entries and {} typed evidence facts.\n- Recorded {} route assessments and {} content slots.\n- Prepared {} dry-run patch operations; {} items remain held.\n\n## Boundaries\n\nRepoSeiri did not write files, execute commands, call GitHub, create policy text, or establish popularity, trust, security, quality, or publication readiness.\n",
+        "## Summary\n\n- Reviewed {} repository entries and {} typed evidence facts.\n- Recorded {} route assessments and {} content slots.\n- Prepared {} dry-run patch operations; {} items remain held.\n\n## Evidence-backed observations\n\nThe audit emitted {observed_claims} observed claims. Examples:\n\n{examples}\n\n## Boundaries\n\nRepoSeiri did not write files, execute commands, call GitHub, create policy text, or establish popularity, trust, security, quality, or publication readiness.\n",
         summary.entries_scanned,
         summary.evidence_facts,
         summary.route_assessments,
@@ -402,13 +420,31 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
             documents.index.entries().len(),
             documents.github.documents().len(),
         )),
-        CodexQuery::Governance(governance) => out.push_str(&format!(
-            "\n- Facets: `{}`\n- Content slots: `{}`\n- Conflicts: `{}`\n- Claims: `{}`\n",
-            governance.facets.facets.len(),
-            governance.route_content.assessments.len(),
-            governance.consistency.conflicts.len(),
-            governance.claims.len(),
-        )),
+        CodexQuery::Governance(governance) => {
+            out.push_str(&format!(
+                "\n- Facets: `{}`\n- Content slots: `{}`\n- Conflicts: `{}`\n- Claims: `{}`\n\n## Evidence-Backed Claims\n",
+                governance.facets.facets.len(),
+                governance.route_content.assessments.len(),
+                governance.consistency.conflicts.len(),
+                governance.claims.len(),
+            ));
+            for claim in governance.claims {
+                let projection = calibrate_content_claim(claim);
+                let boundaries = projection
+                    .boundaries
+                    .iter()
+                    .map(|boundary| format!("`{boundary:?}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!(
+                    "- `{}`: {} Evidence: `{}`. Claim-local boundaries: {}.\n",
+                    claim.id,
+                    projection.assertion.render_sentence(),
+                    claim.evidence_ids.len(),
+                    boundaries,
+                ));
+            }
+        }
         CodexQuery::Patches(plan) => out.push_str(&format!(
             "\n- Dry-run operations: `{}`\n- Held items: `{}`\n- Writes files: `{}`\n",
             plan.operations.len(),
