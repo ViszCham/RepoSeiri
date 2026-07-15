@@ -1661,6 +1661,7 @@ name = "seiri-markdown"
 version = "1.0.0"
 dependencies = [
  "seiri-core",
+ "seiri-fs",
 ]
 
 [[package]]

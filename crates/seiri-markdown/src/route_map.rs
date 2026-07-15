@@ -1,7 +1,9 @@
 use seiri_core::{
     ReadmeRouteAssessment, ReadmeRouteMap, ReadmeRouteMapEntry, ReadmeRouteMapSummary,
     ReadmeRouteTarget, ReadmeRouteTargetStatus, RouteCandidate, RouteKind, RouteSource, RouteState,
+    RouteTargetRejection,
 };
+use seiri_fs::{resolve_repository_path, RepositoryPathRejectReason, RepositoryPathResolution};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -156,11 +158,13 @@ fn route_targets(
             continue;
         };
         let target_key = normalize_target_key(target);
+        let (status, rejection) = classify_target_status(target, repo_root);
         targets.push(ReadmeRouteTarget {
             target: target.clone(),
             line: candidate.line,
             source: candidate.source,
-            status: classify_target_status(target, repo_root),
+            status,
+            rejection,
             routes: target_routes.get(&target_key).cloned().unwrap_or_default(),
         });
     }
@@ -196,30 +200,72 @@ fn readme_hub_routes() -> &'static [RouteKind] {
     ]
 }
 
-fn classify_target_status(target: &str, repo_root: Option<&Path>) -> ReadmeRouteTargetStatus {
+fn classify_target_status(
+    target: &str,
+    repo_root: Option<&Path>,
+) -> (ReadmeRouteTargetStatus, Option<RouteTargetRejection>) {
     let trimmed = target.trim();
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
-        return ReadmeRouteTargetStatus::External;
-    }
     if lower.starts_with("mailto:") {
-        return ReadmeRouteTargetStatus::Mail;
+        return (ReadmeRouteTargetStatus::Mail, None);
+    }
+    if lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || has_uri_scheme(trimmed)
+        || trimmed.starts_with("//")
+    {
+        return (ReadmeRouteTargetStatus::External, None);
     }
     if trimmed.starts_with('#') {
-        return ReadmeRouteTargetStatus::Anchor;
+        return (ReadmeRouteTargetStatus::Anchor, None);
     }
 
     let local = strip_target_fragment(trimmed);
     if local.is_empty() {
-        return ReadmeRouteTargetStatus::Anchor;
+        return (ReadmeRouteTargetStatus::Anchor, None);
     }
     let Some(repo_root) = repo_root else {
-        return ReadmeRouteTargetStatus::Unknown;
+        return (ReadmeRouteTargetStatus::Unknown, None);
     };
-    if repo_root.join(local).exists() {
-        ReadmeRouteTargetStatus::LocalPresent
-    } else {
-        ReadmeRouteTargetStatus::LocalMissing
+    match resolve_repository_path(repo_root, local) {
+        RepositoryPathResolution::Present(_) => (ReadmeRouteTargetStatus::LocalPresent, None),
+        RepositoryPathResolution::Missing(_) => (ReadmeRouteTargetStatus::LocalMissing, None),
+        RepositoryPathResolution::Rejected(reason) => (
+            ReadmeRouteTargetStatus::Unknown,
+            Some(map_rejection(reason)),
+        ),
+        RepositoryPathResolution::Unknown(_) => (
+            ReadmeRouteTargetStatus::Unknown,
+            Some(RouteTargetRejection::ProbeFailed),
+        ),
+    }
+}
+
+fn has_uri_scheme(target: &str) -> bool {
+    let Some(colon) = target.find(':') else {
+        return false;
+    };
+    let scheme = &target[..colon];
+    !scheme.is_empty()
+        && scheme.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphabetic()
+                || (index > 0 && (byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.')))
+        })
+}
+
+const fn map_rejection(reason: RepositoryPathRejectReason) -> RouteTargetRejection {
+    match reason {
+        RepositoryPathRejectReason::Absolute => RouteTargetRejection::Absolute,
+        RepositoryPathRejectReason::EscapesRepository => RouteTargetRejection::EscapesRepository,
+        RepositoryPathRejectReason::InvalidPercentEncoding => {
+            RouteTargetRejection::InvalidPercentEncoding
+        }
+        RepositoryPathRejectReason::InvalidUtf8 => RouteTargetRejection::InvalidUtf8,
+        RepositoryPathRejectReason::NonPortableSeparator => {
+            RouteTargetRejection::NonPortableSeparator
+        }
+        RepositoryPathRejectReason::NonPortablePrefix => RouteTargetRejection::NonPortablePrefix,
+        RepositoryPathRejectReason::SymlinkEscape => RouteTargetRejection::SymlinkEscape,
     }
 }
 
@@ -227,7 +273,6 @@ fn normalize_target_key(target: &str) -> String {
     strip_target_fragment(target.trim())
         .trim_start_matches("./")
         .replace('\\', "/")
-        .to_ascii_lowercase()
 }
 
 fn strip_target_fragment(target: &str) -> &str {
