@@ -1,11 +1,12 @@
 #![forbid(unsafe_code)]
 
 use seiri_core::{
-    calibrate_content_claim, stable_id, ClaimStrength, CodexAction, CodexCommand, ContentClaim,
-    CoverageIndex, DocumentConsistencyReport, DocumentIndex, EvidenceKernel, FacetReport,
-    FreshnessReport, GithubLocalDocuments, GithubSemanticsReport, MissingRoutePriorityReport,
-    PatchPlan, ProfileKind, RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport,
-    RouteAssessment, RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
+    calibrate_content_claim, project_content_claim, stable_id, ClaimStrength, CodexAction,
+    CodexCommand, ContentClaim, ContentClaimProjection, CoverageIndex, DocumentConsistencyReport,
+    DocumentIndex, EvidenceKernel, FacetReport, FreshnessReport, GithubLocalDocuments,
+    GithubSemanticsReport, MissingRoutePriorityReport, PatchPlan, ProfileKind,
+    RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport, RouteAssessment,
+    RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
@@ -143,6 +144,12 @@ impl<'a> CodexView<'a> {
                 scope: &self.analysis.repository_scope,
                 freshness: &self.analysis.freshness,
                 claims: &self.analysis.claims,
+                claim_projections: self
+                    .analysis
+                    .claims
+                    .iter()
+                    .map(project_content_claim)
+                    .collect(),
             }),
             CodexQueryKind::Patches => CodexQuery::Patches(self.plan),
             CodexQueryKind::Linter => CodexQuery::Linter(CodexLinterQuery {
@@ -155,7 +162,7 @@ impl<'a> CodexView<'a> {
         };
         CodexQueryView {
             schema_version: CODEX_SCHEMA_VERSION,
-            repo_root: &self.analysis.repo_root,
+            repo_root: ".",
             profile: self.analysis.profile.as_ref().map(|profile| profile.profile),
             query,
             boundary: "Codex queries are bounded projections of canonical local analysis. They do not write files, execute commands, call GitHub, adopt policy, or guarantee popularity, trust, security, quality, or publication readiness.",
@@ -234,6 +241,7 @@ pub struct CodexGovernanceQuery<'a> {
     pub scope: &'a RepositoryScopeReport,
     pub freshness: &'a FreshnessReport,
     pub claims: &'a [ContentClaim],
+    pub claim_projections: Vec<ContentClaimProjection>,
 }
 
 #[derive(Debug, Serialize)]
@@ -307,14 +315,9 @@ fn build_actions(analysis: &RepositoryAnalysis) -> Vec<CodexAction> {
     .enumerate()
     .map(|(index, (label, subcommand, query))| {
         let mut args = vec![
-            "run".to_string(),
-            "--quiet".to_string(),
-            "-p".to_string(),
-            "seiri-cli".to_string(),
-            "--".to_string(),
             subcommand.to_string(),
             "--path".to_string(),
-            analysis.repo_root.clone(),
+            ".".to_string(),
             "--profile".to_string(),
             profile.clone(),
             "--format".to_string(),
@@ -326,7 +329,8 @@ fn build_actions(analysis: &RepositoryAnalysis) -> Vec<CodexAction> {
         CodexAction {
             id: stable_id("codex-action", index + 1),
             label: label.to_string(),
-            command: CodexCommand::new("cargo", args).expect("built-in argv is valid"),
+            command: CodexCommand::new("seiri", args).expect("built-in argv is valid"),
+            runtime: seiri_core::CodexRuntimeRequirement::default(),
             mutates_files: false,
             requires_confirmation: false,
             detail: "Review command only; RepoSeiri does not execute this argv.".to_string(),
@@ -340,12 +344,12 @@ fn build_pr_body(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexPrBody
     let observed_claims = analysis
         .claims
         .iter()
-        .filter(|claim| claim.strength == ClaimStrength::Observed)
+        .filter(|claim| claim.strength() == ClaimStrength::Observed)
         .count();
     let examples = analysis
         .claims
         .iter()
-        .filter(|claim| claim.strength == ClaimStrength::Observed)
+        .filter(|claim| claim.strength() == ClaimStrength::Observed)
         .take(3)
         .map(|claim| {
             format!(
@@ -438,9 +442,9 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
                     .join(", ");
                 out.push_str(&format!(
                     "- `{}`: {} Evidence: `{}`. Claim-local boundaries: {}.\n",
-                    claim.id,
+                    claim.id(),
                     projection.assertion.render_sentence(),
-                    claim.evidence_ids.len(),
+                    claim.evidence_ids().len(),
                     boundaries,
                 ));
             }

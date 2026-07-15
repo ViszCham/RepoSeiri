@@ -1,5 +1,6 @@
 use seiri_core::{
-    ReadmeRouteMapEntry, ReadmeRouteTargetStatus, RouteKind, RouteSource, RouteState, SourceSpan,
+    ReadmeRouteMapEntry, ReadmeRouteTargetStatus, RouteKind, RouteSource, RouteState,
+    RouteTargetRejection, SourceSpan,
 };
 use std::collections::BTreeSet;
 use std::fs;
@@ -130,6 +131,48 @@ fn external_mail_anchor_and_unknown_targets_are_routed_not_verified() {
                 .iter()
                 .any(|target| target.status == ReadmeRouteTargetStatus::LocalPresent)
     }));
+}
+
+#[test]
+fn repository_escape_is_rejected_and_never_verified() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("repo");
+    fs::create_dir(&root).expect("create repository");
+    fs::write(temp.path().join("outside-security.md"), "outside").expect("write outside target");
+    fs::write(
+        root.join("README.md"),
+        "# Repo\n\n[Security](../outside-security.md)\n",
+    )
+    .expect("write README");
+
+    let summary = seiri_markdown::analyze_readme(&root)
+        .expect("analyze README")
+        .expect("README exists");
+    let security = route_entry(&summary, RouteKind::Security);
+    assert_ne!(security.state, RouteState::Verified);
+    assert_eq!(security.targets[0].status, ReadmeRouteTargetStatus::Unknown);
+    assert_eq!(
+        security.targets[0].rejection,
+        Some(RouteTargetRejection::EscapesRepository)
+    );
+}
+
+#[test]
+fn hidden_markdown_contexts_do_not_emit_route_evidence() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    fs::write(temp.path().join("SECURITY.md"), "policy").expect("write target");
+    fs::write(
+        temp.path().join("README.md"),
+        "# Repo\n\n```markdown\n## Security\n[Security](SECURITY.md)\n```\n\n<!-- [Security](SECURITY.md) -->\n\n`[Security](SECURITY.md)`\n",
+    )
+    .expect("write README");
+
+    let summary = seiri_markdown::analyze_readme(temp.path())
+        .expect("analyze README")
+        .expect("README exists");
+    let security = route_entry(&summary, RouteKind::Security);
+    assert_eq!(security.state, RouteState::Absent);
+    assert_eq!(security.raw_candidate_count, 0);
 }
 
 #[test]

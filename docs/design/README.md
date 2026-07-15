@@ -13,14 +13,18 @@
 | 3 | [Roadmap v5: Legacy Removal](roadmap-v5-legacy-removal.md) | 0.2.0 canonical Rust architectureとlegacy removalの実装記録 |
 | 4 | [Roadmap v6: Completion](roadmap-v6-completion.md) | 1.0.0 CF0-CF7実装記録、完成条件、停止条件 |
 | 5 | [Roadmap v7: Calibrated Assertion](roadmap-v7-calibrated-assertion.md) | evidence-backed claim、boundary relevance、underclaim lossの現行実装契約 |
-| 6 | [RCBP-v1](completion-batch-protocol.md) | 一括指示を内部sliceへ分解するCodex実行契約 |
-| 7 | [RCBP-v1 Template](rcbp-v1-template.json) | block依存、authority既定値、stateの機械可読正本 |
+| 6 | [Roadmap v8: Trust And Contract Integrity](roadmap-v8-trust-contract-integrity.md) | path、Markdown、claim、provenance、resource、completionの現行実装契約 |
+| 7 | [RTIP-v1](rtip-v1-protocol.md) | Roadmap v8をTI0-TI11へ分解する実行契約 |
+| 8 | [RTIP-v1 Template](rtip-v1-template.json) | TI block依存とauthority既定値の機械可読正本 |
+| 9 | [RCBP-v1](completion-batch-protocol.md) | Roadmap v6完成batchの履歴実行契約 |
+| 10 | [RCBP-v1 Template](rcbp-v1-template.json) | RCBP-v1の機械可読履歴 |
 
 ### Authority
 
 - Roadmap v5は0.2.0 architecture/legacy removalの実装記録です。
-- 現行1.0.0 source contract、CF0-CF7の実装責務、完成条件はRoadmap v6を参照します。
+- Roadmap v6は1.0.0 completion baselineの実装記録です。現行trust contractはRoadmap v8を参照します。
 - evidence-backed claimの強さ、claim-local boundary、underclaim lossはRoadmap v7を参照します。
+- 現行のtrust / contract integrity実装とcompletion v2はRoadmap v8とRTIP-v1を参照します。
 - RCBP-v1はRoadmap v6の実行方法を所有し、製品semantics、Git権限、release判断を上書きしません。
 - Trust Graph と Baseline And Profiles は前提と分析モデルを所有しますが、現行 symbol や command を上書きしません。
 - Git history と changelog は変更履歴であり、現在の実装指示ではありません。
@@ -49,14 +53,18 @@ This subindex separates RepoSeiri design documentation into long-term premises, 
 | 3 | [Roadmap v5: Legacy Removal](roadmap-v5-legacy-removal.md) | Implementation record for the canonical 0.2.0 Rust architecture and legacy removal |
 | 4 | [Roadmap v6: Completion](roadmap-v6-completion.md) | 1.0.0 CF0-CF7 implementation record, completion conditions, and stop conditions |
 | 5 | [Roadmap v7: Calibrated Assertion](roadmap-v7-calibrated-assertion.md) | Current implementation contract for evidence-backed claims, boundary relevance, and underclaim loss |
-| 6 | [RCBP-v1](completion-batch-protocol.md) | Codex execution contract that decomposes one batch instruction into internal slices |
-| 7 | [RCBP-v1 Template](rcbp-v1-template.json) | Machine-readable authority for block dependencies, authority defaults, and states |
+| 6 | [Roadmap v8: Trust And Contract Integrity](roadmap-v8-trust-contract-integrity.md) | Current implementation contract for paths, Markdown, claims, provenance, resources, and completion |
+| 7 | [RTIP-v1](rtip-v1-protocol.md) | Execution contract that decomposes Roadmap v8 into TI0-TI11 |
+| 8 | [RTIP-v1 Template](rtip-v1-template.json) | Machine-readable TI dependencies and authority defaults |
+| 9 | [RCBP-v1](completion-batch-protocol.md) | Historical execution contract for the Roadmap v6 completion batch |
+| 10 | [RCBP-v1 Template](rcbp-v1-template.json) | Machine-readable RCBP-v1 history |
 
 ### Authority
 
 - Roadmap v5 is the implementation record for the 0.2.0 architecture and legacy removal.
-- Use Roadmap v6 for the current 1.0.0 source contract, CF0-CF7 implementation responsibilities, and completion conditions.
+- Roadmap v6 is the implementation record for the 1.0.0 completion baseline. Use Roadmap v8 for the current trust contract.
 - Use Roadmap v7 for evidence-backed claim strength, claim-local boundaries, and underclaim loss.
+- Use Roadmap v8 and RTIP-v1 for the current trust/contract-integrity implementation and completion v2.
 - RCBP-v1 owns execution of Roadmap v6; it does not override product semantics, Git authority, or release decisions.
 - Trust Graph and Baseline And Profiles own premises and the analysis model, but do not override current symbols or commands.
 - Git history and the changelog record changes; they are not current implementation instructions.

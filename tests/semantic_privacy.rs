@@ -123,6 +123,11 @@ fn explicit_local_prior_never_reaches_public_surfaces() {
 
     let provider =
         seiri_calibration::load_local_calibration_provider(&temp).expect("load local pack");
+    assert!(provider.content_fingerprint().starts_with("sha256:"));
+    assert_ne!(
+        provider.content_fingerprint(),
+        provider.registry_fingerprint()
+    );
     let snapshot = seiri_report::audit_repository_with_calibration_provider(
         fixture("missing-readme-repo"),
         ProfileKind::Library,

@@ -160,6 +160,20 @@ pub fn facet_evidence_ids(facet: RepositoryFacet, kernel: &EvidenceKernel) -> Ve
 
 fn fact_supports_facet(facet: RepositoryFacet, fact: &EvidenceFact, path: &str) -> bool {
     let path = path.to_ascii_lowercase();
+    if has_path_segment(
+        &path,
+        &[
+            "test",
+            "tests",
+            "fixture",
+            "fixtures",
+            "example",
+            "examples",
+            "generated",
+        ],
+    ) {
+        return false;
+    }
     match facet {
         RepositoryFacet::Package => {
             matches!(

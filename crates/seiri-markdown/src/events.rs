@@ -1,4 +1,7 @@
-use crate::{classify_route, looks_like_badge, DocumentScanOptions, MarkdownError};
+use crate::{
+    classify_route, context::mask_hidden_contexts, looks_like_badge, DocumentScanOptions,
+    MarkdownError,
+};
 use seiri_core::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan, MarkdownBadge,
     MarkdownHeading, MarkdownLink, MarkdownLinkKind, RouteCandidate, RouteKind, RouteSource,
@@ -22,10 +25,11 @@ pub(crate) fn scan_text(
         });
     }
 
-    let references = collect_reference_definitions(text);
+    let visible = mask_hidden_contexts(text);
+    let references = collect_reference_definitions(&visible);
     let mut events = Vec::new();
     let mut diagnostics = Vec::new();
-    for line in markdown_lines(text) {
+    for line in markdown_lines(&visible) {
         diagnose_malformed_links(line, &path, options, &mut diagnostics)?;
 
         if let Some(heading) = parse_heading(line) {

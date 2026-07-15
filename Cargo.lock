@@ -1591,6 +1591,7 @@ dependencies = [
  "seiri-profiles",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1661,6 +1662,7 @@ name = "seiri-markdown"
 version = "1.0.0"
 dependencies = [
  "seiri-core",
+ "seiri-fs",
 ]
 
 [[package]]

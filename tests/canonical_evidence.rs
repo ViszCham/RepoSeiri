@@ -95,6 +95,45 @@ fn evidence_kernel_rejects_invalid_typed_producer_and_span_shapes() {
     );
 }
 
+#[test]
+fn evidence_fingerprint_is_independent_of_storage_ordinal() {
+    let draft = |path: &str| EvidenceDraft {
+        atom: EvidenceAtom::FilePresent,
+        domain: SourceDomain::RepositoryLocal,
+        producer: EvidenceProducer::FileWalker,
+        path: Some(path.to_string()),
+        span: None,
+        confidence: EvidenceConfidence::High,
+    };
+    let first = EvidenceKernel::from_drafts(vec![draft("README.md"), draft("LICENSE")])
+        .expect("first kernel");
+    let second = EvidenceKernel::from_drafts(vec![draft("LICENSE"), draft("README.md")])
+        .expect("second kernel");
+    let fingerprint = |kernel: &EvidenceKernel| {
+        let fact = kernel
+            .facts()
+            .iter()
+            .find(|fact| kernel.path_for_fact(fact) == Some("README.md"))
+            .expect("README evidence");
+        seiri_delta::evidence_fingerprint(kernel, fact).expect("fingerprint")
+    };
+    assert_ne!(
+        first
+            .facts()
+            .iter()
+            .find(|fact| first.path_for_fact(fact) == Some("README.md"))
+            .unwrap()
+            .id,
+        second
+            .facts()
+            .iter()
+            .find(|fact| second.path_for_fact(fact) == Some("README.md"))
+            .unwrap()
+            .id
+    );
+    assert_eq!(fingerprint(&first), fingerprint(&second));
+}
+
 fn repository(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

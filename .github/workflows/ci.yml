@@ -40,10 +40,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Check minimum supported Rust version
         run: |
@@ -54,19 +54,19 @@ jobs:
         run: mkdir -p target/reposeiri-self-audit
 
       - name: Run RepoSeiri audit
-        run: cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown | tee target/reposeiri-self-audit/audit.md
+        run: cargo run --locked --quiet -p seiri-cli -- audit --path . --profile library --format markdown | tee target/reposeiri-self-audit/audit.md
 
       - name: Render RepoSeiri dry-run plan
-        run: cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markdown | tee target/reposeiri-self-audit/plan.md
+        run: cargo run --locked --quiet -p seiri-cli -- plan --path . --profile library --format markdown | tee target/reposeiri-self-audit/plan.md
 
       - name: Build Codex summary
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown | tee target/reposeiri-self-audit/codex-summary.md
+        run: cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown | tee target/reposeiri-self-audit/codex-summary.md
 
       - name: Build Codex evidence query
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json | tee target/reposeiri-self-audit/codex-evidence.json
+        run: cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json | tee target/reposeiri-self-audit/codex-evidence.json
 
       - name: Build Codex linter context
-        run: cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
+        run: cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
 
       - name: Upload RepoSeiri self-audit artifacts
         if: always()
@@ -95,7 +95,7 @@ jobs:
         run: cargo install cargo-audit --locked --version 0.22.2
 
       - name: Audit locked dependencies
-        run: cargo audit
+        run: cargo audit --file Cargo.lock
 
   plugin-bundle:
     name: Plugin bundle (${{ matrix.target }})
@@ -123,13 +123,13 @@ jobs:
         run: rustup default stable
 
       - name: Build standalone binary
-        run: cargo build --release -p seiri-cli
+        run: cargo build --locked --release -p seiri-cli
 
       - name: Test standalone launcher
-        run: cargo test -p seiri-cli --test standalone_launcher
+        run: cargo test --locked -p seiri-cli --test standalone_launcher
 
       - name: Build plugin bundle
-        run: cargo run --quiet -p xtask -- bundle --target ${{ matrix.target }} --binary ${{ matrix.binary }} --output target/reposeiri-bundle-${{ matrix.target }}
+        run: cargo run --locked --quiet -p xtask -- bundle --target ${{ matrix.target }} --binary ${{ matrix.binary }} --output target/reposeiri-bundle-${{ matrix.target }}
 
       - name: Smoke bundled launcher on Linux
         if: runner.os == 'Linux'
@@ -182,7 +182,7 @@ jobs:
           path: target/host-evidence
 
       - name: Run completion gate
-        run: cargo run --quiet -p xtask -- completion --format json --host-evidence target/host-evidence | tee target/completion.json
+        run: cargo run --locked --quiet -p xtask -- completion --format json --host-evidence target/host-evidence | tee target/completion.json
 
       - name: Upload completion record
         if: always()

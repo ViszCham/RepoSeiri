@@ -75,6 +75,23 @@ fn codex_queries_and_plan_use_single_cli_surface() {
     let error: serde_json::Value =
         serde_json::from_slice(&failure.stderr).expect("typed error JSON");
     assert_eq!(error["schema_version"], "seiri.error.v1");
+
+    let parse_failure = Command::new(env!("CARGO_BIN_EXE_seiri"))
+        .args(["audit", "--scope", "outside"])
+        .output()
+        .expect("typed parse failure");
+    assert_eq!(parse_failure.status.code(), Some(3));
+    let error: serde_json::Value =
+        serde_json::from_slice(&parse_failure.stderr).expect("typed parse error JSON");
+    assert_eq!(error["schema_version"], "seiri.error.v1");
+    assert_eq!(error["code"], "cli_parse_failed");
+
+    let help = Command::new(env!("CARGO_BIN_EXE_seiri"))
+        .arg("--help")
+        .output()
+        .expect("help");
+    assert!(help.status.success());
+    assert!(help.stderr.is_empty());
     fs::remove_dir_all(root).expect("remove temp repository");
 }
 

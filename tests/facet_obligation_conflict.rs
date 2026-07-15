@@ -87,6 +87,30 @@ fn coexisting_facets_retain_evidence_without_selecting_a_type() {
 }
 
 #[test]
+fn test_and_fixture_paths_do_not_promote_repository_facets() {
+    let repo = TempRepo::new("fixture-scope-facets");
+    repo.write("README.md", "# Fixture scope\n");
+    repo.write("tests/src/main.rs", "fn main() {}\n");
+    repo.write("fixtures/app/web.txt", "fixture\n");
+    repo.write("examples/research/paper.txt", "example\n");
+    let snapshot = seiri_report::audit_repository(repo.path()).expect("audit repository");
+    for facet in [
+        RepositoryFacet::Binary,
+        RepositoryFacet::Research,
+        RepositoryFacet::Product,
+    ] {
+        assert!(matches!(
+            snapshot
+                .facets
+                .assessment(facet)
+                .expect("facet")
+                .observation,
+            Observation::Absent { .. }
+        ));
+    }
+}
+
+#[test]
 fn partial_filesystem_coverage_keeps_unsatisfied_obligations_unknown() {
     let repo = TempRepo::new("partial-obligation");
     repo.write(

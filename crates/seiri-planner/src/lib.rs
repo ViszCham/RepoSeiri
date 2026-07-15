@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use seiri_core::{
-    AddExistingRouteLink, ExistingTargetId, PatchAnalysisRun, PatchBaseDigest, PatchHold,
-    PatchHoldReason, PatchPlan, PatchProposal, PatchProposalBinding, PatchProposalDecision,
-    PatchTextEdit, RepositoryAnalysis, RouteKind, RouteTargetRole, TextDocumentBase, TextEditSpan,
-    TextEncoding,
+    AddExistingRouteLink, ClaimStrength, ExistingTargetId, GateKind, PatchAnalysisRun,
+    PatchBaseDigest, PatchDecisionBasis, PatchHold, PatchHoldReason, PatchPlan, PatchProposal,
+    PatchProposalBinding, PatchProposalDecision, PatchTextEdit, RepositoryAnalysis, RouteKind,
+    RouteTargetRole, TextDocumentBase, TextEditSpan, TextEncoding,
 };
 use std::fs;
 use std::path::{Component, Path};
@@ -25,12 +25,14 @@ const PATCH_ROUTES: &[RouteKind] = &[
     RouteKind::Hygiene,
 ];
 
+const PLANNER_SEMANTIC_REVISION: &str = "seiri.patch-planner.v3";
+
 /// Produces bound, dry-run README links to targets that already exist locally.
 #[must_use]
 pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
     let mut report = PatchPlan::default();
     let Some(readme) = analysis.readme_document.as_ref() else {
-        hold_all(&mut report, PatchHoldReason::MissingReadme);
+        hold_all(analysis, &mut report, PatchHoldReason::MissingReadme);
         return report;
     };
     let Some(document_id) = analysis
@@ -40,19 +42,20 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
         .find(|entry| entry.path == readme.path())
         .and_then(|entry| entry.document_id)
     else {
-        hold_all(&mut report, PatchHoldReason::MissingReadme);
+        hold_all(analysis, &mut report, PatchHoldReason::MissingReadme);
         return report;
     };
     let current = match read_current_document_bytes(analysis, readme.path()) {
         Ok(bytes) => bytes,
         Err(_) => {
-            hold_all(&mut report, PatchHoldReason::StaleBase);
+            hold_all(analysis, &mut report, PatchHoldReason::StaleBase);
             return report;
         }
     };
     let base = TextDocumentBase::from_bytes(&current);
     if base != *readme.base() || base.encoding() == TextEncoding::Unknown {
         hold_all(
+            analysis,
             &mut report,
             if base.encoding() == TextEncoding::Unknown {
                 PatchHoldReason::UnsupportedEncoding
@@ -82,6 +85,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: None,
                 reason: PatchHoldReason::NoExistingTarget,
+                decision_basis: decision_basis(analysis, route, GateKind::Guarded),
             });
             continue;
         };
@@ -95,6 +99,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: Some(target_path.to_string()),
                 reason: PatchHoldReason::CanonicalConflict,
+                decision_basis: decision_basis(analysis, route, GateKind::Manual),
             });
             continue;
         }
@@ -110,6 +115,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: Some(target_path.to_string()),
                 reason: PatchHoldReason::UnknownTargetRelation,
+                decision_basis: decision_basis(analysis, route, GateKind::Manual),
             });
             continue;
         }
@@ -122,6 +128,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                     route,
                     target_path: Some(target_path.to_string()),
                     reason: PatchHoldReason::PairedLanguageIncomplete,
+                    decision_basis: decision_basis(analysis, route, GateKind::Manual),
                 });
                 continue;
             }
@@ -150,6 +157,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: Some(target_path.to_string()),
                 reason: PatchHoldReason::StaleAnchor,
+                decision_basis: decision_basis(analysis, route, GateKind::Guarded),
             });
             continue;
         }
@@ -159,6 +167,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: Some(target_path.to_string()),
                 reason: PatchHoldReason::StaleAnchor,
+                decision_basis: decision_basis(analysis, route, GateKind::Guarded),
             });
             continue;
         };
@@ -167,6 +176,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 route,
                 target_path: Some(target_path.to_string()),
                 reason: PatchHoldReason::StaleAnchor,
+                decision_basis: decision_basis(analysis, route, GateKind::Guarded),
             });
             continue;
         };
@@ -181,6 +191,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
             proposal,
             binding,
             paired_language,
+            decision_basis: decision_basis(analysis, route, GateKind::Safe),
         });
     }
     report.operations.sort_by_key(|operation| operation.route);
@@ -188,14 +199,60 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
     report
 }
 
-fn hold_all(report: &mut PatchPlan, reason: PatchHoldReason) {
+fn hold_all(analysis: &RepositoryAnalysis, report: &mut PatchPlan, reason: PatchHoldReason) {
     report
         .held
         .extend(PATCH_ROUTES.iter().copied().map(|route| PatchHold {
             route,
             target_path: None,
             reason,
+            decision_basis: decision_basis(analysis, route, GateKind::Manual),
         }));
+}
+
+fn decision_basis(
+    analysis: &RepositoryAnalysis,
+    route: RouteKind,
+    gate: GateKind,
+) -> PatchDecisionBasis {
+    let mut claims = analysis
+        .claims
+        .iter()
+        .filter(|claim| claim.route() == route)
+        .collect::<Vec<_>>();
+    claims.sort_by_key(|claim| {
+        (
+            claim.strength() != ClaimStrength::Observed,
+            claim.id().clone(),
+        )
+    });
+    let claim_ids = claims
+        .iter()
+        .map(|claim| claim.id().clone())
+        .collect::<Vec<_>>();
+    let mut evidence_ids = claims
+        .iter()
+        .flat_map(|claim| claim.evidence_ids().iter().copied())
+        .collect::<Vec<_>>();
+    evidence_ids.sort_unstable();
+    evidence_ids.dedup();
+    let evidence_fingerprints =
+        seiri_delta::evidence_fingerprints_for_ids(&analysis.evidence_kernel, &evidence_ids)
+            .unwrap_or_default();
+    let priority_rank = analysis
+        .missing_route_priority
+        .priorities
+        .iter()
+        .position(|priority| priority.route == route)
+        .map(|index| index + 1);
+    PatchDecisionBasis {
+        gate,
+        priority_rank,
+        claim_ids,
+        evidence_fingerprints,
+        claim_semantic_revision: seiri_core::CLAIM_SEMANTIC_REVISION.to_string(),
+        planner_semantic_revision: PLANNER_SEMANTIC_REVISION.to_string(),
+    }
 }
 
 fn readme_has_route(analysis: &RepositoryAnalysis, route: RouteKind) -> bool {

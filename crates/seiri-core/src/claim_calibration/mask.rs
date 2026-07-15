@@ -34,7 +34,7 @@ const ALL_BOUNDARIES: [ClaimBoundaryKind; 13] = [
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct MeaningMask(u16);
+pub struct MeaningMask(u32);
 
 impl MeaningMask {
     #[must_use]
@@ -73,7 +73,7 @@ impl MeaningMask {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ClaimBoundaryMask(u16);
+pub struct ClaimBoundaryMask(u32);
 
 impl ClaimBoundaryMask {
     #[must_use]
@@ -113,7 +113,7 @@ impl ClaimBoundaryMask {
     }
 }
 
-const fn meaning_bit(atom: MeaningAtom) -> u16 {
+const fn meaning_bit(atom: MeaningAtom) -> u32 {
     match atom {
         MeaningAtom::RouteObserved => 1 << 0,
         MeaningAtom::RouteMissing => 1 << 1,
@@ -131,7 +131,7 @@ const fn meaning_bit(atom: MeaningAtom) -> u16 {
     }
 }
 
-const fn boundary_bit(boundary: ClaimBoundaryKind) -> u16 {
+const fn boundary_bit(boundary: ClaimBoundaryKind) -> u32 {
     match boundary {
         ClaimBoundaryKind::NotPopularityGuarantee => 1 << 0,
         ClaimBoundaryKind::NotTrustGuarantee => 1 << 1,

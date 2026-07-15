@@ -18,7 +18,9 @@ fn every_codex_query_uses_one_borrowed_schema() {
     for kind in CodexQueryKind::ALL {
         let view = adapter.query(kind);
         assert_eq!(view.schema_version, CODEX_SCHEMA_VERSION);
+        assert_eq!(view.repo_root, ".");
         let json = serde_json::to_string(&view).expect("query JSON");
+        assert!(!json.contains(&root.to_string_lossy().replace('\\', "/")));
         assert!(json.contains("seiri.codex.v2"));
         for removed in ["compatibility-v1", "native-v2", "native-v3"] {
             assert!(!json.contains(removed));
@@ -35,6 +37,27 @@ fn every_codex_query_uses_one_borrowed_schema() {
         adapter.query(CodexQueryKind::PrBody).query,
         CodexQuery::PrBody(_)
     ));
+    let actions = adapter.query(CodexQueryKind::Actions);
+    let CodexQuery::Actions(actions) = actions.query else {
+        panic!("actions query");
+    };
+    assert_eq!(actions.len(), 3);
+    assert!(actions.iter().all(|action| {
+        action.command.program() == "seiri"
+            && action
+                .command
+                .args()
+                .windows(2)
+                .any(|pair| pair == ["--path", "."])
+            && !action.command.args().iter().any(|arg| arg == "-p")
+    }));
+
+    let audit_json = seiri_report::to_json(&analysis).expect("audit JSON");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&audit_json).expect("audit value")["repo_root"],
+        "."
+    );
+    assert!(!audit_json.contains(&root.to_string_lossy().replace('\\', "/")));
     fs::remove_dir_all(root).expect("remove temp repository");
 }
 

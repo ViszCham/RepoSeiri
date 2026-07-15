@@ -1,6 +1,19 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.patch-plan.v2.json",
+  "title": "RepoSeiri patch plan v2",
   "schema_version": "seiri.patch-plan.v2",
   "owner": "seiri-core::PatchPlan",
   "compatibility": "v2-only",
-  "mutation": "preview_only"
+  "mutation": "preview_only",
+  "type": "object",
+  "required": ["schema_version", "operations", "held", "writes_files", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.patch-plan.v2" },
+    "operations": { "type": "array" },
+    "held": { "type": "array" },
+    "writes_files": { "const": false },
+    "boundary": { "type": "string" }
+  },
+  "additionalProperties": false
 }

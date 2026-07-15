@@ -23,14 +23,14 @@ release 前に次を確認します。
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -95,14 +95,14 @@ Before release, check the following.
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 

@@ -3,6 +3,7 @@ use seiri_core::{
     CalibrationUnavailableReason, PriorBasis, PriorVisibility, ProfileKind, RouteKind,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -17,6 +18,7 @@ const MAX_RULE_ID_BYTES: usize = 128;
 pub struct LocalCalibrationProvider {
     priors: BTreeMap<CalibrationKey, AggregatePrior>,
     registry_fingerprint: Box<str>,
+    content_fingerprint: Box<str>,
     source_bytes: u64,
 }
 
@@ -24,6 +26,11 @@ impl LocalCalibrationProvider {
     #[must_use]
     pub fn registry_fingerprint(&self) -> &str {
         &self.registry_fingerprint
+    }
+
+    #[must_use]
+    pub fn content_fingerprint(&self) -> &str {
+        &self.content_fingerprint
     }
 
     #[must_use]
@@ -50,7 +57,7 @@ impl CalibrationProvider for LocalCalibrationProvider {
     }
 
     fn redacted_fingerprint(&self) -> Option<&str> {
-        Some(&self.registry_fingerprint)
+        Some(&self.content_fingerprint)
     }
 }
 
@@ -194,6 +201,22 @@ pub fn load_local_calibration_provider_for_registry(
     Ok(LocalCalibrationProvider {
         priors,
         registry_fingerprint: wire.registry_fingerprint.into_boxed_str(),
+        content_fingerprint: content_fingerprint(&bytes).into_boxed_str(),
         source_bytes: bytes.len() as u64,
     })
+}
+
+fn content_fingerprint(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"seiri.local-calibration-content.v1");
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut value = String::with_capacity("sha256:".len() + 64);
+    value.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(value, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    value
 }

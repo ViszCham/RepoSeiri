@@ -10,8 +10,8 @@ RepoSeiri の self-audit loop は、RepoSeiri 自身を RepoSeiri で読み直�
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
@@ -19,7 +19,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -60,8 +60,8 @@ This loop is not self-approval. CI, RepoSeiri scores, Codex drafts, and patch pl
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
@@ -69,7 +69,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 

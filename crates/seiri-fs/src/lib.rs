@@ -4,7 +4,13 @@ use seiri_core::{FileRecord, IgnoredShallowRecord, ImportantFile};
 use std::path::{Path, PathBuf};
 
 mod classify;
+mod containment;
 mod walker;
+
+pub use containment::{
+    resolve_repository_path, RepositoryPathRejectReason, RepositoryPathResolution,
+    RepositoryPathUnknownReason,
+};
 
 pub use walker::{
     resolve_repo_root, walk_repository, walk_repository_with_options, FsError, IgnorePolicy,

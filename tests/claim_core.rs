@@ -2,7 +2,7 @@ use seiri_core::{
     stable_claim_id, stable_evidence_id, ClaimBoundary, ClaimBoundaryKind, ClaimRefIndex,
     ClaimStrength, ContentClaim, MeaningAtom, RouteKind, RouteState,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[test]
 fn content_claim_core_schema_roundtrips_through_json() {
@@ -16,18 +16,13 @@ fn content_claim_core_schema_roundtrips_through_json() {
             MeaningAtom::RouteObserved,
             MeaningAtom::StructuredFilePresent,
         ],
-        vec![
-            ClaimBoundaryKind::NotSecurityGuarantee,
-            ClaimBoundaryKind::NotQualityGuarantee,
-            ClaimBoundaryKind::NotPopularityGuarantee,
-        ],
     );
 
-    assert_eq!(claim.id, "claim-0007");
-    assert_eq!(claim.id, stable_claim_id(7));
-    assert_eq!(claim.evidence_ids.len(), 2);
+    assert_eq!(claim.id(), "claim-0007");
+    assert_eq!(claim.id(), &stable_claim_id(7));
+    assert_eq!(claim.evidence_ids().len(), 2);
     assert!(claim
-        .boundaries
+        .boundaries()
         .contains(&ClaimBoundaryKind::NotSecurityGuarantee));
 
     let json = serde_json::to_string(&claim).expect("serialize content claim");
@@ -41,6 +36,38 @@ fn content_claim_core_schema_roundtrips_through_json() {
 
     let roundtrip = serde_json::from_str::<ContentClaim>(&json).expect("deserialize content claim");
     assert_eq!(roundtrip, claim);
+}
+
+#[test]
+fn content_claim_rejects_noncanonical_wire_data() {
+    let tampered = json!({
+        "id": "claim-0001",
+        "route": "security",
+        "state": "verified",
+        "strength": "observed",
+        "evidence_ids": [],
+        "allowed_meanings": ["route_observed"],
+        "boundaries": ["not_popularity_guarantee"]
+    });
+    let error = serde_json::from_value::<ContentClaim>(tampered).expect_err("must reject");
+    assert!(error
+        .to_string()
+        .contains("observed content claim requires evidence"));
+
+    let mut value = serde_json::to_value(ContentClaim::new(
+        1,
+        RouteKind::Security,
+        RouteState::Verified,
+        ClaimStrength::Observed,
+        vec![stable_evidence_id(1)],
+        vec![MeaningAtom::RouteObserved],
+    ))
+    .unwrap();
+    value["boundaries"] = json!(["not_popularity_guarantee"]);
+    let error = serde_json::from_value::<ContentClaim>(value).expect_err("must reject");
+    assert!(error
+        .to_string()
+        .contains("boundaries do not match canonical semantics"));
 }
 
 #[test]
@@ -96,10 +123,6 @@ fn claim_ref_index_groups_ids_and_deduplicates_boundaries() {
             ClaimStrength::Observed,
             vec![stable_evidence_id(1)],
             vec![MeaningAtom::RouteObserved],
-            vec![
-                ClaimBoundaryKind::NotSecurityGuarantee,
-                ClaimBoundaryKind::NotQualityGuarantee,
-            ],
         ),
         ContentClaim::new(
             2,
@@ -108,10 +131,6 @@ fn claim_ref_index_groups_ids_and_deduplicates_boundaries() {
             ClaimStrength::Suggested,
             vec![stable_evidence_id(2)],
             vec![MeaningAtom::CalibrationCandidate],
-            vec![
-                ClaimBoundaryKind::NotQualityGuarantee,
-                ClaimBoundaryKind::NotAutomaticWeightAdoption,
-            ],
         ),
     ];
     let index = ClaimRefIndex::new(&claims);
@@ -122,8 +141,9 @@ fn claim_ref_index_groups_ids_and_deduplicates_boundaries() {
     );
     assert_eq!(index.strength_count(ClaimStrength::Suggested), 1);
     let boundaries = index.boundary_kinds_for_route(RouteKind::Security);
-    assert_eq!(boundaries.len(), 3);
+    assert_eq!(boundaries.len(), 4);
     assert!(boundaries.contains(&ClaimBoundaryKind::NotSecurityGuarantee));
-    assert!(boundaries.contains(&ClaimBoundaryKind::NotQualityGuarantee));
+    assert!(boundaries.contains(&ClaimBoundaryKind::NotProductionReadiness));
     assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticWeightAdoption));
+    assert!(boundaries.contains(&ClaimBoundaryKind::NotAutomaticPolicyAdoption));
 }

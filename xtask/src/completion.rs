@@ -1,19 +1,22 @@
 use crate::{bundle, repository_root};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::ffi::OsString;
+use std::fs;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
 const CHECKS: &[CheckSpec] = &[
     CheckSpec::cargo("format", &["fmt", "--all", "--", "--check"]),
-    CheckSpec::cargo("workspace_tests", &["test", "--workspace"]),
+    CheckSpec::cargo("workspace_tests", &["test", "--workspace", "--locked"]),
     CheckSpec::cargo(
         "clippy",
         &[
             "clippy",
             "--workspace",
             "--all-targets",
+            "--locked",
             "--",
             "-D",
             "warnings",
@@ -26,7 +29,7 @@ const CHECKS: &[CheckSpec] = &[
     ),
     CheckSpec::cargo(
         "schema_contracts",
-        &["test", "--test", "completion_contract"],
+        &["test", "--test", "completion_contract", "--locked"],
     ),
     CheckSpec::cargo(
         "privacy_boundary",
@@ -36,20 +39,29 @@ const CHECKS: &[CheckSpec] = &[
             "privacy_guard",
             "--test",
             "semantic_privacy",
+            "--locked",
         ],
     ),
     CheckSpec::cargo(
         "hostile_corpus",
-        &["test", "--test", "hostile_input_corpus"],
+        &["test", "--test", "hostile_input_corpus", "--locked"],
     ),
     CheckSpec::cargo(
         "plugin_smoke",
-        &["test", "-p", "seiri-cli", "--test", "standalone_launcher"],
+        &[
+            "test",
+            "-p",
+            "seiri-cli",
+            "--test",
+            "standalone_launcher",
+            "--locked",
+        ],
     ),
     CheckSpec::cargo(
         "self_audit_summary",
         &[
             "run",
+            "--locked",
             "--quiet",
             "-p",
             "seiri-cli",
@@ -71,6 +83,7 @@ const CHECKS: &[CheckSpec] = &[
         "self_audit_linter",
         &[
             "run",
+            "--locked",
             "--quiet",
             "-p",
             "seiri-cli",
@@ -141,6 +154,7 @@ struct CompletionRecord {
     schema_version: &'static str,
     state: CompletionState,
     tool_version: &'static str,
+    source: SourceBinding,
     checks: Vec<CheckRecord>,
     required_hosts: Vec<bundle::HostEvidenceRecord>,
     skipped_checks: Vec<String>,
@@ -160,6 +174,15 @@ struct CheckRecord {
     status: CheckStatus,
     exit_code: Option<i32>,
     elapsed_ms: u128,
+    command: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SourceBinding {
+    git_head: String,
+    worktree_dirty: bool,
+    source_digest: String,
+    cargo_lock_digest: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -175,6 +198,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         return Err("completion supports only '--format json'".to_string());
     }
     let root = repository_root()?;
+    let source = bind_source(&root)?;
     let mut checks = CHECKS
         .iter()
         .map(|spec| run_check(&root, *spec))
@@ -193,6 +217,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         },
         exit_code: None,
         elapsed_ms: 0,
+        command: vec!["host-evidence".to_string()],
     });
     let state = if checks
         .iter()
@@ -206,6 +231,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         schema_version: seiri_core::COMPLETION_SCHEMA_VERSION,
         state,
         tool_version: env!("CARGO_PKG_VERSION"),
+        source,
         checks,
         required_hosts,
         skipped_checks: Vec::new(),
@@ -240,14 +266,103 @@ fn run_check(root: &Path, spec: CheckSpec) -> CheckRecord {
             },
             exit_code: output.status.code(),
             elapsed_ms: started.elapsed().as_millis(),
+            command: rendered_command(spec),
         },
         Err(_) => CheckRecord {
             name: spec.name,
             status: CheckStatus::CouldNotStart,
             exit_code: None,
             elapsed_ms: started.elapsed().as_millis(),
+            command: rendered_command(spec),
         },
     }
+}
+
+fn rendered_command(spec: CheckSpec) -> Vec<String> {
+    std::iter::once(spec.program.to_string())
+        .chain(spec.toolchain.map(str::to_string))
+        .chain(spec.args.iter().map(|argument| (*argument).to_string()))
+        .collect()
+}
+
+fn bind_source(root: &Path) -> Result<SourceBinding, String> {
+    let git_head = git_output(root, &["rev-parse", "HEAD"])?;
+    let status = command_bytes(root, "git", &["status", "--porcelain=v1", "-z"])?;
+    let paths = command_bytes(
+        root,
+        "git",
+        &[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    let mut source = Sha256::new();
+    source.update(b"seiri.completion.source.v2");
+    digest_field(&mut source, &status);
+    for raw in paths
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let relative = std::str::from_utf8(raw)
+            .map_err(|_| "git returned a non-UTF-8 repository path".to_string())?;
+        digest_field(&mut source, raw);
+        match fs::read(root.join(relative)) {
+            Ok(bytes) => {
+                digest_field(&mut source, b"present");
+                digest_field(&mut source, &bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                digest_field(&mut source, b"deleted");
+            }
+            Err(error) => {
+                return Err(format!("failed to bind source file '{relative}': {error}"));
+            }
+        }
+    }
+    let lock = fs::read(root.join("Cargo.lock"))
+        .map_err(|error| format!("failed to bind Cargo.lock: {error}"))?;
+    Ok(SourceBinding {
+        git_head,
+        worktree_dirty: !status.is_empty(),
+        source_digest: format_digest(source.finalize().into()),
+        cargo_lock_digest: format_digest(Sha256::digest(lock).into()),
+    })
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    let bytes = command_bytes(root, "git", args)?;
+    String::from_utf8(bytes)
+        .map(|value| value.trim().to_string())
+        .map_err(|_| "git returned non-UTF-8 output".to_string())
+}
+
+fn command_bytes(root: &Path, program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("failed to start {program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("{program} source-binding command failed"));
+    }
+    Ok(output.stdout)
+}
+
+fn digest_field(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn format_digest(bytes: [u8; 32]) -> String {
+    let mut value = String::from("sha256:");
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(value, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    value
 }
 
 fn validate_captured_output(name: &str, stdout: &[u8]) -> bool {
@@ -291,6 +406,9 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), count);
         assert!(CHECKS.len() >= 10);
+        assert!(CHECKS.iter().all(|check| {
+            check.program != "cargo" || check.name == "format" || check.args.contains(&"--locked")
+        }));
     }
 
     #[test]

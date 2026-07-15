@@ -1,6 +1,18 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.error.v1.json",
+  "title": "RepoSeiri error envelope v1",
   "schema_version": "seiri.error.v1",
   "owner": "seiri-core::ErrorEnvelope",
+  "compatibility": "v1-only",
+  "stream": "stderr",
+  "type": "object",
   "required": ["schema_version", "class", "code", "message"],
-  "stream": "stderr"
+  "properties": {
+    "schema_version": { "const": "seiri.error.v1" },
+    "class": { "enum": ["invalid_input", "io", "contract", "internal"] },
+    "code": { "type": "string", "minLength": 1 },
+    "message": { "type": "string" }
+  },
+  "additionalProperties": false
 }

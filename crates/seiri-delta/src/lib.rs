@@ -2,16 +2,79 @@
 
 use seiri_core::{
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, CoverageIncompleteReason, CoverageScope,
-    CoverageStatus, DeltaCompatibility, DeltaState, DeltaUnknownReason, Digest32, EvidenceId,
-    ImprovementCandidate, Observation, PortableAuditSnapshot, PortableConflictRecord,
-    PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
-    PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
-    RepositoryAnalysis, RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
+    CoverageStatus, DeltaCompatibility, DeltaState, DeltaUnknownReason, Digest32, EvidenceFact,
+    EvidenceFingerprint, EvidenceId, EvidenceKernel, ImprovementCandidate, Observation,
+    PortableAuditSnapshot, PortableConflictRecord, PortableContentSlotRecord,
+    PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord, PortableObligationRecord,
+    PortableObservationState, PortableRouteRecord, RegressionCandidate, RepositoryAnalysis,
+    RouteDelta, AUDIT_DELTA_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
+
+const EVIDENCE_SEMANTIC_FINGERPRINT_DOMAIN: &[u8] = b"seiri.evidence.semantic.v1";
+const EVIDENCE_OCCURRENCE_FINGERPRINT_DOMAIN: &[u8] = b"seiri.evidence.occurrence.v1";
+
+pub fn evidence_fingerprint(
+    kernel: &EvidenceKernel,
+    fact: &EvidenceFact,
+) -> Result<EvidenceFingerprint, DeltaError> {
+    let atom = serde_json::to_vec(&fact.atom)?;
+    let confidence = serde_json::to_vec(&fact.confidence)?;
+    let mut semantic = Sha256::new();
+    fingerprint_field(&mut semantic, EVIDENCE_SEMANTIC_FINGERPRINT_DOMAIN);
+    fingerprint_field(&mut semantic, &serde_json::to_vec(&fact.provenance.domain)?);
+    fingerprint_field(
+        &mut semantic,
+        &serde_json::to_vec(&fact.provenance.producer)?,
+    );
+    fingerprint_field(&mut semantic, &atom);
+    fingerprint_field(
+        &mut semantic,
+        kernel.path_for_fact(fact).unwrap_or_default().as_bytes(),
+    );
+    fingerprint_field(&mut semantic, &confidence);
+    let semantic = Digest32::new(semantic.finalize().into());
+
+    let mut occurrence = Sha256::new();
+    fingerprint_field(&mut occurrence, EVIDENCE_OCCURRENCE_FINGERPRINT_DOMAIN);
+    fingerprint_field(&mut occurrence, &semantic.bytes());
+    if let Some(span) = fact.provenance.span {
+        fingerprint_field(&mut occurrence, &span.line.get().to_be_bytes());
+        fingerprint_field(&mut occurrence, &span.column.get().to_be_bytes());
+        fingerprint_field(&mut occurrence, &span.byte_start.get().to_be_bytes());
+        fingerprint_field(&mut occurrence, &span.byte_end.get().to_be_bytes());
+    } else {
+        fingerprint_field(&mut occurrence, &[]);
+    }
+    Ok(EvidenceFingerprint {
+        semantic,
+        occurrence: Digest32::new(occurrence.finalize().into()),
+    })
+}
+
+pub fn evidence_fingerprints_for_ids(
+    kernel: &EvidenceKernel,
+    ids: &[EvidenceId],
+) -> Result<Vec<EvidenceFingerprint>, DeltaError> {
+    let selected = ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut fingerprints = kernel
+        .facts()
+        .iter()
+        .filter(|fact| selected.contains(&fact.id))
+        .map(|fact| evidence_fingerprint(kernel, fact))
+        .collect::<Result<Vec<_>, _>>()?;
+    fingerprints.sort_by_key(|fingerprint| (fingerprint.semantic, fingerprint.occurrence));
+    fingerprints.dedup();
+    Ok(fingerprints)
+}
+
+fn fingerprint_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    hasher.update(value);
+}
 
 #[derive(Debug)]
 pub enum DeltaError {

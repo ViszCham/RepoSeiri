@@ -1,7 +1,12 @@
 use super::{resolve_claim_boundaries, ClaimBoundaryMask, MeaningMask};
-use crate::{ClaimStrength, ContentClaim, RouteKind, RouteState};
+use crate::{
+    ClaimBoundaryKind, ClaimId, ClaimStrength, ContentClaim, EvidenceId, MeaningAtom, RouteKind,
+    RouteState,
+};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimEvidencePosture {
     DirectObservation,
     BoundedInference,
@@ -9,7 +14,8 @@ pub enum ClaimEvidencePosture {
     BlockedForHumanReview,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimAssertionKind {
     RepositoryLocalTargetObserved,
     StructuredRouteObserved,
@@ -22,9 +28,71 @@ pub enum ClaimAssertionKind {
 
 impl ClaimAssertionKind {
     #[must_use]
-    pub const fn is_positive(self) -> bool {
+    pub const fn has_primary_assertion(self) -> bool {
         !matches!(self, Self::HeldForHumanReview)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionRejectReason {
+    ObservedWithoutEvidence,
+    VerifiedWithoutLocalTargetMeaning,
+    PositiveAssertionForBlockedClaim,
+}
+
+const ALL_REJECTION_REASONS: [ProjectionRejectReason; 3] = [
+    ProjectionRejectReason::ObservedWithoutEvidence,
+    ProjectionRejectReason::VerifiedWithoutLocalTargetMeaning,
+    ProjectionRejectReason::PositiveAssertionForBlockedClaim,
+];
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ProjectionRejectMask(u32);
+
+impl ProjectionRejectMask {
+    #[must_use]
+    pub const fn contains(self, reason: ProjectionRejectReason) -> bool {
+        self.0 & rejection_bit(reason) != 0
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = ProjectionRejectReason> {
+        ALL_REJECTION_REASONS
+            .into_iter()
+            .filter(move |reason| self.contains(*reason))
+    }
+
+    const fn insert(&mut self, reason: ProjectionRejectReason) {
+        self.0 |= rejection_bit(reason);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionAdmissibility {
+    Admissible,
+    Rejected(ProjectionRejectMask),
+}
+
+pub const CLAIM_SEMANTIC_REVISION: &str = "seiri.claim-semantics.v2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentClaimProjection {
+    pub semantic_revision: String,
+    pub claim_id: ClaimId,
+    pub assertion_kind: ClaimAssertionKind,
+    pub evidence_posture: ClaimEvidencePosture,
+    pub evidence_ids: Vec<EvidenceId>,
+    pub meanings: Vec<MeaningAtom>,
+    pub boundaries: Vec<ClaimBoundaryKind>,
+    pub admissible: bool,
+    pub rejection_reasons: Vec<ProjectionRejectReason>,
+    pub underclaim_loss_x100: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +203,7 @@ pub struct CalibratedClaimProjection {
     pub evidence_posture: ClaimEvidencePosture,
     pub meanings: MeaningMask,
     pub boundaries: ClaimBoundaryMask,
+    pub admissibility: ProjectionAdmissibility,
     pub underclaim_loss: UnderclaimLoss,
 }
 
@@ -146,15 +215,72 @@ pub fn calibrate_content_claim(claim: &ContentClaim) -> CalibratedClaimProjectio
         route: claim.route,
         state: claim.state,
     };
+    let admissibility = evaluate_projection_admissibility(claim, assertion, meanings);
     CalibratedClaimProjection {
         assertion,
         evidence_posture: evidence_posture(claim.strength),
         meanings,
         boundaries: resolve_claim_boundaries(claim.route, claim.state, claim.strength, meanings),
-        underclaim_loss: evaluate_underclaim_loss(
-            claim,
-            ClaimProjectionCandidate::evidence_matched(),
-        ),
+        admissibility,
+        underclaim_loss: if matches!(admissibility, ProjectionAdmissibility::Admissible) {
+            evaluate_underclaim_loss(claim, ClaimProjectionCandidate::evidence_matched())
+        } else {
+            UnderclaimLoss::default()
+        },
+    }
+}
+
+#[must_use]
+pub fn project_content_claim(claim: &ContentClaim) -> ContentClaimProjection {
+    let projection = calibrate_content_claim(claim);
+    let (admissible, rejection_reasons) = match projection.admissibility {
+        ProjectionAdmissibility::Admissible => (true, Vec::new()),
+        ProjectionAdmissibility::Rejected(reasons) => (false, reasons.iter().collect()),
+    };
+    ContentClaimProjection {
+        semantic_revision: CLAIM_SEMANTIC_REVISION.to_string(),
+        claim_id: claim.id().clone(),
+        assertion_kind: projection.assertion.kind,
+        evidence_posture: projection.evidence_posture,
+        evidence_ids: claim.evidence_ids().to_vec(),
+        meanings: projection.meanings.iter().collect(),
+        boundaries: projection.boundaries.to_vec(),
+        admissible,
+        rejection_reasons,
+        underclaim_loss_x100: projection.underclaim_loss.score_x100(),
+    }
+}
+
+#[must_use]
+pub fn evaluate_projection_admissibility(
+    claim: &ContentClaim,
+    assertion: ClaimAssertion,
+    meanings: MeaningMask,
+) -> ProjectionAdmissibility {
+    let mut reasons = ProjectionRejectMask::default();
+    if claim.strength == ClaimStrength::Observed && claim.evidence_ids.is_empty() {
+        reasons.insert(ProjectionRejectReason::ObservedWithoutEvidence);
+    }
+    if assertion.kind == ClaimAssertionKind::RepositoryLocalTargetObserved
+        && !meanings.contains(MeaningAtom::RepositoryLocalTargetPresent)
+    {
+        reasons.insert(ProjectionRejectReason::VerifiedWithoutLocalTargetMeaning);
+    }
+    if claim.strength == ClaimStrength::Blocked && assertion.kind.has_primary_assertion() {
+        reasons.insert(ProjectionRejectReason::PositiveAssertionForBlockedClaim);
+    }
+    if reasons.is_empty() {
+        ProjectionAdmissibility::Admissible
+    } else {
+        ProjectionAdmissibility::Rejected(reasons)
+    }
+}
+
+const fn rejection_bit(reason: ProjectionRejectReason) -> u32 {
+    match reason {
+        ProjectionRejectReason::ObservedWithoutEvidence => 1 << 0,
+        ProjectionRejectReason::VerifiedWithoutLocalTargetMeaning => 1 << 1,
+        ProjectionRejectReason::PositiveAssertionForBlockedClaim => 1 << 2,
     }
 }
 

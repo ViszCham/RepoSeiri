@@ -1,6 +1,6 @@
 use crate::{
-    AnalysisScope, ContentSlotId, CoverageStatus, DocumentId, EvidenceId, ProfileKind,
-    RepositoryFacet, RouteFreshness, RouteKind, RoutePolicyBoundary, RouteTargetRole,
+    AnalysisScope, ClaimId, ContentSlotId, CoverageStatus, DocumentId, EvidenceId, GateKind,
+    ProfileKind, RepositoryFacet, RouteFreshness, RouteKind, RoutePolicyBoundary, RouteTargetRole,
     ScopeReadBudget,
 };
 use serde::de::Error as _;
@@ -10,6 +10,22 @@ use std::fmt::{Display, Formatter};
 pub const PORTABLE_AUDIT_SCHEMA_VERSION: &str = "seiri.portable-audit.v1";
 pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v1";
 pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v2";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceFingerprint {
+    pub semantic: Digest32,
+    pub occurrence: Digest32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDecisionBasis {
+    pub gate: GateKind,
+    pub priority_rank: Option<usize>,
+    pub claim_ids: Vec<ClaimId>,
+    pub evidence_fingerprints: Vec<EvidenceFingerprint>,
+    pub claim_semantic_revision: String,
+    pub planner_semantic_revision: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest32([u8; 32]);
@@ -356,6 +372,7 @@ pub struct AddExistingRouteLink {
     pub proposal: crate::PatchProposal,
     pub binding: crate::PatchProposalBinding,
     pub paired_language: bool,
+    pub decision_basis: PatchDecisionBasis,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,6 +380,7 @@ pub struct PatchHold {
     pub route: RouteKind,
     pub target_path: Option<String>,
     pub reason: PatchHoldReason,
+    pub decision_basis: PatchDecisionBasis,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

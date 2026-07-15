@@ -17,27 +17,29 @@ fn route_state_claims_are_evidence_linked() {
     assert!(snapshot
         .claims
         .iter()
-        .all(|claim| !claim.evidence_ids.is_empty()));
+        .all(|claim| !claim.evidence_ids().is_empty()));
 
     let docs = snapshot
         .claims
         .iter()
         .find(|claim| {
-            claim.route == RouteKind::Docs
-                && claim.state == RouteState::Verified
-                && claim.strength == ClaimStrength::Observed
+            claim.route() == RouteKind::Docs
+                && claim.state() == RouteState::Verified
+                && claim.strength() == ClaimStrength::Observed
         })
         .expect("verified docs route claim");
 
-    assert!(docs.allowed_meanings.contains(&MeaningAtom::RouteObserved));
     assert!(docs
-        .allowed_meanings
+        .allowed_meanings()
+        .contains(&MeaningAtom::RouteObserved));
+    assert!(docs
+        .allowed_meanings()
         .contains(&MeaningAtom::RepositoryLocalTargetPresent));
     assert!(docs
-        .boundaries
+        .boundaries()
         .contains(&ClaimBoundaryKind::NotQualityGuarantee));
     assert!(!docs
-        .boundaries
+        .boundaries()
         .contains(&ClaimBoundaryKind::NotTrustGuarantee));
 }
 
@@ -58,17 +60,17 @@ fn missing_route_priority_can_emit_suggested_claims_with_evidence() {
         .claims
         .iter()
         .find(|claim| {
-            claim.route == RouteKind::Security && claim.strength == ClaimStrength::Suggested
+            claim.route() == RouteKind::Security && claim.strength() == ClaimStrength::Suggested
         })
         .expect("security suggested claim");
 
-    assert_eq!(suggested.state, priority.state);
-    assert_eq!(suggested.evidence_ids, priority.evidence_ids);
+    assert_eq!(suggested.state(), priority.state);
+    assert_eq!(suggested.evidence_ids(), priority.evidence_ids);
     assert!(suggested
-        .allowed_meanings
+        .allowed_meanings()
         .contains(&MeaningAtom::CalibrationCandidate));
     assert!(suggested
-        .boundaries
+        .boundaries()
         .contains(&ClaimBoundaryKind::NotAutomaticWeightAdoption));
 }
 
@@ -89,12 +91,12 @@ fn builder_skips_claims_without_evidence() {
     assert!(security.summary_evidence_ids().is_empty());
 
     assert!(!snapshot.claims.iter().any(|claim| {
-        claim.route == RouteKind::Security && claim.state == RouteState::UnsafeToInvent
+        claim.route() == RouteKind::Security && claim.state() == RouteState::UnsafeToInvent
     }));
     assert!(snapshot
         .claims
         .iter()
-        .all(|claim| !claim.evidence_ids.is_empty()));
+        .all(|claim| !claim.evidence_ids().is_empty()));
 }
 
 #[test]

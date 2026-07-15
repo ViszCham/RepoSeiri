@@ -17,8 +17,8 @@
 実行したものに印を付け、必要なら結果を追記してください。
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo test --workspace`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace --locked`
+- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - [ ] `cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown`
 - [ ] `cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown`
 - [ ] `git diff --check`
@@ -55,8 +55,8 @@
 Check what you ran and add results when useful.
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo test --workspace`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace --locked`
+- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - [ ] `cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown`
 - [ ] `cargo run --quiet -p seiri-cli -- codex --path . --profile library --format markdown`
 - [ ] `git diff --check`

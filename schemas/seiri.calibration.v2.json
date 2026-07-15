@@ -1,6 +1,21 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.calibration.v2.json",
+  "title": "RepoSeiri calibration run v2",
   "schema_version": "seiri.calibration.v2",
   "owner": "seiri-calibration::CalibrationRun",
   "compatibility": "v2-only",
-  "claim_boundary": "local_calibration_is_review_evidence_not_performance_proof"
+  "claim_boundary": "local_calibration_is_review_evidence_not_performance_proof",
+  "type": "object",
+  "required": ["schema_version", "run_id", "dataset_id", "sources", "summary", "stats", "resource_trace", "claim_boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.calibration.v2" },
+    "run_id": { "type": "string" },
+    "dataset_id": { "type": "string" },
+    "sources": { "type": "array" },
+    "summary": { "type": "object" },
+    "stats": { "type": "array" },
+    "resource_trace": { "type": "object" },
+    "claim_boundary": { "type": "object" }
+  }
 }
