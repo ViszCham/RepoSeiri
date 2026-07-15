@@ -13,11 +13,13 @@ fn audit_scope_flag_requires_explicit_subtree_mode() {
 
     let default = run_audit(&nested, None);
     let subtree = run_audit(&nested, Some("subtree"));
-    let root_text = normalized(&fs::canonicalize(&root).unwrap());
-    let nested_text = normalized(&fs::canonicalize(&nested).unwrap());
-    assert!(default.contains(&format!("- Repository: `{root_text}`")));
+    let root_text = fs::canonicalize(&root).unwrap();
+    let nested_text = fs::canonicalize(&nested).unwrap();
+    assert!(default.contains("- Repository: `.`"));
+    assert!(!default.contains(root_text.to_string_lossy().as_ref()));
     assert!(default.contains("- Analysis scope: `Repository`"));
-    assert!(subtree.contains(&format!("- Repository: `{nested_text}`")));
+    assert!(subtree.contains("- Repository: `.`"));
+    assert!(!subtree.contains(nested_text.to_string_lossy().as_ref()));
     assert!(subtree.contains("- Analysis scope: `Subtree`"));
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -46,11 +48,6 @@ fn create_git(path: &Path) {
     fs::create_dir_all(path.join("objects")).expect("objects");
     fs::create_dir_all(path.join("refs/heads")).expect("refs");
     fs::write(path.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
-}
-
-fn normalized(path: &Path) -> String {
-    let path = path.to_string_lossy().replace('\\', "/");
-    path.strip_prefix("//?/").unwrap_or(&path).to_string()
 }
 
 fn temp_root() -> PathBuf {

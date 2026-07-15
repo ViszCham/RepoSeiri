@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{error::ErrorKind, Parser, Subcommand, ValueEnum};
 use seiri_core::ProfileKind;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -121,22 +121,46 @@ impl From<ScopeArg> for seiri_core::AnalysisScope {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
+            return match error.print() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::from(seiri_core::ErrorClass::Io.exit_code()),
+            };
+        }
+        Err(error) => {
+            return emit_error(CliError {
+                class: seiri_core::ErrorClass::InvalidInput,
+                code: "cli_parse_failed",
+                message: error.to_string(),
+            });
+        }
+    };
+    match run(cli) {
         Ok(output) => {
             println!("{output}");
             ExitCode::SUCCESS
         }
-        Err(error) => {
-            let envelope = seiri_core::ErrorEnvelope::new(error.class, error.code, error.message);
-            match serde_json::to_string(&envelope) {
-                Ok(rendered) => eprintln!("{rendered}"),
-                Err(_) => eprintln!(
-                    "{{\"schema_version\":\"seiri.error.v1\",\"class\":\"internal\",\"code\":\"error_render_failed\",\"message\":\"failed to render typed error\"}}"
-                ),
-            }
-            ExitCode::from(error.class.exit_code())
-        }
+        Err(error) => emit_error(error),
     }
+}
+
+fn emit_error(error: CliError) -> ExitCode {
+    let class = error.class;
+    let envelope = seiri_core::ErrorEnvelope::new(class, error.code, error.message);
+    match serde_json::to_string(&envelope) {
+        Ok(rendered) => eprintln!("{rendered}"),
+        Err(_) => eprintln!(
+            "{{\"schema_version\":\"seiri.error.v1\",\"class\":\"internal\",\"code\":\"error_render_failed\",\"message\":\"failed to render typed error\"}}"
+        ),
+    }
+    ExitCode::from(class.exit_code())
 }
 
 #[derive(Debug)]
@@ -172,8 +196,7 @@ impl From<seiri_report::AuditError> for CliError {
     }
 }
 
-fn run() -> Result<String, CliError> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<String, CliError> {
     match cli.command {
         Command::Contract { format } => {
             let contract = seiri_core::ContractManifest::current(env!("CARGO_PKG_VERSION"));
