@@ -11,12 +11,14 @@ Use this skill for repository organization reviews backed by the RepoSeiri Rust 
 
 - Run the Rust core through the bundle launcher. On Windows use `scripts/reposeiri-codex.ps1`; on Linux use `scripts/reposeiri-codex.sh`. Do not reproduce audit, pattern, profile, calibration, delta, planner, or claim decisions in the skill.
 - Use the single `seiri.codex.v2` query surface. Do not add schema selectors, view selectors, legacy aliases, or fallback behavior.
+- Treat `contract.semantic_revisions` as the owner of meaning changes inside the retained v2 wire names. Do not infer semantics from a schema name alone.
 - The launcher resolves `REPOSEIRI_BIN`, then the bundle-local binary, then `PATH`. A missing binary, invalid contract, schema mismatch, or native command failure must remain a non-zero failure.
 - Select the narrowest query that answers the request.
 - Treat actions and patch operations as review data. Do not execute commands, write files, create branches, commit, push, call GitHub, or merge unless the user explicitly authorizes those separate operations.
 - Standard audit is local and does not initiate remote access. `remote` reports the current typed terminal state.
 - Do not invent policy, license text, security commitments, ownership, support promises, or files that do not already exist.
 - Do not claim guarantees of popularity, trust, security, quality, legal fitness, or publication readiness.
+- Prefer observed repository evidence over the phrase "verified facts". `Verified` is a typed route state, not a general correctness claim.
 - Private calibration inputs and private analysis data must not be copied into responses or repository artifacts.
 
 ## Commands

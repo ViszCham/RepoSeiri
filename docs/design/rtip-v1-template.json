@@ -1,0 +1,37 @@
+{
+  "protocol": "RTIP-v1",
+  "roadmap": "Roadmap v8: Trust And Contract Integrity",
+  "trigger": "explicit_execute_protocol_instruction",
+  "authority": {
+    "analysis": true,
+    "mutation": true,
+    "verification": true,
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "release": false,
+    "install": false,
+    "restart": false,
+    "visibility": false
+  },
+  "blocks": [
+    { "id": "TI0", "depends_on": [], "owner": "baseline_and_protocol" },
+    { "id": "TI1", "depends_on": ["TI0"], "owner": "path_containment" },
+    { "id": "TI2", "depends_on": ["TI1"], "owner": "markdown_context" },
+    { "id": "TI3", "depends_on": ["TI2"], "owner": "public_path_privacy" },
+    { "id": "TI4", "depends_on": ["TI3"], "owner": "portable_actions" },
+    { "id": "TI5", "depends_on": ["TI4"], "owner": "canonical_claims" },
+    { "id": "TI6", "depends_on": ["TI5"], "owner": "semantic_revisions" },
+    { "id": "TI7", "depends_on": ["TI6"], "owner": "patch_provenance" },
+    { "id": "TI8", "depends_on": ["TI7"], "owner": "resource_hardening" },
+    { "id": "TI9", "depends_on": ["TI8"], "owner": "facet_and_git_boundaries" },
+    { "id": "TI10", "depends_on": ["TI9"], "owner": "cli_and_completion_v2" },
+    { "id": "TI11", "depends_on": ["TI10"], "owner": "schema_docs_regression" }
+  ],
+  "completion": {
+    "same_worktree": true,
+    "locked_dependencies": true,
+    "host_evidence_required_for_ready_for_git": true,
+    "git_authority_granted": false
+  }
+}

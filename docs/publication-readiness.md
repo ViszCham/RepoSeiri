@@ -42,8 +42,8 @@ rust, coding-practice, codex-plugin, repository-audit, cli, personal-project
 gh repo view ViszCham/RepoSeiri --json visibility,isPrivate
 rg -n -i "(token|secret|password|api[_-]?key|private[_-]?key|credential|github_pat_|ghp_|BEGIN .*PRIVATE KEY)" --glob "!target/**" --glob "!Cargo.lock"
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
@@ -115,8 +115,8 @@ rust, coding-practice, codex-plugin, repository-audit, cli, personal-project
 gh repo view ViszCham/RepoSeiri --json visibility,isPrivate
 rg -n -i "(token|secret|password|api[_-]?key|private[_-]?key|credential|github_pat_|ghp_|BEGIN .*PRIVATE KEY)" --glob "!target/**" --glob "!Cargo.lock"
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown

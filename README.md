@@ -4,13 +4,13 @@
 
 ## 日本語
 
-RepoSeiri は、GitHub リポジトリの構造と導線を bounded local evidence から解析する Rust 製 CLI / Codex plugin です。標準監査はローカルで完結し、repository files を書き換えず、確認済み事実と提案を分離して出力します。
+RepoSeiri は、GitHub リポジトリの構造と導線を bounded local evidence から解析する Rust 製 CLI / Codex plugin です。標準監査はローカルで完結し、repository files を書き換えず、観測したrepository evidenceと提案を分離して出力します。
 
 ### 3行要約
 
 - root files、README links、docs、Git-local metadata、GitHub configuration を bounded scope で観測します。
 - 一度の canonical analysis から route、typed evidence、文書間整合、review priority、dry-run patch plan を生成します。
-- 結果を10種類の Codex query で取り出し、確認済み事実、提案、人間による判断、evidence boundary外の事項を分離します。
+- 結果を10種類の Codex query で取り出し、観測したrepository evidence、提案、人間による判断、evidence boundary外の事項を分離します。
 
 ### 何をするものか
 
@@ -40,8 +40,8 @@ RepoSeiri は、GitHub リポジトリの構造と導線を bounded local eviden
 必要環境は Rust 1.88 以上です。
 
 ```powershell
-cargo test --workspace
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo test --workspace --locked
+cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 ```
 
 まずこの2つを実行します。1行目で workspace の基本動作を確認し、2行目で RepoSeiri 自身を対象にした Codex 向け整理案を確認します。
@@ -136,14 +136,14 @@ Writes files: false
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
@@ -153,13 +153,13 @@ RepoSeiri の claim、score、route state は、現在の bounded local evidence
 
 ## English
 
-RepoSeiri is a Rust CLI and Codex plugin that analyzes GitHub repository structure and navigation from bounded local evidence. Standard audits stay local, do not write repository files, and emit verified facts separately from suggestions.
+RepoSeiri is a Rust CLI and Codex plugin that analyzes GitHub repository structure and navigation from bounded local evidence. Standard audits stay local, do not write repository files, and emit observed repository evidence separately from suggestions.
 
 ### Three-Line Summary
 
 - It observes root files, README links, docs, Git-local metadata, and GitHub configuration within a bounded scope.
 - One canonical analysis produces routes, typed evidence, document consistency, review priorities, and dry-run patch plans.
-- Ten Codex queries keep verified facts, suggestions, maintainer decisions, and outcomes outside the evidence boundary separate.
+- Ten Codex queries keep observed repository evidence, suggestions, maintainer decisions, and outcomes outside the evidence boundary separate.
 
 ### What It Does
 
@@ -189,8 +189,8 @@ RepoSeiri is a Rust CLI and Codex plugin that analyzes GitHub repository structu
 Rust 1.88 or newer is required.
 
 ```powershell
-cargo test --workspace
-cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
+cargo test --workspace --locked
+cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 ```
 
 Run these two commands first. The first checks the workspace baseline, and the second inspects RepoSeiri itself through the Codex-oriented organization context.
@@ -285,14 +285,14 @@ After changes, check the following.
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
-cargo run --quiet -p xtask -- completion --format json
+cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
