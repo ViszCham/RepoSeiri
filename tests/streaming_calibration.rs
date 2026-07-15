@@ -172,6 +172,27 @@ fn streaming_limits_fail_closed() {
         utf8_error,
         seiri_calibration::CalibrationError::InvalidUtf8 { line: 1 }
     ));
+
+    let global_limits = StreamingCalibrationLimits::new(4096, 8, 8, 8)
+        .expect("base limits")
+        .with_global_limits(4096, 1, 4096)
+        .expect("global limits");
+    let records_error = calibrate_jsonl_reader_with_limits(
+        Cursor::new(concat!(
+            "{\"repo_id\":\"one\",\"name\":\"one\"}\n",
+            "{\"repo_id\":\"two\",\"name\":\"two\"}\n"
+        )),
+        metadata(),
+        global_limits,
+    )
+    .expect_err("record limit");
+    assert!(matches!(
+        records_error,
+        seiri_calibration::CalibrationError::StreamingLimitExceeded {
+            resource: StreamingLimitKind::Records,
+            ..
+        }
+    ));
 }
 
 #[test]

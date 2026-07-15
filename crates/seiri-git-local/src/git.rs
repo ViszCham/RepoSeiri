@@ -153,21 +153,28 @@ fn observe_references(
         Ok(references) => references,
         Err(_) => {
             observation.refs_coverage = partial(CoverageIncompleteReason::ParseFailed);
+            observation.tags_coverage = partial(CoverageIncompleteReason::ParseFailed);
             return;
         }
     };
-    let mut refs_seen = 0u32;
     let mut tags_seen = 0u32;
+    let mut refs_over_limit = false;
+    let mut tags_over_limit = false;
     if budget.max_refs == 0 {
         observation.refs_coverage = partial(CoverageIncompleteReason::LimitExceeded);
         observation.tags_coverage = partial(CoverageIncompleteReason::LimitExceeded);
         return;
     }
-    for result in references.take(budget.max_refs as usize) {
+    for (index, result) in references.take(budget.max_refs as usize + 1).enumerate() {
+        if index == budget.max_refs as usize {
+            refs_over_limit = true;
+            break;
+        }
         let reference = match result {
             Ok(reference) => reference,
             Err(_) => {
                 observation.refs_coverage = partial(CoverageIncompleteReason::ParseFailed);
+                observation.tags_coverage = partial(CoverageIncompleteReason::ParseFailed);
                 observation.diagnostics.push(GitDiagnostic {
                     kind: GitDiagnosticKind::MalformedReference,
                     path: "refs".to_string(),
@@ -177,10 +184,9 @@ fn observe_references(
         };
         let name = reference.name().as_bstr().to_str_lossy().into_owned();
         let kind = reference_kind(&name);
-        refs_seen += 1;
         if kind == GitReferenceKind::Tag {
             if tags_seen >= budget.max_tags {
-                observation.tags_coverage = partial(CoverageIncompleteReason::LimitExceeded);
+                tags_over_limit = true;
                 continue;
             }
             tags_seen += 1;
@@ -193,10 +199,11 @@ fn observe_references(
             .references
             .push(GitReferenceObservation { name, target, kind });
     }
-    if refs_seen == budget.max_refs {
+    if refs_over_limit {
         observation.refs_coverage = partial(CoverageIncompleteReason::LimitExceeded);
+        observation.tags_coverage = partial(CoverageIncompleteReason::LimitExceeded);
     }
-    if tags_seen == budget.max_tags && budget.max_tags > 0 {
+    if tags_over_limit {
         observation.tags_coverage = partial(CoverageIncompleteReason::LimitExceeded);
     }
     observation
@@ -230,7 +237,15 @@ fn observe_commits(
         observation.commits_coverage = partial(CoverageIncompleteReason::LimitExceeded);
         return;
     }
-    for result in walk.take(budget.max_commit_headers as usize) {
+    let mut commits_over_limit = false;
+    for (index, result) in walk
+        .take(budget.max_commit_headers as usize + 1)
+        .enumerate()
+    {
+        if index == budget.max_commit_headers as usize {
+            commits_over_limit = true;
+            break;
+        }
         let info = match result {
             Ok(info) => info,
             Err(_) => {
@@ -263,7 +278,7 @@ fn observe_commits(
             committed_at,
         });
     }
-    if observation.commits.len() == budget.max_commit_headers as usize {
+    if commits_over_limit {
         observation.commits_coverage = partial(CoverageIncompleteReason::LimitExceeded);
     }
 }
@@ -366,11 +381,29 @@ mod tests {
         );
         assert_eq!(observation.state, GitObservationState::Available);
         assert_eq!(observation.commits.len(), 1);
+        assert_eq!(observation.commits_coverage, CoverageStatus::Complete);
         assert_eq!(
             observation.commits[0].committed_at.seconds_since_epoch,
             1_700_000_000
         );
         assert_eq!(observation.commits[0].committed_at.offset_minutes, 90);
+
+        let parent = repository.head_id().expect("head id").detach();
+        repository
+            .commit_as(signature, signature, "HEAD", "fixture-2", tree, [parent])
+            .expect("second commit");
+        let bounded = GixReadBackend.observe(
+            &discovered,
+            GitReadBudget {
+                max_commit_headers: 1,
+                ..GitReadBudget::default()
+            },
+        );
+        assert_eq!(bounded.commits.len(), 1);
+        assert_eq!(
+            bounded.commits_coverage,
+            partial(CoverageIncompleteReason::LimitExceeded)
+        );
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

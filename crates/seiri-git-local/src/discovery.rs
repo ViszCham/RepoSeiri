@@ -289,10 +289,16 @@ fn build(
     diagnostic: Option<GitDiagnostic>,
 ) -> DiscoveredRepository {
     let root = RepositoryScopeRoot {
-        analysis_root: normalize(&analysis_root),
-        worktree_root: worktree_root.as_deref().map(normalize),
-        git_dir: git_dir.as_deref().map(normalize),
-        common_dir: common_dir.as_deref().map(normalize),
+        analysis_root: ".".to_string(),
+        worktree_root: worktree_root
+            .as_deref()
+            .map(|path| public_relative_path(&analysis_root, path)),
+        git_dir: git_dir
+            .as_deref()
+            .map(|path| public_relative_path(&analysis_root, path)),
+        common_dir: common_dir
+            .as_deref()
+            .map(|path| public_relative_path(&analysis_root, path)),
         kind,
         scope,
     };
@@ -329,8 +335,26 @@ fn discovery_diagnostic(error: &RepositoryDiscoveryError) -> GitDiagnostic {
     };
     GitDiagnostic {
         kind,
-        path: normalize(path),
+        path: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<repository-path>")
+            .to_string(),
     }
+}
+
+fn public_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root).map_or_else(
+        |_| "<outside-analysis-root>".to_string(),
+        |relative| {
+            let normalized = normalize(relative);
+            if normalized.is_empty() {
+                ".".to_string()
+            } else {
+                normalized
+            }
+        },
+    )
 }
 
 fn normalize(path: &Path) -> String {
