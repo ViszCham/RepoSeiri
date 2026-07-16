@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 seiri-core = { path = "../crates/seiri-core" }
+seiri-digest = { path = "../crates/seiri-digest" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

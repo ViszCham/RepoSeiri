@@ -2,12 +2,14 @@ use crate::{
     classify_route, context::mask_hidden_contexts, looks_like_badge, DocumentScanOptions,
     MarkdownError,
 };
+use pulldown_cmark::{Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use seiri_core::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan, MarkdownBadge,
     MarkdownHeading, MarkdownLink, MarkdownLinkKind, RouteCandidate, RouteKind, RouteSource,
     SourceSpan, TextDocumentBase,
 };
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::ops::Range;
 
 const MAX_HTML_TAG_BYTES: usize = 2_048;
 const MAX_HTML_ATTRIBUTES: usize = 32;
@@ -25,90 +27,15 @@ pub(crate) fn scan_text(
         });
     }
 
+    let lines = LineIndex::new(text);
     let visible = mask_hidden_contexts(text);
+    let mut events = semantic_events(&path, &visible, &lines, options)?;
     let references = collect_reference_definitions(&visible);
-    let mut events = Vec::new();
     let mut diagnostics = Vec::new();
     for line in markdown_lines(&visible) {
         diagnose_malformed_links(line, &path, options, &mut diagnostics)?;
-
-        if let Some(heading) = parse_heading(line) {
-            let route = classify_route(&heading.text, None);
-            push_event(
-                &path,
-                options,
-                &mut events,
-                DocumentEvent::Heading(heading.clone()),
-            )?;
-            if route != RouteKind::Unknown {
-                push_event(
-                    &path,
-                    options,
-                    &mut events,
-                    DocumentEvent::RouteCandidate(RouteCandidate {
-                        route,
-                        source: RouteSource::Heading,
-                        text: heading.text,
-                        target: None,
-                        line: line.number,
-                        span: heading.span,
-                    }),
-                )?;
-            }
-        }
-
-        for mut image in parse_markdown_links(line, true) {
-            image.kind = MarkdownLinkKind::Image;
-            let image_route = classify_route(&image.text, Some(&image.target));
-            image.route = (image_route != RouteKind::Unknown).then_some(image_route);
-            push_event(
-                &path,
-                options,
-                &mut events,
-                DocumentEvent::Link(image.clone()),
-            )?;
-            if looks_like_badge(&image.text, &image.target) {
-                let badge = MarkdownBadge {
-                    alt: image.text.clone(),
-                    target: image.target.clone(),
-                    line: line.number,
-                    span: image.span,
-                };
-                push_event(&path, options, &mut events, DocumentEvent::Badge(badge))?;
-                push_event(
-                    &path,
-                    options,
-                    &mut events,
-                    DocumentEvent::RouteCandidate(RouteCandidate {
-                        route: RouteKind::Automation,
-                        source: RouteSource::Badge,
-                        text: image.text,
-                        target: Some(image.target),
-                        line: line.number,
-                        span: image.span,
-                    }),
-                )?;
-            } else {
-                emit_link_route(&path, options, &mut events, &image)?;
-            }
-        }
-
-        let mut links = parse_markdown_links(line, false);
-        links.extend(parse_reference_links(
-            line,
-            &references,
-            &path,
-            options,
-            &mut diagnostics,
-        )?);
-        links.extend(parse_autolinks(line));
-        links.extend(parse_html_anchor_links(
-            line,
-            &path,
-            options,
-            &mut diagnostics,
-        )?);
-        for link in links {
+        diagnose_unresolved_references(line, &references, &path, options, &mut diagnostics)?;
+        for link in parse_html_anchor_links(line, &path, options, &mut diagnostics)? {
             emit_link(&path, options, &mut events, link)?;
         }
     }
@@ -126,6 +53,7 @@ pub(crate) fn scan_text(
             diagnostic.span.byte_end,
         )
     });
+    diagnostics.dedup();
     DocumentScan::new(
         path,
         TextDocumentBase::from_bytes(text.as_bytes()),
@@ -133,6 +61,218 @@ pub(crate) fn scan_text(
         diagnostics,
     )
     .map_err(MarkdownError::Invariant)
+}
+
+fn semantic_events(
+    path: &str,
+    text: &str,
+    lines: &LineIndex,
+    options: &DocumentScanOptions,
+) -> Result<Vec<DocumentEvent>, MarkdownError> {
+    let parser = Parser::new_ext(text, Options::empty()).into_offset_iter();
+    let mut output = Vec::new();
+    let mut heading = None::<OpenHeading>;
+    let mut links = Vec::<OpenLink>::new();
+
+    for (event, range) in parser {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading = Some(OpenHeading {
+                    level: heading_level(level),
+                    start: range.start,
+                    text: String::new(),
+                });
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(open) = heading.take() {
+                    let end = trim_trailing_line_ending(text, range.end);
+                    let value = MarkdownHeading {
+                        level: open.level,
+                        text: normalized_visible_text(&open.text),
+                        line: lines.line_for(open.start),
+                        span: Some(lines.span(open.start..end)),
+                    };
+                    if !value.text.is_empty() {
+                        let route = classify_route(&value.text, None);
+                        push_event(
+                            path,
+                            options,
+                            &mut output,
+                            DocumentEvent::Heading(value.clone()),
+                        )?;
+                        if route != RouteKind::Unknown {
+                            push_event(
+                                path,
+                                options,
+                                &mut output,
+                                DocumentEvent::RouteCandidate(RouteCandidate {
+                                    route,
+                                    source: RouteSource::Heading,
+                                    text: value.text,
+                                    target: None,
+                                    line: value.line,
+                                    span: value.span,
+                                }),
+                            )?;
+                        }
+                    }
+                }
+            }
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            }) => links.push(OpenLink::new(
+                range.start,
+                dest_url.into_string(),
+                markdown_link_kind(link_type, false),
+                false,
+            )),
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                ..
+            }) => links.push(OpenLink::new(
+                range.start,
+                dest_url.into_string(),
+                markdown_link_kind(link_type, true),
+                true,
+            )),
+            Event::End(TagEnd::Link) => {
+                if let Some(open) = take_open_link(&mut links, false) {
+                    emit_open_link(path, options, &mut output, open, range.end, lines)?;
+                }
+            }
+            Event::End(TagEnd::Image) => {
+                if let Some(open) = take_open_link(&mut links, true) {
+                    emit_open_link(path, options, &mut output, open, range.end, lines)?;
+                }
+            }
+            Event::Text(value) => {
+                if let Some(open) = heading.as_mut() {
+                    open.text.push_str(&value);
+                }
+                for open in &mut links {
+                    open.text.push_str(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(open) = heading.as_mut() {
+                    open.text.push(' ');
+                }
+                for open in &mut links {
+                    open.text.push(' ');
+                }
+            }
+            Event::Code(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Rule
+            | Event::TaskListMarker(_)
+            | Event::FootnoteReference(_)
+            | Event::Start(_)
+            | Event::End(_) => {}
+        }
+    }
+
+    Ok(output)
+}
+
+#[derive(Debug)]
+struct OpenHeading {
+    level: u8,
+    start: usize,
+    text: String,
+}
+
+#[derive(Debug)]
+struct OpenLink {
+    start: usize,
+    target: String,
+    text: String,
+    kind: MarkdownLinkKind,
+    image: bool,
+}
+
+impl OpenLink {
+    fn new(start: usize, target: String, kind: MarkdownLinkKind, image: bool) -> Self {
+        Self {
+            start,
+            target,
+            text: String::new(),
+            kind,
+            image,
+        }
+    }
+}
+
+fn take_open_link(links: &mut Vec<OpenLink>, image: bool) -> Option<OpenLink> {
+    let index = links.iter().rposition(|open| open.image == image)?;
+    Some(links.remove(index))
+}
+
+fn emit_open_link(
+    path: &str,
+    options: &DocumentScanOptions,
+    events: &mut Vec<DocumentEvent>,
+    open: OpenLink,
+    end: usize,
+    lines: &LineIndex,
+) -> Result<(), MarkdownError> {
+    let link = MarkdownLink {
+        text: normalized_visible_text(&open.text),
+        target: open.target,
+        line: lines.line_for(open.start),
+        span: Some(lines.span(open.start..end)),
+        route: None,
+        kind: open.kind,
+    };
+    if link.text.is_empty() || link.target.is_empty() {
+        return Ok(());
+    }
+    if open.image {
+        emit_image(path, options, events, link)
+    } else {
+        emit_link(path, options, events, link)
+    }
+}
+
+fn emit_image(
+    path: &str,
+    options: &DocumentScanOptions,
+    events: &mut Vec<DocumentEvent>,
+    mut link: MarkdownLink,
+) -> Result<(), MarkdownError> {
+    link.kind = MarkdownLinkKind::Image;
+    let route = classify_route(&link.text, Some(&link.target));
+    link.route = (route != RouteKind::Unknown).then_some(route);
+    push_event(path, options, events, DocumentEvent::Link(link.clone()))?;
+    if looks_like_badge(&link.text, &link.target) {
+        let badge = MarkdownBadge {
+            alt: link.text.clone(),
+            target: link.target.clone(),
+            line: link.line,
+            span: link.span,
+        };
+        push_event(path, options, events, DocumentEvent::Badge(badge))?;
+        push_event(
+            path,
+            options,
+            events,
+            DocumentEvent::RouteCandidate(RouteCandidate {
+                route: RouteKind::Automation,
+                source: RouteSource::Badge,
+                text: link.text,
+                target: Some(link.target),
+                line: link.line,
+                span: link.span,
+            }),
+        )
+    } else {
+        emit_link_route(path, options, events, &link)
+    }
 }
 
 fn emit_link(
@@ -204,59 +344,6 @@ fn push_diagnostic(
     Ok(())
 }
 
-fn diagnose_malformed_links(
-    line: MarkdownLine<'_>,
-    path: &str,
-    options: &DocumentScanOptions,
-    diagnostics: &mut Vec<DocumentDiagnostic>,
-) -> Result<(), MarkdownError> {
-    let bytes = line.text.as_bytes();
-    let mut cursor = 0;
-    while cursor < bytes.len() {
-        let is_image =
-            bytes[cursor] == b'!' && cursor + 1 < bytes.len() && bytes[cursor + 1] == b'[';
-        if bytes[cursor] != b'[' && !is_image {
-            cursor += 1;
-            continue;
-        }
-
-        let label_start = cursor + usize::from(is_image) + 1;
-        let Some(label_end_offset) = line.text[label_start..].find(']') else {
-            push_diagnostic(
-                path,
-                options,
-                diagnostics,
-                DocumentDiagnostic {
-                    kind: DocumentDiagnosticKind::UnclosedLinkLabel,
-                    span: source_span(line, cursor, line.text.len()),
-                },
-            )?;
-            break;
-        };
-        let label_end = label_start + label_end_offset;
-        let open_paren = label_end + 1;
-        if bytes.get(open_paren) != Some(&b'(') {
-            cursor = label_end + 1;
-            continue;
-        }
-        let target_start = open_paren + 1;
-        let Some(target_end_offset) = line.text[target_start..].find(')') else {
-            push_diagnostic(
-                path,
-                options,
-                diagnostics,
-                DocumentDiagnostic {
-                    kind: DocumentDiagnosticKind::UnclosedLinkTarget,
-                    span: source_span(line, cursor, line.text.len()),
-                },
-            )?;
-            break;
-        };
-        cursor = target_start + target_end_offset + 1;
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, Copy)]
 struct MarkdownLine<'a> {
     number: usize,
@@ -284,188 +371,104 @@ fn markdown_lines(text: &str) -> impl Iterator<Item = MarkdownLine<'_>> {
     })
 }
 
-fn parse_heading(line: MarkdownLine<'_>) -> Option<MarkdownHeading> {
-    let marker_start = first_non_whitespace_byte(line.text)?;
-    let trimmed = &line.text[marker_start..];
-    let level = trimmed.chars().take_while(|value| *value == '#').count();
-    if !(1..=6).contains(&level) {
-        return None;
-    }
-    let rest = trimmed.get(level..)?;
-    if !rest.starts_with(' ') {
-        return None;
-    }
-    let text = rest.trim().trim_end_matches('#').trim();
-    if text.is_empty() {
-        return None;
-    }
-    Some(MarkdownHeading {
-        level: level as u8,
-        text: text.to_string(),
-        line: line.number,
-        span: Some(source_span(line, marker_start, line.text.len())),
-    })
-}
-
-fn parse_markdown_links(line: MarkdownLine<'_>, images_only: bool) -> Vec<MarkdownLink> {
-    let bytes = line.text.as_bytes();
-    let mut cursor = 0;
-    let mut out = Vec::new();
-
-    while cursor < bytes.len() {
-        let is_image =
-            bytes[cursor] == b'!' && cursor + 1 < bytes.len() && bytes[cursor + 1] == b'[';
-        let starts_link = bytes[cursor] == b'[' || is_image;
-        if !starts_link {
-            cursor += 1;
-            continue;
-        }
-        if images_only != is_image {
-            cursor += if is_image { 2 } else { 1 };
-            continue;
-        }
-
-        let label_start = cursor + usize::from(is_image) + 1;
-        let Some(label_end_offset) = line.text[label_start..].find(']') else {
-            cursor += 1;
-            continue;
-        };
-        let label_end = label_start + label_end_offset;
-        let open_paren = label_end + 1;
-        if bytes.get(open_paren) != Some(&b'(') {
-            cursor = label_end + 1;
-            continue;
-        }
-        let target_start = open_paren + 1;
-        let Some(target_end_offset) = line.text[target_start..].find(')') else {
-            cursor = target_start;
-            continue;
-        };
-        let target_end = target_start + target_end_offset;
-        let text = line.text[label_start..label_end].trim();
-        let target = line.text[target_start..target_end].trim();
-        if !text.is_empty() && !target.is_empty() {
-            out.push(MarkdownLink {
-                text: text.to_string(),
-                target: target.to_string(),
-                line: line.number,
-                span: Some(source_span(line, cursor, target_end + 1)),
-                route: None,
-                kind: MarkdownLinkKind::Inline,
-            });
-        }
-        cursor = target_end + 1;
-    }
-    out
-}
-
-fn collect_reference_definitions(text: &str) -> BTreeMap<String, String> {
-    let mut definitions = BTreeMap::new();
-    for line in markdown_lines(text) {
-        let Some(start) = first_non_whitespace_byte(line.text) else {
-            continue;
-        };
-        let Some(rest) = line.text.get(start..) else {
-            continue;
-        };
-        let Some(label_end) = rest.find("]:") else {
-            continue;
-        };
-        if !rest.starts_with('[') || label_end <= 1 {
-            continue;
-        }
-        let label = normalize_reference_label(&rest[1..label_end]);
-        let target = rest[label_end + 2..]
-            .trim()
-            .split_ascii_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim_matches(['<', '>']);
-        if !label.is_empty() && !target.is_empty() {
-            definitions
-                .entry(label)
-                .or_insert_with(|| target.to_string());
-        }
-    }
-    definitions
-}
-
-fn parse_reference_links(
+fn diagnose_malformed_links(
     line: MarkdownLine<'_>,
-    definitions: &BTreeMap<String, String>,
     path: &str,
     options: &DocumentScanOptions,
     diagnostics: &mut Vec<DocumentDiagnostic>,
-) -> Result<Vec<MarkdownLink>, MarkdownError> {
+) -> Result<(), MarkdownError> {
     let bytes = line.text.as_bytes();
-    let mut cursor = 0usize;
-    let mut links = Vec::new();
+    let mut cursor = 0;
     while cursor < bytes.len() {
-        let is_image =
-            bytes[cursor] == b'!' && cursor + 1 < bytes.len() && bytes[cursor + 1] == b'[';
-        if bytes[cursor] != b'[' && !is_image {
+        let image = bytes[cursor] == b'!' && bytes.get(cursor + 1) == Some(&b'[');
+        if bytes[cursor] != b'[' && !image {
             cursor += 1;
             continue;
         }
-        if !is_image && cursor > 0 && bytes[cursor - 1] == b'!' {
+        let label_start = cursor + usize::from(image) + 1;
+        let Some(label_end_offset) = line.text[label_start..].find(']') else {
+            push_diagnostic(
+                path,
+                options,
+                diagnostics,
+                DocumentDiagnostic {
+                    kind: DocumentDiagnosticKind::UnclosedLinkLabel,
+                    span: source_span(line, cursor, line.text.len()),
+                },
+            )?;
+            break;
+        };
+        let label_end = label_start + label_end_offset;
+        if bytes.get(label_end + 1) != Some(&b'(') {
+            cursor = label_end + 1;
+            continue;
+        }
+        let target_start = label_end + 2;
+        let Some(target_end_offset) = line.text[target_start..].find(')') else {
+            push_diagnostic(
+                path,
+                options,
+                diagnostics,
+                DocumentDiagnostic {
+                    kind: DocumentDiagnosticKind::UnclosedLinkTarget,
+                    span: source_span(line, cursor, line.text.len()),
+                },
+            )?;
+            break;
+        };
+        cursor = target_start + target_end_offset + 1;
+    }
+    Ok(())
+}
+
+fn collect_reference_definitions(text: &str) -> BTreeSet<String> {
+    markdown_lines(text)
+        .filter_map(|line| {
+            let rest = line.text.strip_prefix('[')?;
+            let end = rest.find("]: ").or_else(|| rest.find("]:"))?;
+            let label = normalize_reference_label(&rest[..end]);
+            (!label.is_empty()).then_some(label)
+        })
+        .collect()
+}
+
+fn diagnose_unresolved_references(
+    line: MarkdownLine<'_>,
+    definitions: &BTreeSet<String>,
+    path: &str,
+    options: &DocumentScanOptions,
+    diagnostics: &mut Vec<DocumentDiagnostic>,
+) -> Result<(), MarkdownError> {
+    let bytes = line.text.as_bytes();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let image = bytes[cursor] == b'!' && bytes.get(cursor + 1) == Some(&b'[');
+        if bytes[cursor] != b'[' && !image {
             cursor += 1;
             continue;
         }
-        let label_start = cursor + usize::from(is_image) + 1;
+        let label_start = cursor + usize::from(image) + 1;
         let Some(label_end_offset) = line.text[label_start..].find(']') else {
             break;
         };
         let label_end = label_start + label_end_offset;
-        let reference_open = label_end + 1;
-        if bytes.get(reference_open) != Some(&b'[') {
-            if !matches!(bytes.get(reference_open).copied(), Some(b'(' | b':')) {
-                let text = line.text[label_start..label_end].trim();
-                let reference = normalize_reference_label(text);
-                if let Some(target) = definitions.get(&reference) {
-                    links.push(MarkdownLink {
-                        text: text.to_string(),
-                        target: target.clone(),
-                        line: line.number,
-                        span: Some(source_span(line, cursor, label_end + 1)),
-                        route: None,
-                        kind: if is_image {
-                            MarkdownLinkKind::Image
-                        } else {
-                            MarkdownLinkKind::Reference
-                        },
-                    });
-                }
-            }
+        if bytes.get(label_end + 1) != Some(&b'[') {
             cursor = label_end + 1;
             continue;
         }
-        let reference_start = reference_open + 1;
+        let reference_start = label_end + 2;
         let Some(reference_end_offset) = line.text[reference_start..].find(']') else {
-            cursor = reference_start;
-            continue;
+            break;
         };
         let reference_end = reference_start + reference_end_offset;
-        let text = line.text[label_start..label_end].trim();
-        let raw_reference = line.text[reference_start..reference_end].trim();
-        let reference = normalize_reference_label(if raw_reference.is_empty() {
-            text
+        let raw = line.text[reference_start..reference_end].trim();
+        let label = if raw.is_empty() {
+            &line.text[label_start..label_end]
         } else {
-            raw_reference
-        });
-        match definitions.get(&reference) {
-            Some(target) if !text.is_empty() => links.push(MarkdownLink {
-                text: text.to_string(),
-                target: target.clone(),
-                line: line.number,
-                span: Some(source_span(line, cursor, reference_end + 1)),
-                route: None,
-                kind: if is_image {
-                    MarkdownLinkKind::Image
-                } else {
-                    MarkdownLinkKind::Reference
-                },
-            }),
-            _ => push_diagnostic(
+            raw
+        };
+        if !definitions.contains(&normalize_reference_label(label)) {
+            push_diagnostic(
                 path,
                 options,
                 diagnostics,
@@ -473,48 +476,11 @@ fn parse_reference_links(
                     kind: DocumentDiagnosticKind::UnresolvedReferenceLink,
                     span: source_span(line, cursor, reference_end + 1),
                 },
-            )?,
+            )?;
         }
         cursor = reference_end + 1;
     }
-    Ok(links)
-}
-
-fn parse_autolinks(line: MarkdownLine<'_>) -> Vec<MarkdownLink> {
-    let mut cursor = 0usize;
-    let mut links = Vec::new();
-    while let Some(open_offset) = line.text[cursor..].find('<') {
-        let open = cursor + open_offset;
-        let Some(close_offset) = line.text[open + 1..].find('>') else {
-            break;
-        };
-        let close = open + 1 + close_offset;
-        let value = line.text[open + 1..close].trim();
-        if !value.is_empty()
-            && !value.contains(char::is_whitespace)
-            && (value.starts_with("http://")
-                || value.starts_with("https://")
-                || value.starts_with("mailto:")
-                || value.contains('@'))
-        {
-            let target =
-                if value.contains('@') && !value.contains("://") && !value.starts_with("mailto:") {
-                    format!("mailto:{value}")
-                } else {
-                    value.to_string()
-                };
-            links.push(MarkdownLink {
-                text: value.to_string(),
-                target,
-                line: line.number,
-                span: Some(source_span(line, open, close + 1)),
-                route: None,
-                kind: MarkdownLinkKind::Autolink,
-            });
-        }
-        cursor = close + 1;
-    }
-    links
+    Ok(())
 }
 
 fn parse_html_anchor_links(
@@ -696,18 +662,55 @@ fn push_html_diagnostic(
     )
 }
 
+fn markdown_link_kind(link_type: LinkType, image: bool) -> MarkdownLinkKind {
+    if image {
+        return MarkdownLinkKind::Image;
+    }
+    match link_type {
+        LinkType::Inline | LinkType::WikiLink { .. } => MarkdownLinkKind::Inline,
+        LinkType::Autolink | LinkType::Email => MarkdownLinkKind::Autolink,
+        LinkType::Reference
+        | LinkType::ReferenceUnknown
+        | LinkType::Collapsed
+        | LinkType::CollapsedUnknown
+        | LinkType::Shortcut
+        | LinkType::ShortcutUnknown => MarkdownLinkKind::Reference,
+    }
+}
+
+const fn heading_level(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn normalized_visible_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn trim_trailing_line_ending(source: &str, mut end: usize) -> usize {
+    if end > 0 && source.as_bytes()[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > 0 && source.as_bytes()[end - 1] == b'\r' {
+        end -= 1;
+    }
+    end
+}
+
 fn normalize_reference_label(value: &str) -> String {
-    value
-        .split_ascii_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
+    normalized_visible_text(value).to_ascii_lowercase()
 }
 
 fn find_ascii_case_insensitive(haystack: &str, needle: &str, from: usize) -> Option<usize> {
     let haystack = haystack.as_bytes();
     let needle = needle.as_bytes();
-    if needle.is_empty() || from > haystack.len() {
+    if needle.is_empty() || from > haystack.len() || needle.len() > haystack.len() - from {
         return None;
     }
     haystack[from..]
@@ -731,21 +734,39 @@ const fn diagnostic_kind_rank(kind: DocumentDiagnosticKind) -> u8 {
     }
 }
 
-fn first_non_whitespace_byte(line: &str) -> Option<usize> {
-    line.char_indices()
-        .find(|(_, character)| !character.is_whitespace())
-        .map(|(index, _)| index)
-}
-
-fn source_span(line: MarkdownLine<'_>, start_in_line: usize, end_in_line: usize) -> SourceSpan {
+fn source_span(line: MarkdownLine<'_>, start: usize, end: usize) -> SourceSpan {
     SourceSpan::new(
         line.number,
-        column_for_byte(line.text, start_in_line),
-        line.byte_start + start_in_line,
-        line.byte_start + end_in_line,
+        line.text[..start].chars().count() + 1,
+        line.byte_start + start,
+        line.byte_start + end,
     )
 }
 
-fn column_for_byte(line: &str, byte_index: usize) -> usize {
-    line[..byte_index].chars().count() + 1
+struct LineIndex<'a> {
+    source: &'a str,
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    fn new(source: &'a str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(source.match_indices('\n').map(|(index, _)| index + 1));
+        Self { source, starts }
+    }
+
+    fn line_for(&self, byte: usize) -> usize {
+        self.starts.partition_point(|start| *start <= byte).max(1)
+    }
+
+    fn span(&self, range: Range<usize>) -> SourceSpan {
+        let line = self.line_for(range.start);
+        let line_start = self.starts[line - 1];
+        SourceSpan::new(
+            line,
+            self.source[line_start..range.start].chars().count() + 1,
+            range.start,
+            range.end,
+        )
+    }
 }

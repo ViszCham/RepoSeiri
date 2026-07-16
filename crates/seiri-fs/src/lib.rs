@@ -5,12 +5,14 @@ use std::path::{Path, PathBuf};
 
 mod classify;
 mod containment;
+mod path;
 mod walker;
 
 pub use containment::{
     resolve_repository_path, RepositoryPathRejectReason, RepositoryPathResolution,
     RepositoryPathUnknownReason,
 };
+pub use path::{RepoPathError, RepoRelativePath};
 
 pub use walker::{
     resolve_repo_root, walk_repository, walk_repository_with_options, FsError, IgnorePolicy,
@@ -18,13 +20,26 @@ pub use walker::{
     WalkLimitKind, WalkTruncation, DEFAULT_IGNORED_NAMES,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RepoFsScan {
     pub repo_root: PathBuf,
     pub files: Vec<FileRecord>,
     pub important_files: Vec<ImportantFile>,
     pub walk_summary: RepositoryWalkSummary,
     pub ignored_shallow: Vec<IgnoredShallowRecord>,
+}
+
+impl std::fmt::Debug for RepoFsScan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RepoFsScan")
+            .field("repo_root", &".")
+            .field("files", &self.files)
+            .field("important_files", &self.important_files)
+            .field("walk_summary", &self.walk_summary)
+            .field("ignored_shallow", &self.ignored_shallow)
+            .finish()
+    }
 }
 
 pub fn scan_repository(path: impl AsRef<Path>) -> Result<RepoFsScan, FsError> {

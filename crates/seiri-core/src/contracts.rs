@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const ERROR_SCHEMA_VERSION: &str = "seiri.error.v1";
-pub const COMPLETION_SCHEMA_VERSION: &str = "seiri.completion.v2";
+pub const COMPLETION_SCHEMA_VERSION: &str = "seiri.completion.v3";
 pub const CONTRACT_SCHEMA_VERSION: &str = "seiri.contract.v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ impl Default for SemanticRevisions {
             repository_identity: "seiri.repository-identity.v2".to_string(),
             route_target: "seiri.route-target.v3".to_string(),
             claim_projection: crate::CLAIM_SEMANTIC_REVISION.to_string(),
-            patch_planner: "seiri.patch-planner.v3".to_string(),
+            patch_planner: "seiri.patch-planner.v4".to_string(),
         }
     }
 }

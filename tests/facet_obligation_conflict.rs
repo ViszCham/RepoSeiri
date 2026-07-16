@@ -111,6 +111,29 @@ fn test_and_fixture_paths_do_not_promote_repository_facets() {
 }
 
 #[test]
+fn workspace_only_manifest_is_not_package_evidence_and_witnesses_are_minimal() {
+    let repo = TempRepo::new("workspace-only");
+    repo.write("README.md", "# Workspace\n");
+    repo.write("Cargo.toml", "[workspace]\nmembers = []\n");
+    repo.write("docs/a.md", "# A\n");
+    repo.write("docs/b.md", "# B\n");
+    let snapshot = seiri_report::audit_repository(repo.path()).expect("audit repository");
+    assert!(matches!(
+        snapshot
+            .facets
+            .assessment(RepositoryFacet::Package)
+            .expect("package facet")
+            .observation,
+        Observation::Absent { .. }
+    ));
+    assert!(snapshot.facets.facets.iter().all(|facet| {
+        facet
+            .evidence_ids()
+            .is_none_or(|evidence| evidence.len() <= 2)
+    }));
+}
+
+#[test]
 fn partial_filesystem_coverage_keeps_unsatisfied_obligations_unknown() {
     let repo = TempRepo::new("partial-obligation");
     repo.write(

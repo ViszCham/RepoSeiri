@@ -224,7 +224,7 @@ impl CalibrationProvider for SyntheticPrivateCalibration {
         Some(PriorVisibility::LocalOnly)
     }
 
-    fn redacted_fingerprint(&self) -> Option<&str> {
+    fn comparison_binding(&self) -> Option<&str> {
         Some("synthetic-private-assertion-calibration")
     }
 }

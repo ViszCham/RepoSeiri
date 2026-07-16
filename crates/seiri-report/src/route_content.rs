@@ -174,7 +174,9 @@ fn slot_allows_document(spec: &ContentSlotSpec, entry: &seiri_core::IndexedDocum
     }
     match spec.scope {
         seiri_core::CoverageScope::RootReadme => entry.role == seiri_core::DocumentRole::RootReadme,
-        seiri_core::CoverageScope::MarkdownDocuments => entry.scope_class.is_repository_content(),
+        seiri_core::CoverageScope::MarkdownDocuments => {
+            entry.classification.is_primary_repository_content()
+        }
         seiri_core::CoverageScope::DocumentRole(role) => entry.role == role,
         seiri_core::CoverageScope::Document(document) => entry.document_id == Some(document),
         seiri_core::CoverageScope::RepositoryFiles | seiri_core::CoverageScope::RemoteMetadata => {
@@ -238,7 +240,7 @@ fn structural_pairs(
 ) -> Vec<BilingualStructuralPair> {
     let mut pairs = Vec::new();
     for entry in documents.scanned_documents() {
-        if !entry.scope_class.is_repository_content() {
+        if !entry.classification.is_primary_repository_content() {
             continue;
         }
         let Some(scan) = entry.scan.as_ref() else {

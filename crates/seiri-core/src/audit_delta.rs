@@ -1,19 +1,18 @@
 use crate::{
-    AnalysisScope, ClaimId, ContentSlotId, CoverageStatus, DocumentId, EvidenceId, GateKind,
+    AnalysisScope, ClaimId, ContentSlotId, CoverageStatus, Digest32, DocumentId, GateKind,
     ProfileKind, RepositoryFacet, RouteFreshness, RouteKind, RoutePolicyBoundary, RouteTargetRole,
     ScopeReadBudget,
 };
-use serde::de::Error as _;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt::{Display, Formatter};
+use serde::{Deserialize, Serialize};
 
-pub const PORTABLE_AUDIT_SCHEMA_VERSION: &str = "seiri.portable-audit.v1";
-pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v1";
+pub const PORTABLE_AUDIT_SCHEMA_VERSION: &str = "seiri.portable-audit.v2";
+pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v2";
 pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v2";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EvidenceFingerprint {
-    pub semantic: Digest32,
+    pub identity: Digest32,
+    pub state: Digest32,
     pub occurrence: Digest32,
 }
 
@@ -25,67 +24,6 @@ pub struct PatchDecisionBasis {
     pub evidence_fingerprints: Vec<EvidenceFingerprint>,
     pub claim_semantic_revision: String,
     pub planner_semantic_revision: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Digest32([u8; 32]);
-
-impl Digest32 {
-    #[must_use]
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl Display for Digest32 {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("sha256:")?;
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-
-impl Serialize for Digest32 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for Digest32 {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        let hex = value
-            .strip_prefix("sha256:")
-            .filter(|hex| hex.len() == 64)
-            .ok_or_else(|| {
-                D::Error::custom("digest must use sha256 plus 64 lowercase hex digits")
-            })?;
-        if !hex
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(D::Error::custom("digest contains invalid hex digits"));
-        }
-        let mut bytes = [0u8; 32];
-        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
-            let pair = std::str::from_utf8(pair).map_err(D::Error::custom)?;
-            bytes[index] = u8::from_str_radix(pair, 16).map_err(D::Error::custom)?;
-        }
-        Ok(Self(bytes))
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +81,7 @@ pub struct AnalysisConfiguration {
     pub budgets: AnalysisBudgetConfiguration,
     pub pattern_registry_fingerprint: String,
     pub visibility: AnalysisVisibility,
-    pub redacted_calibration_fingerprint: Option<String>,
+    pub calibration_binding: Option<String>,
 }
 
 impl Default for AnalysisConfiguration {
@@ -155,7 +93,7 @@ impl Default for AnalysisConfiguration {
             budgets: AnalysisBudgetConfiguration::default(),
             pattern_registry_fingerprint: String::new(),
             visibility: AnalysisVisibility::Standard,
-            redacted_calibration_fingerprint: None,
+            calibration_binding: None,
         }
     }
 }
@@ -182,7 +120,7 @@ pub struct PortableRouteRecord {
     pub missing_pattern: bool,
     pub observation: PortableObservationState,
     pub coverage: CoverageStatus,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
     pub digest: Digest32,
 }
 
@@ -193,7 +131,7 @@ pub struct PortableContentSlotRecord {
     pub route: RouteKind,
     pub observation: PortableObservationState,
     pub coverage: CoverageStatus,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
     pub digest: Digest32,
 }
 
@@ -208,7 +146,7 @@ pub struct PortableCoverageRecord {
 pub struct PortableConflictRecord {
     pub id: String,
     pub route: RouteKind,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
     pub digest: Digest32,
 }
 
@@ -217,7 +155,7 @@ pub struct PortableObligationRecord {
     pub id: String,
     pub route: RouteKind,
     pub observation: PortableObservationState,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
     pub coverage: CoverageStatus,
     pub digest: Digest32,
 }
@@ -226,7 +164,7 @@ pub struct PortableObligationRecord {
 pub struct PortableFacetRecord {
     pub facet: RepositoryFacet,
     pub observation: PortableObservationState,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
     pub coverage: CoverageStatus,
     pub digest: Digest32,
 }
@@ -281,6 +219,7 @@ pub enum DeltaUnknownReason {
     ConfigurationMismatch,
     PartialCoverage,
     MissingComparableRecord,
+    UnknownPrivateBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,7 +245,7 @@ pub struct ArtifactDelta {
     pub after: Option<Digest32>,
     pub before_coverage: CoverageStatus,
     pub after_coverage: CoverageStatus,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,7 +253,7 @@ pub struct RegressionCandidate {
     pub domain: String,
     pub key: String,
     pub state: DeltaState,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,7 +261,7 @@ pub struct ImprovementCandidate {
     pub domain: String,
     pub key: String,
     pub state: DeltaState,
-    pub evidence_ids: Vec<EvidenceId>,
+    pub evidence: Vec<EvidenceFingerprint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

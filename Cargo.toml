@@ -9,6 +9,7 @@ publish = false
 [workspace]
 resolver = "2"
 members = [
+    "crates/seiri-digest",
     "crates/seiri-core",
     "crates/seiri-fs",
     "crates/seiri-markdown",
@@ -44,6 +45,7 @@ gix-tempfile = { version = "=23.0.1", default-features = false }
 time = "=0.3.47"
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
+pulldown-cmark = "=0.13.0"
 
 [dev-dependencies]
 seiri-core = { path = "crates/seiri-core" }

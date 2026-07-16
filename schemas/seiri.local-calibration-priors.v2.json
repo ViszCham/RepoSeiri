@@ -11,7 +11,8 @@
   "properties": {
     "schema_version": { "const": "seiri.local-calibration-priors.v2" },
     "registry_fingerprint": { "type": "string" },
-    "_private_note": { "type": "string" },
+    "opaque_revision": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$" },
+    "private_note": { "type": "string" },
     "priors": { "type": "array", "maxItems": 4096 }
   },
   "additionalProperties": false

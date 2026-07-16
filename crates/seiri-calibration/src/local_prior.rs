@@ -2,11 +2,12 @@ use seiri_core::{
     AggregatePrior, CalibrationKey, CalibrationLookup, CalibrationProvider,
     CalibrationUnavailableReason, PriorBasis, PriorVisibility, ProfileKind, RouteKind,
 };
+use seiri_digest::{Digest32, StableHasher};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::fs;
+use std::fs::File;
+use std::io::{Read, Take};
 use std::num::NonZeroU64;
 use std::path::Path;
 
@@ -18,19 +19,20 @@ const MAX_RULE_ID_BYTES: usize = 128;
 pub struct LocalCalibrationProvider {
     priors: BTreeMap<CalibrationKey, AggregatePrior>,
     registry_fingerprint: Box<str>,
-    content_fingerprint: Box<str>,
+    _private_digest: PrivateCalibrationDigest,
+    comparison_binding: Option<Box<str>>,
     source_bytes: u64,
+}
+
+// Deliberately has no Debug, Display, Serialize, or public accessor.
+struct PrivateCalibrationDigest {
+    _value: Digest32,
 }
 
 impl LocalCalibrationProvider {
     #[must_use]
     pub fn registry_fingerprint(&self) -> &str {
         &self.registry_fingerprint
-    }
-
-    #[must_use]
-    pub fn content_fingerprint(&self) -> &str {
-        &self.content_fingerprint
     }
 
     #[must_use]
@@ -56,8 +58,8 @@ impl CalibrationProvider for LocalCalibrationProvider {
         Some(PriorVisibility::LocalOnly)
     }
 
-    fn redacted_fingerprint(&self) -> Option<&str> {
-        Some(&self.content_fingerprint)
+    fn comparison_binding(&self) -> Option<&str> {
+        self.comparison_binding.as_deref()
     }
 }
 
@@ -71,6 +73,7 @@ pub enum LocalPriorLoadError {
     RegistryFingerprintMismatch,
     InvalidPrior,
     InvalidRuleId,
+    InvalidOpaqueRevision,
     DuplicateKey,
 }
 
@@ -100,6 +103,9 @@ impl Display for LocalPriorLoadError {
             Self::InvalidRuleId => {
                 formatter.write_str("local calibration pack contains an invalid rule id")
             }
+            Self::InvalidOpaqueRevision => {
+                formatter.write_str("local calibration pack contains an invalid opaque revision")
+            }
             Self::DuplicateKey => {
                 formatter.write_str("local calibration pack contains a duplicate key")
             }
@@ -113,8 +119,10 @@ impl std::error::Error for LocalPriorLoadError {}
 struct WirePack {
     schema_version: String,
     registry_fingerprint: String,
-    #[serde(default)]
+    #[serde(default, alias = "private_note")]
     _private_note: Option<String>,
+    #[serde(default)]
+    opaque_revision: Option<String>,
     priors: Vec<WirePrior>,
 }
 
@@ -147,12 +155,12 @@ pub fn load_local_calibration_provider_for_registry(
     path: impl AsRef<Path>,
     expected_fingerprint: &str,
 ) -> Result<LocalCalibrationProvider, LocalPriorLoadError> {
-    let path = path.as_ref();
-    let metadata = fs::metadata(path).map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
-    if metadata.len() > MAX_LOCAL_PRIOR_BYTES {
-        return Err(LocalPriorLoadError::SourceTooLarge);
-    }
-    let bytes = fs::read(path).map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
+    let file = File::open(path.as_ref()).map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
+    let mut bytes = Vec::new();
+    let mut bounded: Take<File> = file.take(MAX_LOCAL_PRIOR_BYTES + 1);
+    bounded
+        .read_to_end(&mut bytes)
+        .map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
     if bytes.len() as u64 > MAX_LOCAL_PRIOR_BYTES {
         return Err(LocalPriorLoadError::SourceTooLarge);
     }
@@ -198,25 +206,57 @@ pub fn load_local_calibration_provider_for_registry(
         }
     }
 
+    let private_digest = private_calibration_digest(&priors, &wire.registry_fingerprint);
+    let comparison_binding = wire
+        .opaque_revision
+        .map(|value| {
+            if value.is_empty()
+                || value.len() > MAX_RULE_ID_BYTES
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            {
+                return Err(LocalPriorLoadError::InvalidOpaqueRevision);
+            }
+            Ok(value.into_boxed_str())
+        })
+        .transpose()?;
     Ok(LocalCalibrationProvider {
         priors,
         registry_fingerprint: wire.registry_fingerprint.into_boxed_str(),
-        content_fingerprint: content_fingerprint(&bytes).into_boxed_str(),
+        _private_digest: private_digest,
+        comparison_binding,
         source_bytes: bytes.len() as u64,
     })
 }
 
-fn content_fingerprint(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"seiri.local-calibration-content.v1");
-    hasher.update((bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    let mut value = String::with_capacity("sha256:".len() + 64);
-    value.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(value, "{byte:02x}").expect("writing to String cannot fail");
+fn private_calibration_digest(
+    priors: &BTreeMap<CalibrationKey, AggregatePrior>,
+    registry_fingerprint: &str,
+) -> PrivateCalibrationDigest {
+    let mut hasher = StableHasher::new(b"seiri.private-calibration.semantic.v2");
+    hasher.str(1, registry_fingerprint);
+    hasher.usize(2, priors.len());
+    for (key, prior) in priors {
+        match key {
+            CalibrationKey::RouteGap(route) => {
+                hasher.u8(3, 0);
+                hasher.u8(4, *route as u8);
+            }
+            CalibrationKey::CoOccurrence(rule) => {
+                hasher.u8(3, 1);
+                hasher.str(4, rule);
+            }
+            CalibrationKey::ProfileBranch(profile) => {
+                hasher.u8(3, 2);
+                hasher.u8(4, *profile as u8);
+            }
+        }
+        hasher.u64(5, prior.observed());
+        hasher.u64(6, prior.sample_size().get());
+        hasher.u8(7, prior.rank_weight_x100());
     }
-    value
+    PrivateCalibrationDigest {
+        _value: hasher.finish(),
+    }
 }

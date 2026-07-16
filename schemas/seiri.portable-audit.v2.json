@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.portable-audit.v2.json",
+  "title": "RepoSeiri portable audit v2",
+  "schema_version": "seiri.portable-audit.v2",
+  "owner": "seiri-core::PortableAuditSnapshot",
+  "compatibility": "v2-only",
+  "type": "object",
+  "required": ["schema_version", "configuration", "digest", "routes", "content_slots", "coverage", "conflicts", "obligations", "facets", "documents", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.portable-audit.v2" },
+    "configuration": { "type": "object" },
+    "digest": { "type": "object" },
+    "routes": { "type": "array" },
+    "content_slots": { "type": "array" },
+    "coverage": { "type": "array" },
+    "conflicts": { "type": "array" },
+    "obligations": { "type": "array" },
+    "facets": { "type": "array" },
+    "documents": { "type": "array" },
+    "boundary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

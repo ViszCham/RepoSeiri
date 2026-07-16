@@ -1,6 +1,6 @@
 use crate::{
     CoverageIncompleteReason, CoverageStatus, DocumentId, DocumentScan, PatchBaseDigest,
-    TextDocumentBase, TextEncoding,
+    PathClassification, TextDocumentBase, TextEncoding,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -42,24 +42,6 @@ impl DocumentRoleMask {
     #[must_use]
     pub const fn contains(self, role: DocumentRole) -> bool {
         self.0 & (1 << role as u8) != 0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DocumentScopeClass {
-    Repository,
-    NestedPackage,
-    Fixture,
-    Test,
-    Generated,
-    SupportingExample,
-}
-
-impl DocumentScopeClass {
-    #[must_use]
-    pub const fn is_repository_content(self) -> bool {
-        matches!(self, Self::Repository)
     }
 }
 
@@ -111,7 +93,7 @@ impl DocumentScanStatus {
 pub struct IndexedDocument {
     pub path: String,
     pub role: DocumentRole,
-    pub scope_class: DocumentScopeClass,
+    pub classification: PathClassification,
     pub declared_bytes: u64,
     pub document_id: Option<DocumentId>,
     pub status: DocumentScanStatus,
@@ -125,14 +107,14 @@ impl IndexedDocument {
     pub fn scanned(
         path: String,
         role: DocumentRole,
-        scope_class: DocumentScopeClass,
+        classification: PathClassification,
         declared_bytes: u64,
         scan: DocumentScan,
     ) -> Self {
         Self {
             path,
             role,
-            scope_class,
+            classification,
             declared_bytes,
             document_id: None,
             status: DocumentScanStatus::Scanned,
@@ -146,7 +128,7 @@ impl IndexedDocument {
     pub fn unavailable(
         path: String,
         role: DocumentRole,
-        scope_class: DocumentScopeClass,
+        classification: PathClassification,
         declared_bytes: u64,
         status: DocumentScanStatus,
     ) -> Self {
@@ -154,7 +136,7 @@ impl IndexedDocument {
         Self {
             path,
             role,
-            scope_class,
+            classification,
             declared_bytes,
             document_id: None,
             status,
@@ -168,14 +150,14 @@ impl IndexedDocument {
     pub fn unparsed(
         path: String,
         role: DocumentRole,
-        scope_class: DocumentScopeClass,
+        classification: PathClassification,
         declared_bytes: u64,
         base: TextDocumentBase,
     ) -> Self {
         Self {
             path,
             role,
-            scope_class,
+            classification,
             declared_bytes,
             document_id: None,
             status: DocumentScanStatus::NotMarkdown,

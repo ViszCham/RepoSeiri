@@ -1,6 +1,6 @@
 use crate::{
-    CoverageIndex, CoverageScope, EvidenceAtom, EvidenceFact, EvidenceId, EvidenceKernel,
-    ImportantFileKind, Observation,
+    CoverageIndex, CoverageScope, EvidenceAtom, EvidenceFact, EvidenceId, ImportantFileKind,
+    ManifestObservationStatus, Observation, PathClassification, RepositoryAnalysis,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
@@ -144,13 +144,36 @@ impl Display for FacetReportError {
 impl std::error::Error for FacetReportError {}
 
 #[must_use]
-pub fn facet_evidence_ids(facet: RepositoryFacet, kernel: &EvidenceKernel) -> Vec<EvidenceId> {
-    let mut ids = kernel
+pub fn facet_evidence_ids(
+    facet: RepositoryFacet,
+    analysis: &RepositoryAnalysis,
+) -> Vec<EvidenceId> {
+    let mut facts = analysis
+        .evidence_kernel
         .facts()
         .iter()
         .filter(|fact| {
-            fact_supports_facet(facet, fact, kernel.path_for_fact(fact).unwrap_or_default())
+            let path = analysis
+                .evidence_kernel
+                .path_for_fact(fact)
+                .unwrap_or_default();
+            PathClassification::classify(path, Some(&analysis.repository_scope.graph))
+                .is_primary_repository_content()
+                && fact_supports_facet(facet, fact, path, analysis)
         })
+        .collect::<Vec<_>>();
+    facts.sort_by_key(|fact| {
+        (
+            analysis
+                .evidence_kernel
+                .path_for_fact(fact)
+                .unwrap_or_default(),
+            fact.id,
+        )
+    });
+    let mut ids = facts
+        .into_iter()
+        .take(2)
         .map(|fact| fact.id)
         .collect::<Vec<_>>();
     ids.sort_unstable();
@@ -158,29 +181,15 @@ pub fn facet_evidence_ids(facet: RepositoryFacet, kernel: &EvidenceKernel) -> Ve
     ids
 }
 
-fn fact_supports_facet(facet: RepositoryFacet, fact: &EvidenceFact, path: &str) -> bool {
+fn fact_supports_facet(
+    facet: RepositoryFacet,
+    fact: &EvidenceFact,
+    path: &str,
+    analysis: &RepositoryAnalysis,
+) -> bool {
     let path = path.to_ascii_lowercase();
-    if has_path_segment(
-        &path,
-        &[
-            "test",
-            "tests",
-            "fixture",
-            "fixtures",
-            "example",
-            "examples",
-            "generated",
-        ],
-    ) {
-        return false;
-    }
     match facet {
-        RepositoryFacet::Package => {
-            matches!(
-                fact.atom,
-                EvidenceAtom::ImportantFile(ImportantFileKind::CargoToml)
-            ) || is_package_manifest(&path)
-        }
+        RepositoryFacet::Package => is_declared_package_manifest(&path, analysis),
         RepositoryFacet::Binary => is_binary_entrypoint(&path),
         RepositoryFacet::Infrastructure => {
             matches!(
@@ -236,11 +245,17 @@ fn fact_supports_facet(facet: RepositoryFacet, fact: &EvidenceFact, path: &str) 
     }
 }
 
-fn is_package_manifest(path: &str) -> bool {
-    matches!(
-        path,
-        "cargo.toml" | "package.json" | "pyproject.toml" | "go.mod"
-    )
+fn is_declared_package_manifest(path: &str, analysis: &RepositoryAnalysis) -> bool {
+    analysis
+        .repository_scope
+        .graph
+        .manifests
+        .iter()
+        .any(|manifest| {
+            manifest.status == ManifestObservationStatus::Parsed
+                && manifest.declares_package
+                && manifest.path.eq_ignore_ascii_case(path)
+        })
 }
 
 fn is_binary_entrypoint(path: &str) -> bool {
@@ -253,4 +268,52 @@ fn is_binary_entrypoint(path: &str) -> bool {
 
 fn has_path_segment(path: &str, candidates: &[&str]) -> bool {
     path.split('/').any(|segment| candidates.contains(&segment))
+}
+
+#[must_use]
+pub fn is_facet_signal_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "cargo.toml"
+            | "package.json"
+            | "pyproject.toml"
+            | "go.mod"
+            | "src/main.rs"
+            | "main.go"
+            | "main.py"
+    ) || lower.starts_with("src/bin/")
+        || lower.starts_with("cmd/")
+        || has_path_segment(
+            &lower,
+            &[
+                "infra",
+                "infrastructure",
+                "terraform",
+                "k8s",
+                "helm",
+                "deploy",
+                "deployments",
+                "ops",
+                "research",
+                "paper",
+                "papers",
+                "dataset",
+                "datasets",
+                "notebook",
+                "notebooks",
+                "experiment",
+                "experiments",
+                "template",
+                "templates",
+                "cookiecutter",
+                "scaffold",
+                "app",
+                "apps",
+                "web",
+                "frontend",
+                "backend",
+                "product",
+            ],
+        )
 }

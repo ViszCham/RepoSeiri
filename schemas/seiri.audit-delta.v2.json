@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.audit-delta.v2.json",
+  "title": "RepoSeiri audit delta v2",
+  "schema_version": "seiri.audit-delta.v2",
+  "owner": "seiri-core::AuditDeltaReport",
+  "compatibility": "v2-only",
+  "type": "object",
+  "required": ["schema_version", "compatibility", "before", "after", "routes", "content_slots", "coverage", "conflicts", "obligations", "facets", "regressions", "improvements", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.audit-delta.v2" },
+    "compatibility": { "type": "object" },
+    "before": { "type": "object" },
+    "after": { "type": "object" },
+    "routes": { "type": "array" },
+    "content_slots": { "type": "array" },
+    "coverage": { "type": "array" },
+    "conflicts": { "type": "array" },
+    "obligations": { "type": "array" },
+    "facets": { "type": "array" },
+    "regressions": { "type": "array" },
+    "improvements": { "type": "array" },
+    "boundary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

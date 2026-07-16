@@ -97,41 +97,60 @@ fn evidence_kernel_rejects_invalid_typed_producer_and_span_shapes() {
 
 #[test]
 fn evidence_fingerprint_is_independent_of_storage_ordinal() {
-    let draft = |path: &str| EvidenceDraft {
-        atom: EvidenceAtom::FilePresent,
-        domain: SourceDomain::RepositoryLocal,
-        producer: EvidenceProducer::FileWalker,
-        path: Some(path.to_string()),
-        span: None,
-        confidence: EvidenceConfidence::High,
-    };
-    let first = EvidenceKernel::from_drafts(vec![draft("README.md"), draft("LICENSE")])
-        .expect("first kernel");
-    let second = EvidenceKernel::from_drafts(vec![draft("LICENSE"), draft("README.md")])
-        .expect("second kernel");
-    let fingerprint = |kernel: &EvidenceKernel| {
-        let fact = kernel
+    let first_root = repository("fingerprint-first");
+    let first = seiri_report::audit_repository(&first_root).expect("first analysis");
+    let fact = first
+        .evidence_kernel
+        .facts()
+        .iter()
+        .find(|fact| first.evidence_kernel.path_for_fact(fact) == Some("LICENSE"))
+        .expect("LICENSE evidence");
+    let mut shifted = fact.clone();
+    shifted.id = seiri_core::EvidenceId::from_ordinal(999).expect("alternate ordinal");
+    assert_ne!(fact.id, shifted.id);
+    assert_eq!(
+        seiri_delta::evidence_fingerprint(&first, fact).expect("original fingerprint"),
+        seiri_delta::evidence_fingerprint(&first, &shifted).expect("shifted fingerprint")
+    );
+    fs::remove_dir_all(first_root).expect("cleanup first");
+}
+
+#[test]
+fn evidence_identity_binds_normalized_markdown_target() {
+    let first_root = repository("target-first");
+    let second_root = repository("target-second");
+    fs::write(
+        second_root.join("README.md"),
+        "# Example\n\n[Documentation](docs/other.md)\n",
+    )
+    .expect("alternate README");
+    fs::write(second_root.join("docs/other.md"), "# Other\n").expect("alternate target");
+    let first = seiri_report::audit_repository(&first_root).expect("first analysis");
+    let second = seiri_report::audit_repository(&second_root).expect("second analysis");
+    let link_fingerprint = |analysis: &seiri_core::RepositoryAnalysis| {
+        let fact = analysis
+            .evidence_kernel
             .facts()
             .iter()
-            .find(|fact| kernel.path_for_fact(fact) == Some("README.md"))
-            .expect("README evidence");
-        seiri_delta::evidence_fingerprint(kernel, fact).expect("fingerprint")
+            .find(|fact| {
+                analysis.evidence_kernel.path_for_fact(fact) == Some("README.md")
+                    && matches!(
+                        fact.atom,
+                        EvidenceAtom::Markdown {
+                            event: seiri_core::MarkdownEvidenceKind::Link,
+                            ..
+                        }
+                    )
+            })
+            .expect("link evidence");
+        seiri_delta::evidence_fingerprint(analysis, fact).expect("fingerprint")
     };
     assert_ne!(
-        first
-            .facts()
-            .iter()
-            .find(|fact| first.path_for_fact(fact) == Some("README.md"))
-            .unwrap()
-            .id,
-        second
-            .facts()
-            .iter()
-            .find(|fact| second.path_for_fact(fact) == Some("README.md"))
-            .unwrap()
-            .id
+        link_fingerprint(&first).identity,
+        link_fingerprint(&second).identity
     );
-    assert_eq!(fingerprint(&first), fingerprint(&second));
+    fs::remove_dir_all(first_root).expect("cleanup first");
+    fs::remove_dir_all(second_root).expect("cleanup second");
 }
 
 fn repository(name: &str) -> PathBuf {

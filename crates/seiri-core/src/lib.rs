@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+pub use seiri_digest::Digest32;
 
 mod audit_delta;
 mod calibration_prior;
@@ -16,6 +19,7 @@ mod github_local;
 mod obligation_graph;
 mod observation;
 mod patch_proposal;
+mod path_classification;
 mod profile_semantics;
 mod remote_evidence;
 mod repository_scope;
@@ -48,7 +52,7 @@ pub use contracts::{
 };
 pub use document_index::{
     DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentRoleMask,
-    DocumentScanStatus, DocumentScopeClass, DocumentSelectionSummary, IndexedDocument,
+    DocumentScanStatus, DocumentSelectionSummary, IndexedDocument,
 };
 pub use document_scan::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan,
@@ -61,7 +65,8 @@ pub use evidence_kernel::{
     ReadmePresence, SourceDomain,
 };
 pub use facets::{
-    facet_evidence_ids, FacetAssessment, FacetReport, FacetReportError, RepositoryFacet,
+    facet_evidence_ids, is_facet_signal_path, FacetAssessment, FacetReport, FacetReportError,
+    RepositoryFacet,
 };
 pub use github_local::{
     ActionReference, ActionReferenceKind, CodeownerEntry, Codeowners, CodeownersOp,
@@ -89,6 +94,7 @@ pub use patch_proposal::{
     PatchTextEdit, PolicySlotKind, TextDocumentBase, TextEditSpan, TextEncoding, TextLineEnding,
     UnresolvedPolicySlot, PATCH_ANCHOR_CONTEXT_BYTES, PATCH_PROPOSAL_SCHEMA_VERSION,
 };
+pub use path_classification::{EvidenceUsage, PathClassification, RepositoryRegion};
 pub use profile_semantics::{
     CalibrationPriorState, ProfileBranchSemantics, ProfileFit, ProfilePurposeAffinity,
     ProfileRankScore,
@@ -160,15 +166,16 @@ pub struct RepositoryAnalysis {
     pub baseline: Option<BaselineReport>,
     pub profile: Option<ProfileReport>,
     pub findings: Vec<Finding>,
+    analysis_root: RepositoryRootHandle,
 }
 
 impl RepositoryAnalysis {
     #[must_use]
-    pub fn new(repo_root: impl Into<String>) -> Self {
+    pub fn new(repo_root: impl Into<PathBuf>) -> Self {
         Self {
             schema_version: ANALYSIS_SCHEMA_VERSION.to_string(),
             tool: TOOL_NAME.to_string(),
-            repo_root: repo_root.into(),
+            repo_root: ".".to_string(),
             entry_count: 0,
             files: Vec::new(),
             important_files: Vec::new(),
@@ -195,7 +202,25 @@ impl RepositoryAnalysis {
             baseline: None,
             profile: None,
             findings: Vec::new(),
+            analysis_root: RepositoryRootHandle(repo_root.into()),
         }
+    }
+
+    #[must_use]
+    pub fn analysis_root(&self) -> &Path {
+        &self.analysis_root.0
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RepositoryRootHandle(PathBuf);
+
+impl std::fmt::Debug for RepositoryRootHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("RepositoryRootHandle")
+            .field(&".")
+            .finish()
     }
 }
 
@@ -2121,7 +2146,7 @@ fn default_observation_count() -> u32 {
 pub use audit_delta::{
     AddExistingRouteLink, AnalysisBudgetConfiguration, AnalysisConfiguration, AnalysisVisibility,
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
-    DeltaUnknownReason, Digest32, EvidenceFingerprint, ExistingTargetId, ImprovementCandidate,
+    DeltaUnknownReason, EvidenceFingerprint, ExistingTargetId, ImprovementCandidate,
     PatchDecisionBasis, PatchHold, PatchHoldReason, PatchPlan, PortableAuditSnapshot,
     PortableConflictRecord, PortableContentSlotRecord, PortableCoverageRecord,
     PortableDocumentRecord, PortableFacetRecord, PortableObligationRecord,

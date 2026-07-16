@@ -70,8 +70,8 @@ impl CalibrationProvider for PrivateCalibrationOverlay {
         Some(PriorVisibility::LocalOnly)
     }
 
-    fn redacted_fingerprint(&self) -> Option<&str> {
-        Some(self.pattern_pack.fingerprint())
+    fn comparison_binding(&self) -> Option<&str> {
+        self.calibration.comparison_binding()
     }
 }
 

@@ -55,7 +55,7 @@ pub fn evaluate_facets(snapshot: &RepositoryAnalysis) -> FacetReport {
     let facets = RepositoryFacet::ALL
         .into_iter()
         .map(|facet| {
-            let evidence = facet_evidence_ids(facet, &snapshot.evidence_kernel);
+            let evidence = facet_evidence_ids(facet, snapshot);
             let observation = if evidence.is_empty() {
                 snapshot
                     .coverage

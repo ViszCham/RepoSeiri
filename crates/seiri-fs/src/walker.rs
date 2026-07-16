@@ -1,3 +1,4 @@
+use crate::{RepoPathError, RepoRelativePath};
 use seiri_core::{FileKind, FileRecord, IgnoredPathReason, IgnoredShallowRecord};
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -63,8 +64,14 @@ impl IgnorePolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RepositoryRoot(PathBuf);
+
+impl std::fmt::Debug for RepositoryRoot {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_tuple("RepositoryRoot").field(&".").finish()
+    }
+}
 
 impl RepositoryRoot {
     pub fn resolve(path: &Path) -> Result<Self, FsError> {
@@ -173,7 +180,6 @@ impl RepositoryWalk {
     }
 }
 
-#[derive(Debug)]
 pub enum FsError {
     Io {
         path: PathBuf,
@@ -182,23 +188,35 @@ pub enum FsError {
     NotDirectory(PathBuf),
     LimitExceeded {
         kind: WalkLimitKind,
-        path: PathBuf,
+        path: String,
         limit: usize,
     },
+    InvalidRepositoryPath(RepoPathError),
+}
+
+impl std::fmt::Debug for FsError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, formatter)
+    }
 }
 
 impl Display for FsError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io { path, source } => {
-                write!(formatter, "failed to read {}: {source}", path.display())
+            Self::Io { source, .. } => {
+                write!(formatter, "failed to read repository path: {source}")
             }
-            Self::NotDirectory(path) => write!(formatter, "{} is not a directory", path.display()),
+            Self::NotDirectory(_) => formatter.write_str("repository path is not a directory"),
             Self::LimitExceeded { kind, path, limit } => write!(
                 formatter,
-                "repository walk {kind:?} limit {limit} exceeded at {}",
-                path.display()
+                "repository walk {kind:?} limit {limit} exceeded at {path}"
             ),
+            Self::InvalidRepositoryPath(kind) => {
+                write!(
+                    formatter,
+                    "repository path cannot be represented safely: {kind:?}"
+                )
+            }
         }
     }
 }
@@ -207,7 +225,9 @@ impl std::error::Error for FsError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::NotDirectory(_) | Self::LimitExceeded { .. } => None,
+            Self::NotDirectory(_) | Self::LimitExceeded { .. } | Self::InvalidRepositoryPath(_) => {
+                None
+            }
         }
     }
 }
@@ -284,15 +304,18 @@ fn walk_dir(
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or(FsError::InvalidRepositoryPath(RepoPathError::NonUtf8))?;
         let file_type = entry.file_type().map_err(|source| FsError::Io {
             path: path.clone(),
             source,
         })?;
-        if let Some(reason) = ignore_reason(&name.to_string_lossy(), options) {
+        if let Some(reason) = ignore_reason(name, options) {
             state.ignored_entries += 1;
             if state.ignored_shallow.len() < options.max_ignored_records {
                 state.ignored_shallow.push(IgnoredShallowRecord {
-                    path: normalize_relative_path(root, &path),
+                    path: normalize_relative_path(root, &path)?,
                     kind: file_kind(file_type),
                     reason,
                 });
@@ -304,7 +327,7 @@ fn walk_dir(
         if state.records.len() >= options.max_entries {
             state.completion = Some(WalkCompletion::Truncated(WalkTruncation {
                 kind: WalkLimitKind::Entries,
-                path: normalize_relative_path(root, &path),
+                path: normalize_relative_path(root, &path)?,
                 limit: options.max_entries,
             }));
             return Ok(());
@@ -325,7 +348,7 @@ fn walk_dir(
 
         state.max_depth_reached = state.max_depth_reached.max(depth);
         state.records.push(FileRecord {
-            path: normalize_relative_path(root, &path),
+            path: normalize_relative_path(root, &path)?,
             kind,
             size_bytes,
         });
@@ -334,7 +357,7 @@ fn walk_dir(
             if depth >= options.max_depth {
                 state.completion = Some(WalkCompletion::Truncated(WalkTruncation {
                     kind: WalkLimitKind::Depth,
-                    path: normalize_relative_path(root, &path),
+                    path: normalize_relative_path(root, &path)?,
                     limit: options.max_depth,
                 }));
                 return Ok(());
@@ -385,11 +408,8 @@ fn has_repo_boundary_marker(path: &Path) -> bool {
         || path.join(".github").is_dir()
 }
 
-fn normalize_relative_path(root: &Path, path: &Path) -> String {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+fn normalize_relative_path(root: &Path, path: &Path) -> Result<String, FsError> {
+    RepoRelativePath::from_rooted(root, path)
+        .map(RepoRelativePath::into_string)
+        .map_err(FsError::InvalidRepositoryPath)
 }
