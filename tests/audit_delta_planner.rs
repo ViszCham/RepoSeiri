@@ -21,6 +21,9 @@ fn portable_snapshot_is_deterministic_and_excludes_source_text() {
     assert_eq!(first, second);
     let json = serde_json::to_string(&first).unwrap();
     assert!(!json.contains("PRIVATE-SOURCE-SENTINEL"));
+    assert!(!json.contains("evidence_ids"));
+    assert!(!json.contains("evrec-"));
+    assert_eq!(first.schema_version, "seiri.portable-audit.v2");
     assert!(json.contains("sha256:"));
     cleanup(root);
 }
@@ -108,13 +111,13 @@ fn redacted_private_overlay_identity_changes_configuration_only() {
     let before = seiri_delta::portable_snapshot(&snapshot).unwrap();
     let mut after = before.clone();
     after.configuration.visibility = seiri_core::AnalysisVisibility::LocalPrivateCalibration;
-    after.configuration.redacted_calibration_fingerprint = Some("redacted:overlay-b".to_string());
+    after.configuration.calibration_binding = Some("overlay-b".to_string());
     after.digest.configuration = seiri_core::Digest32::new([9; 32]);
     let serialized = serde_json::to_string(&after).unwrap();
     assert!(!serialized.contains("private raw calibration value"));
     assert_eq!(
         seiri_delta::compare(&before, &after).compatibility,
-        DeltaCompatibility::Unknown(DeltaUnknownReason::ConfigurationMismatch)
+        DeltaCompatibility::Unknown(DeltaUnknownReason::UnknownPrivateBinding)
     );
     cleanup(root);
 }
@@ -139,7 +142,7 @@ fn patch_plan_only_links_existing_targets_and_binding_rejects_stale_bytes() {
     );
     assert_eq!(
         operation.decision_basis.planner_semantic_revision,
-        "seiri.patch-planner.v3"
+        "seiri.patch-planner.v4"
     );
     assert!(!plan.writes_files);
     let stale = b"# Demo changed\n";

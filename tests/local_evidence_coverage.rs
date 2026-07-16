@@ -1,6 +1,6 @@
 use seiri_core::{
     CoverageIncompleteReason, CoverageScope, CoverageStatus, DocumentRole, DocumentScanStatus,
-    DocumentScopeClass, Observation, ProfileKind, UnknownReason,
+    EvidenceUsage, Observation, ProfileKind, UnknownReason,
 };
 use seiri_fs::ScanOptions;
 use seiri_markdown::DocumentIndexOptions;
@@ -97,7 +97,7 @@ fn scope_class_separates_supporting_documents_from_repository_content() {
         .iter()
         .find(|entry| entry.path == "fixtures/example/docs/guide.md")
         .expect("fixture document");
-    assert_eq!(fixture.scope_class, DocumentScopeClass::Fixture);
+    assert_eq!(fixture.classification.usage, EvidenceUsage::Fixture);
 
     let docs_slot = snapshot
         .route_content

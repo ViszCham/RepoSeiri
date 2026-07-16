@@ -1,8 +1,9 @@
 use seiri_core::{
     DocumentEvent, DocumentIndex, DocumentRole, EvidenceAtom, EvidenceConfidence, EvidenceDraft,
     EvidenceFact, EvidenceId, EvidenceKernel, EvidenceKernelError, EvidenceProducer,
-    ImportantFileKind, MarkdownEvidenceKind, PatternOutcome, ReadmePresence, ReadmeRouteAssessment,
-    RepositoryAnalysis, RouteAssessment, RouteAssessmentError, RouteKind, SourceDomain,
+    ImportantFileKind, MarkdownEvidenceKind, PathClassification, PatternOutcome, ReadmePresence,
+    ReadmeRouteAssessment, RepositoryAnalysis, RepositoryScopeGraph, RouteAssessment,
+    RouteAssessmentError, RouteKind, SourceDomain,
 };
 use seiri_fs::RepoFsScan;
 use std::collections::BTreeSet;
@@ -10,6 +11,7 @@ use std::collections::BTreeSet;
 pub(crate) fn build_evidence_kernel(
     fs_scan: &RepoFsScan,
     document_index: &DocumentIndex,
+    scope: &RepositoryScopeGraph,
 ) -> Result<EvidenceKernel, EvidenceKernelError> {
     let mut drafts = Vec::new();
 
@@ -17,7 +19,8 @@ pub(crate) fn build_evidence_kernel(
         drafts.push(file_draft(
             EvidenceAtom::ImportantFile(important.kind),
             important.path.clone(),
-            confidence_for_path(&important.path, EvidenceConfidence::High),
+            confidence_for_path(&important.path, EvidenceConfidence::High, scope),
+            scope,
         ));
     }
 
@@ -25,7 +28,8 @@ pub(crate) fn build_evidence_kernel(
         drafts.push(file_draft(
             EvidenceAtom::FilePresent,
             entry.path.clone(),
-            confidence_for_path(&entry.path, EvidenceConfidence::High),
+            confidence_for_path(&entry.path, EvidenceConfidence::High, scope),
+            scope,
         ));
     }
 
@@ -40,6 +44,7 @@ pub(crate) fn build_evidence_kernel(
                 Some(document.path().to_string()),
                 None,
                 EvidenceConfidence::High,
+                scope,
             ));
         }
 
@@ -55,6 +60,7 @@ pub(crate) fn build_evidence_kernel(
                         Some(document.path().to_string()),
                         heading.span,
                         EvidenceConfidence::Medium,
+                        scope,
                     ));
                 }
                 DocumentEvent::Link(link) => drafts.push(markdown_draft(
@@ -65,6 +71,7 @@ pub(crate) fn build_evidence_kernel(
                     Some(document.path().to_string()),
                     link.span,
                     EvidenceConfidence::Medium,
+                    scope,
                 )),
                 DocumentEvent::Badge(badge) => drafts.push(markdown_draft(
                     EvidenceAtom::Markdown {
@@ -74,6 +81,7 @@ pub(crate) fn build_evidence_kernel(
                     Some(document.path().to_string()),
                     badge.span,
                     EvidenceConfidence::Medium,
+                    scope,
                 )),
                 DocumentEvent::RouteCandidate(route) => drafts.push(markdown_draft(
                     EvidenceAtom::Markdown {
@@ -83,6 +91,7 @@ pub(crate) fn build_evidence_kernel(
                     Some(document.path().to_string()),
                     route.span,
                     EvidenceConfidence::Medium,
+                    scope,
                 )),
             }
         }
@@ -97,6 +106,7 @@ pub(crate) fn build_evidence_kernel(
             None,
             None,
             EvidenceConfidence::High,
+            scope,
         ));
     }
 
@@ -109,13 +119,22 @@ pub(crate) fn build_evidence_kernel(
         .files
         .iter()
         .map(|file| file.path.replace('\\', "/"))
-        .filter(|path| is_facet_signal_path(path) && !indexed_paths.contains(path.as_str()))
+        .filter(|path| {
+            seiri_core::is_facet_signal_path(path)
+                && PathClassification::classify(path, Some(scope)).is_primary_repository_content()
+                && !indexed_paths.contains(path.as_str())
+        })
         .collect::<Vec<_>>();
     facet_signal_paths.sort();
     facet_signal_paths.dedup();
     for path in facet_signal_paths {
-        let confidence = confidence_for_path(&path, EvidenceConfidence::High);
-        drafts.push(file_draft(EvidenceAtom::FilePresent, path, confidence));
+        let confidence = confidence_for_path(&path, EvidenceConfidence::High, scope);
+        drafts.push(file_draft(
+            EvidenceAtom::FilePresent,
+            path,
+            confidence,
+            scope,
+        ));
     }
 
     EvidenceKernel::from_drafts(drafts)
@@ -205,10 +224,15 @@ fn is_repository_root_fact(analysis: &RepositoryAnalysis, fact: &EvidenceFact) -
     is_root_path(path, fact.atom)
 }
 
-fn file_draft(atom: EvidenceAtom, path: String, confidence: EvidenceConfidence) -> EvidenceDraft {
+fn file_draft(
+    atom: EvidenceAtom,
+    path: String,
+    confidence: EvidenceConfidence,
+    scope: &RepositoryScopeGraph,
+) -> EvidenceDraft {
     EvidenceDraft {
         atom,
-        domain: domain_for_path(&path),
+        domain: PathClassification::classify(&path, Some(scope)).source_domain(),
         producer: EvidenceProducer::FileWalker,
         path: Some(path),
         span: None,
@@ -221,10 +245,13 @@ fn markdown_draft(
     path: Option<String>,
     span: Option<seiri_core::SourceSpan>,
     confidence: EvidenceConfidence,
+    scope: &RepositoryScopeGraph,
 ) -> EvidenceDraft {
     let domain = path
         .as_deref()
-        .map_or(SourceDomain::RepositoryLocal, domain_for_path);
+        .map_or(SourceDomain::RepositoryLocal, |path| {
+            PathClassification::classify(path, Some(scope)).source_domain()
+        });
     EvidenceDraft {
         atom,
         domain,
@@ -235,27 +262,13 @@ fn markdown_draft(
     }
 }
 
-fn domain_for_path(path: &str) -> SourceDomain {
-    let lower = path.replace('\\', "/").to_ascii_lowercase();
-    if lower
-        .split('/')
-        .any(|segment| matches!(segment, "fixtures" | "__fixtures__" | "fixture"))
-    {
-        SourceDomain::Fixture
-    } else {
-        SourceDomain::RepositoryLocal
-    }
-}
-
-fn confidence_for_path(path: &str, root: EvidenceConfidence) -> EvidenceConfidence {
-    let lower = path.replace('\\', "/").to_ascii_lowercase();
-    if lower.split('/').any(|segment| {
-        matches!(
-            segment,
-            "fixtures" | "__fixtures__" | "fixture" | "target" | "dist" | "build" | "coverage"
-        )
-    }) || (lower.contains('/') && !lower.starts_with(".github/"))
-    {
+fn confidence_for_path(
+    path: &str,
+    root: EvidenceConfidence,
+    scope: &RepositoryScopeGraph,
+) -> EvidenceConfidence {
+    let classification = PathClassification::classify(path, Some(scope));
+    if !classification.is_primary_repository_content() {
         EvidenceConfidence::Low
     } else {
         root
@@ -281,53 +294,6 @@ fn is_root_github_operational_file(path: &str, kind: ImportantFileKind) -> bool 
             | ImportantFileKind::Workflow
             | ImportantFileKind::Codeowners
     ) && path.starts_with(".github/")
-}
-
-fn is_facet_signal_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "cargo.toml"
-            | "package.json"
-            | "pyproject.toml"
-            | "go.mod"
-            | "src/main.rs"
-            | "main.go"
-            | "main.py"
-    ) || lower.starts_with("src/bin/")
-        || lower.starts_with("cmd/")
-        || lower.split('/').any(|segment| {
-            matches!(
-                segment,
-                "infra"
-                    | "infrastructure"
-                    | "terraform"
-                    | "k8s"
-                    | "helm"
-                    | "deploy"
-                    | "deployments"
-                    | "ops"
-                    | "research"
-                    | "paper"
-                    | "papers"
-                    | "dataset"
-                    | "datasets"
-                    | "notebook"
-                    | "notebooks"
-                    | "experiment"
-                    | "experiments"
-                    | "template"
-                    | "templates"
-                    | "cookiecutter"
-                    | "scaffold"
-                    | "app"
-                    | "apps"
-                    | "web"
-                    | "frontend"
-                    | "backend"
-                    | "product"
-            )
-        })
 }
 
 fn route_routes() -> &'static [RouteKind] {

@@ -17,6 +17,8 @@ struct RuntimeManifest {
     codex_schema: String,
     error_schema: String,
     standalone_smoke: String,
+    source_digest: String,
+    cargo_lock_digest: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +46,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         return Err("--output must not already exist".to_string());
     }
     let root = repository_root()?;
+    let source = crate::completion::bind_source(&root)?;
     let plugin_output = output.join("reposeiri");
     copy_tree(&root.join("plugins/reposeiri"), &plugin_output)?;
     let binary_name = if target.contains("windows") {
@@ -61,7 +64,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
     fs::copy(&binary, &bundled_binary).map_err(|error| error.to_string())?;
     smoke_bundle(&plugin_output, &bundled_binary, target)?;
     let manifest = RuntimeManifest {
-        schema_version: "reposeiri.runtime-manifest.v1".to_string(),
+        schema_version: "reposeiri.runtime-manifest.v2".to_string(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         target: target.to_string(),
         binary: format!("bin/{binary_name}"),
@@ -69,6 +72,8 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         codex_schema: seiri_core::CODEX_SCHEMA_VERSION.to_string(),
         error_schema: seiri_core::ERROR_SCHEMA_VERSION.to_string(),
         standalone_smoke: "passed".to_string(),
+        source_digest: source.source_digest,
+        cargo_lock_digest: source.cargo_lock_digest,
     };
     fs::write(
         plugin_output.join("runtime-manifest.json"),
@@ -82,7 +87,10 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-pub fn validate_required_hosts(directory: Option<&Path>) -> Vec<HostEvidenceRecord> {
+pub fn validate_required_hosts(
+    directory: Option<&Path>,
+    expected: &crate::completion::SourceBinding,
+) -> Vec<HostEvidenceRecord> {
     const REQUIRED: [&str; 2] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"];
     let manifests = directory.map(find_runtime_manifests).unwrap_or_default();
     REQUIRED
@@ -100,11 +108,13 @@ pub fn validate_required_hosts(directory: Option<&Path>) -> Vec<HostEvidenceReco
                         .parent()
                         .unwrap_or_else(|| Path::new("."))
                         .join(&manifest.binary);
-                    if manifest.schema_version == "reposeiri.runtime-manifest.v1"
+                    if manifest.schema_version == "reposeiri.runtime-manifest.v2"
                         && manifest.tool_version == env!("CARGO_PKG_VERSION")
                         && manifest.codex_schema == seiri_core::CODEX_SCHEMA_VERSION
                         && manifest.error_schema == seiri_core::ERROR_SCHEMA_VERSION
                         && manifest.standalone_smoke == "passed"
+                        && manifest.source_digest == expected.source_digest
+                        && manifest.cargo_lock_digest == expected.cargo_lock_digest
                         && sha256_file(&binary).ok().as_deref() == Some(manifest.sha256.as_str())
                     {
                         HostEvidenceStatus::Passed
@@ -163,9 +173,9 @@ fn smoke_bundle(plugin_root: &Path, binary: &Path, target: &str) -> Result<(), S
         .output()
         .map_err(|error| error.to_string())?;
     fs::remove_dir_all(&smoke_root).map_err(|error| error.to_string())?;
-    if !output.status.success()
-        || !String::from_utf8_lossy(&output.stdout).contains(seiri_core::CODEX_SCHEMA_VERSION)
-    {
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|_| "bundled launcher emitted non-UTF-8 output".to_string())?;
+    if !output.status.success() || !stdout.contains(seiri_core::CODEX_SCHEMA_VERSION) {
         return Err("bundled launcher smoke failed".to_string());
     }
     Ok(())
@@ -253,10 +263,17 @@ fn absolute_from(current: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::completion::SourceBinding;
 
     #[test]
     fn missing_host_evidence_fails_closed() {
-        let hosts = validate_required_hosts(None);
+        let source = SourceBinding {
+            git_head: "test".to_string(),
+            worktree_dirty: false,
+            source_digest: "sha256:test".to_string(),
+            cargo_lock_digest: "sha256:test".to_string(),
+        };
+        let hosts = validate_required_hosts(None, &source);
         assert_eq!(hosts.len(), 2);
         assert!(hosts
             .iter()

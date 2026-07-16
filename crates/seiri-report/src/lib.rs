@@ -27,7 +27,6 @@ use obligation_graph::{build_document_consistency_report, build_route_targets};
 use route_content::build_route_content;
 use route_priority::{build_missing_route_priority_report, build_review_priority_report};
 
-#[derive(Debug)]
 pub enum AuditError {
     Fs(seiri_fs::FsError),
     Markdown(seiri_markdown::MarkdownError),
@@ -48,6 +47,12 @@ pub enum AuditError {
     },
 }
 
+impl std::fmt::Debug for AuditError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, formatter)
+    }
+}
+
 impl Display for AuditError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -64,7 +69,7 @@ impl Display for AuditError {
             Self::GitLocal(error) => write!(f, "{error}"),
             Self::Delta(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
-            Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
+            Self::Io { source, .. } => write!(f, "failed to read repository input: {source}"),
         }
     }
 }
@@ -393,18 +398,18 @@ fn audit_repository_with_options_and_calibration(
         },
         &seiri_git_local::GixReadBackend,
     );
-    let document_index = seiri_markdown::scan_document_index_with_options(
+    let document_index = seiri_markdown::scan_document_index_with_options_and_scope(
         &fs_scan.repo_root,
         &fs_scan.files,
         fs_scan.walk_summary.completion.is_complete(),
         document_options,
+        Some(&repository_scope.graph),
     )?;
     let readme_document = document_index.root_readme_document().cloned();
     let readme_summary = readme_document.as_ref().map(|document| {
         seiri_markdown::summarize_readme_document(document, Some(&fs_scan.repo_root))
     });
-    let repo_root = normalize_public_path(&fs_scan.repo_root);
-    let mut snapshot = RepositoryAnalysis::new(repo_root);
+    let mut snapshot = RepositoryAnalysis::new(fs_scan.repo_root.clone());
     let repository_options = seiri_git_local::RepositoryAnalysisOptions {
         scope: analysis_scope,
         ..seiri_git_local::RepositoryAnalysisOptions::default()
@@ -446,7 +451,7 @@ fn audit_repository_with_options_and_calibration(
                 seiri_core::AnalysisVisibility::RedactedCalibration
             }
         },
-        redacted_calibration_fingerprint: calibration.redacted_fingerprint().map(str::to_owned),
+        calibration_binding: calibration.comparison_binding().map(str::to_owned),
     };
     snapshot.entry_count = fs_scan.files.len();
     snapshot.files = fs_scan.files.clone();
@@ -455,7 +460,11 @@ fn audit_repository_with_options_and_calibration(
     snapshot.document_index = document_index;
     snapshot.readme_document = readme_document;
     snapshot.readme_summary = readme_summary;
-    snapshot.evidence_kernel = build_evidence_kernel(&fs_scan, &snapshot.document_index)?;
+    snapshot.evidence_kernel = build_evidence_kernel(
+        &fs_scan,
+        &snapshot.document_index,
+        &snapshot.repository_scope.graph,
+    )?;
     snapshot.document_index = snapshot
         .document_index
         .clone()
@@ -577,17 +586,6 @@ fn markdown_coverage_status(
         .map(|entry| entry.status.coverage_status())
         .find(|status| *status != seiri_core::CoverageStatus::Complete)
         .unwrap_or(seiri_core::CoverageStatus::Complete)
-}
-
-fn normalize_public_path(path: &Path) -> String {
-    let path = path.to_string_lossy().replace('\\', "/");
-    if let Some(rest) = path.strip_prefix("//?/UNC/") {
-        format!("//{rest}")
-    } else if let Some(rest) = path.strip_prefix("//?/") {
-        rest.to_string()
-    } else {
-        path
-    }
 }
 
 fn build_freshness_report(snapshot: &RepositoryAnalysis) -> seiri_core::FreshnessReport {

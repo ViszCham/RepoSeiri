@@ -15,7 +15,7 @@ fn public_contract_is_v2_only() {
     assert_eq!(PATCH_PLAN_SCHEMA_VERSION, "seiri.patch-plan.v2");
     assert_eq!(CODEX_SCHEMA_VERSION, "seiri.codex.v2");
     assert_eq!(ERROR_SCHEMA_VERSION, "seiri.error.v1");
-    assert_eq!(COMPLETION_SCHEMA_VERSION, "seiri.completion.v2");
+    assert_eq!(COMPLETION_SCHEMA_VERSION, "seiri.completion.v3");
 
     let manifest = ContractManifest::current("1.0.0");
     let json = serde_json::to_string(&manifest).expect("contract JSON");
@@ -29,7 +29,7 @@ fn public_contract_is_v2_only() {
     );
     assert_eq!(
         manifest.semantic_revisions.patch_planner,
-        "seiri.patch-planner.v3"
+        "seiri.patch-planner.v4"
     );
 }
 
@@ -40,7 +40,7 @@ fn active_schema_snapshots_match_owned_constants() {
         ("seiri.patch-plan.v2.json", PATCH_PLAN_SCHEMA_VERSION),
         ("seiri.codex.v2.json", CODEX_SCHEMA_VERSION),
         ("seiri.error.v1.json", ERROR_SCHEMA_VERSION),
-        ("seiri.completion.v2.json", COMPLETION_SCHEMA_VERSION),
+        ("seiri.completion.v3.json", COMPLETION_SCHEMA_VERSION),
     ];
     for (file, expected) in cases {
         let body = fs::read_to_string(repository_root().join("schemas").join(file))
@@ -56,6 +56,14 @@ fn active_schema_snapshots_match_owned_constants() {
         assert_ne!(value["compatibility"], "v1-compatible");
     }
     for (file, expected) in [
+        (
+            "seiri.portable-audit.v2.json",
+            seiri_core::PORTABLE_AUDIT_SCHEMA_VERSION,
+        ),
+        (
+            "seiri.audit-delta.v2.json",
+            seiri_core::AUDIT_DELTA_SCHEMA_VERSION,
+        ),
         ("seiri.calibration.v2.json", "seiri.calibration.v2"),
         (
             "seiri.local-calibration-priors.v2.json",

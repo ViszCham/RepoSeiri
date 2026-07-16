@@ -25,7 +25,7 @@ const PATCH_ROUTES: &[RouteKind] = &[
     RouteKind::Hygiene,
 ];
 
-const PLANNER_SEMANTIC_REVISION: &str = "seiri.patch-planner.v3";
+const PLANNER_SEMANTIC_REVISION: &str = "seiri.patch-planner.v4";
 
 /// Produces bound, dry-run README links to targets that already exist locally.
 #[must_use]
@@ -237,8 +237,7 @@ fn decision_basis(
     evidence_ids.sort_unstable();
     evidence_ids.dedup();
     let evidence_fingerprints =
-        seiri_delta::evidence_fingerprints_for_ids(&analysis.evidence_kernel, &evidence_ids)
-            .unwrap_or_default();
+        seiri_delta::evidence_fingerprints_for_ids(analysis, &evidence_ids).unwrap_or_default();
     let priority_rank = analysis
         .missing_route_priority
         .priorities
@@ -358,7 +357,7 @@ fn read_current_document_bytes(
         return Err("Planner refused a non-repository-relative document path.".to_string());
     }
 
-    let root = seiri_fs::RepositoryRoot::resolve(Path::new(&analysis.repo_root))
+    let root = seiri_fs::RepositoryRoot::resolve(analysis.analysis_root())
         .map_err(|error| format!("Repository root could not be resolved: {error}"))?;
     let candidate = root.as_path().join(relative);
     let canonical = fs::canonicalize(&candidate)

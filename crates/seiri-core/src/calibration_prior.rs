@@ -117,7 +117,7 @@ pub trait CalibrationProvider {
 
     fn visibility(&self) -> Option<PriorVisibility>;
 
-    fn redacted_fingerprint(&self) -> Option<&str> {
+    fn comparison_binding(&self) -> Option<&str> {
         None
     }
 }

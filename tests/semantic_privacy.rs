@@ -1,4 +1,7 @@
-use seiri_core::{CalibrationPriorState, ProfileKind, RouteKind, RouteTargetRole, TargetRelation};
+use seiri_core::{
+    CalibrationPriorState, CalibrationProvider, ProfileKind, RouteKind, RouteTargetRole,
+    TargetRelation,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -123,17 +126,21 @@ fn explicit_local_prior_never_reaches_public_surfaces() {
 
     let provider =
         seiri_calibration::load_local_calibration_provider(&temp).expect("load local pack");
-    assert!(provider.content_fingerprint().starts_with("sha256:"));
-    assert_ne!(
-        provider.content_fingerprint(),
-        provider.registry_fingerprint()
-    );
+    assert_eq!(provider.comparison_binding(), None);
     let snapshot = seiri_report::audit_repository_with_calibration_provider(
         fixture("missing-readme-repo"),
         ProfileKind::Library,
         &provider,
     )
     .expect("audit with explicit calibration");
+    assert_eq!(snapshot.analysis_configuration.calibration_binding, None);
+    let portable = seiri_delta::portable_snapshot(&snapshot).expect("portable private snapshot");
+    assert_eq!(
+        seiri_delta::compare(&portable, &portable).compatibility,
+        seiri_core::DeltaCompatibility::Unknown(
+            seiri_core::DeltaUnknownReason::UnknownPrivateBinding
+        )
+    );
 
     let security = snapshot
         .missing_route_priority
@@ -220,6 +227,46 @@ fn local_prior_parse_errors_redact_path_and_invalid_values() {
 
     fs::remove_file(&temp).expect("remove invalid local pack");
     fs::remove_dir(temp.parent().expect("temporary parent")).expect("remove temporary directory");
+}
+
+#[test]
+fn private_comparability_uses_only_owner_supplied_opaque_revision() {
+    let temp = temporary_pack_path();
+    let fingerprint = seiri_patterns::common_pattern_pack()
+        .fingerprint()
+        .to_string();
+    let body = serde_json::json!({
+        "schema_version": seiri_calibration::LOCAL_PRIOR_SCHEMA_VERSION,
+        "registry_fingerprint": fingerprint,
+        "opaque_revision": "owner-revision-7",
+        "private_note": "MUST_NOT_BECOME_A_BINDING",
+        "priors": [{
+            "key": { "kind": "route_gap", "route": "security" },
+            "observed": 1,
+            "sample_size": 2,
+            "rank_weight_x100": 3
+        }]
+    });
+    fs::write(&temp, serde_json::to_vec(&body).expect("serialize pack")).expect("write pack");
+    let provider = seiri_calibration::load_local_calibration_provider(&temp).expect("load pack");
+    assert_eq!(provider.comparison_binding(), Some("owner-revision-7"));
+    assert_ne!(
+        provider.comparison_binding(),
+        Some("MUST_NOT_BECOME_A_BINDING")
+    );
+    let mut invalid = body;
+    invalid["opaque_revision"] = serde_json::json!("secret value with spaces");
+    fs::write(
+        &temp,
+        serde_json::to_vec(&invalid).expect("serialize invalid revision"),
+    )
+    .expect("rewrite pack");
+    assert!(matches!(
+        seiri_calibration::load_local_calibration_provider(&temp),
+        Err(seiri_calibration::LocalPriorLoadError::InvalidOpaqueRevision)
+    ));
+    fs::remove_file(&temp).expect("remove pack");
+    fs::remove_dir(temp.parent().expect("temporary parent")).expect("remove directory");
 }
 
 #[test]

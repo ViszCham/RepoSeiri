@@ -2,9 +2,9 @@
 
 use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, DocumentEvent, DocumentIndex, DocumentRole,
-    DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus,
-    DocumentScopeClass, FileKind, FileRecord, IndexedDocument, ReadmeSummary, RouteKind,
-    SourceSpan, TextDocumentBase,
+    DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus, FileKind,
+    FileRecord, IndexedDocument, PathClassification, ReadmeSummary, RepositoryScopeGraph,
+    RouteKind, SourceSpan, TextDocumentBase,
 };
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
@@ -62,7 +62,6 @@ impl DocumentScanOptions {
     }
 }
 
-#[derive(Debug)]
 pub enum MarkdownError {
     Io {
         path: PathBuf,
@@ -88,20 +87,21 @@ pub enum MarkdownError {
     Invariant(DocumentScanInvariantError),
 }
 
+impl std::fmt::Debug for MarkdownError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, formatter)
+    }
+}
+
 impl Display for MarkdownError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io { path, source } => {
-                write!(
-                    formatter,
-                    "failed to read markdown {}: {source}",
-                    path.display()
-                )
+            Self::Io { source, .. } => {
+                write!(formatter, "failed to read repository markdown: {source}")
             }
-            Self::InvalidUtf8 { path, valid_up_to } => write!(
+            Self::InvalidUtf8 { valid_up_to, .. } => write!(
                 formatter,
-                "markdown {} is not valid UTF-8 after byte {valid_up_to}",
-                path.display()
+                "repository markdown is not valid UTF-8 after byte {valid_up_to}"
             ),
             Self::SourceLimitExceeded { path, bytes, limit } => write!(
                 formatter,
@@ -171,6 +171,16 @@ pub fn scan_document_index_with_options(
     repository_complete: bool,
     options: &DocumentIndexOptions,
 ) -> Result<DocumentIndex, seiri_core::DocumentIndexError> {
+    scan_document_index_with_options_and_scope(repo_root, files, repository_complete, options, None)
+}
+
+pub fn scan_document_index_with_options_and_scope(
+    repo_root: impl AsRef<Path>,
+    files: &[FileRecord],
+    repository_complete: bool,
+    options: &DocumentIndexOptions,
+    scope_graph: Option<&RepositoryScopeGraph>,
+) -> Result<DocumentIndex, seiri_core::DocumentIndexError> {
     let repo_root = repo_root.as_ref();
     let mut candidates = files
         .iter()
@@ -179,7 +189,7 @@ pub fn scan_document_index_with_options(
             classify_document_role(&record.path).map(|role| DocumentCandidate {
                 path: record.path.clone(),
                 role,
-                scope_class: classify_scope_class(&record.path),
+                classification: PathClassification::classify(&record.path, scope_graph),
                 declared_bytes: record.size_bytes,
             })
         })
@@ -201,14 +211,14 @@ pub fn scan_document_index_with_options(
         let DocumentCandidate {
             path,
             role,
-            scope_class,
+            classification,
             declared_bytes,
         } = candidate;
         if indexed_documents >= options.max_documents {
             entries.push(IndexedDocument::unavailable(
                 path,
                 role,
-                scope_class,
+                classification,
                 declared_bytes,
                 DocumentScanStatus::SkippedDocumentBudget,
             ));
@@ -223,7 +233,7 @@ pub fn scan_document_index_with_options(
             entries.push(IndexedDocument::unavailable(
                 path,
                 role,
-                scope_class,
+                classification,
                 declared_bytes,
                 DocumentScanStatus::SkippedByteBudget,
             ));
@@ -239,7 +249,7 @@ pub fn scan_document_index_with_options(
                     entries.push(IndexedDocument::unparsed(
                         path,
                         role,
-                        scope_class,
+                        classification,
                         declared_bytes,
                         TextDocumentBase::from_bytes(&bytes),
                     ));
@@ -247,7 +257,7 @@ pub fn scan_document_index_with_options(
                 Err(error) => entries.push(IndexedDocument::unavailable(
                     path,
                     role,
-                    scope_class,
+                    classification,
                     declared_bytes,
                     if error.kind() == io::ErrorKind::PermissionDenied {
                         DocumentScanStatus::PermissionDenied
@@ -265,7 +275,7 @@ pub fn scan_document_index_with_options(
                 entries.push(IndexedDocument::scanned(
                     path,
                     role,
-                    scope_class,
+                    classification,
                     declared_bytes,
                     scan,
                 ));
@@ -273,7 +283,7 @@ pub fn scan_document_index_with_options(
             Err(error) => entries.push(IndexedDocument::unavailable(
                 path,
                 role,
-                scope_class,
+                classification,
                 declared_bytes,
                 scan_status_for_error(&error),
             )),
@@ -295,7 +305,7 @@ pub fn scan_document_index_with_options(
 struct DocumentCandidate {
     path: String,
     role: DocumentRole,
-    scope_class: DocumentScopeClass,
+    classification: PathClassification,
     declared_bytes: u64,
 }
 
@@ -375,25 +385,10 @@ fn selection_rank(candidate: &DocumentCandidate, readme_links: &BTreeSet<String>
     if matches!(normalized.as_str(), "docs/readme.md" | "docs/index.md") {
         return (3, candidate.role as u8);
     }
-    if candidate.scope_class.is_repository_content() {
+    if candidate.classification.is_primary_repository_content() {
         (4, candidate.role as u8)
     } else {
         (5, candidate.role as u8)
-    }
-}
-
-fn classify_scope_class(path: &str) -> DocumentScopeClass {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    let first = normalized.split('/').next().unwrap_or_default();
-    match first {
-        "fixtures" | "fixture" => DocumentScopeClass::Fixture,
-        "tests" | "test" => DocumentScopeClass::Test,
-        "examples" | "example" | "samples" | "sample" => DocumentScopeClass::SupportingExample,
-        "target" | "generated" | "dist" | "build" | "node_modules" | "vendor" => {
-            DocumentScopeClass::Generated
-        }
-        "crates" | "packages" => DocumentScopeClass::NestedPackage,
-        _ => DocumentScopeClass::Repository,
     }
 }
 
@@ -789,12 +784,10 @@ fn contains_any(value: &str, needles: &[&str]) -> bool {
 }
 
 fn normalize_relative_path(root: &Path, path: &Path) -> String {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+    seiri_fs::RepoRelativePath::from_rooted(root, path).map_or_else(
+        |_| "<invalid-repository-path>".to_string(),
+        seiri_fs::RepoRelativePath::into_string,
+    )
 }
 
 fn span_start(span: Option<SourceSpan>) -> usize {

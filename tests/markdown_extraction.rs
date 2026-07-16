@@ -176,6 +176,38 @@ fn hidden_markdown_contexts_do_not_emit_route_evidence() {
 }
 
 #[test]
+fn semantic_dead_zones_do_not_emit_headings_links_or_routes() {
+    let source = concat!(
+        "# Visible\n\n",
+        "    ## Security\n    [Security](SECURITY.md)\n\n",
+        "\t## Support\n\t[Support](SUPPORT.md)\n\n",
+        "~~~markdown\n## Contributing\n[Contributing](CONTRIBUTING.md)\n~~~\n\n",
+        "<!-- [License](LICENSE) -->\n",
+        "`[Documentation](docs/)`\n",
+        "<pre>[Release](CHANGELOG.md)</pre>\n",
+        "<script>[Security](SECURITY.md)</script>\n",
+        "<style>[Support](SUPPORT.md)</style>\n",
+        "<textarea>[License](LICENSE)</textarea>\n",
+    );
+    let summary = seiri_markdown::parse_readme("README.md", source);
+    assert_eq!(summary.headings.len(), 1);
+    assert!(summary.links.is_empty());
+    assert!(summary.route_candidates.is_empty());
+}
+
+#[test]
+fn visible_reference_and_html_anchor_remain_semantic() {
+    let source = "# Routes\n[Documentation][docs]\n<a href=\"SECURITY.md\">Security</a>\n\n[docs]: docs/index.md\n";
+    let summary = seiri_markdown::parse_readme("README.md", source);
+    assert!(summary.links.iter().any(|link| {
+        link.kind == seiri_core::MarkdownLinkKind::Reference && link.target == "docs/index.md"
+    }));
+    assert!(summary.links.iter().any(|link| {
+        link.kind == seiri_core::MarkdownLinkKind::HtmlAnchor && link.target == "SECURITY.md"
+    }));
+}
+
+#[test]
 fn removed_readme_gap_key_is_rejected() {
     let summary = seiri_markdown::analyze_readme(fixture("readme-route-repo"))
         .expect("read README")

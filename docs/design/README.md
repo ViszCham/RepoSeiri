@@ -40,9 +40,25 @@
 
 ---
 
+### Roadmap v9
+
+- [Roadmap v9: Semantic Identity And Verification Closure](roadmap-v9-semantic-identity-verification-closure.md) は、semantic Markdown、path classification、private calibration、stable delta、completion v3の現行実装契約です。
+- [R9-SIP-v1](r9-sip-v1-protocol.md) はRoadmap v9をSI0-SI12へ分割する現行実行契約です。
+- [R9-SIP-v1 Template](r9-sip-v1-template.json) はunit依存関係とauthority既定値の機械可読版です。
+- Roadmap v8とRTIP-v1は直前のtrust contractと実装履歴です。Roadmap v9とR9-SIP-v1が同じ責任範囲の現行判断を上書きします。
+
+---
+
 ## English
 
 This subindex separates RepoSeiri design documentation into long-term premises, the analysis model, and the implementation roadmap. The README remains the application entry point; low-level Rust contracts and implementation decisions are routed from here.
+
+### Roadmap v9
+
+- [Roadmap v9: Semantic Identity And Verification Closure](roadmap-v9-semantic-identity-verification-closure.md) is the current implementation contract for semantic Markdown, path classification, private calibration, stable delta, and completion v3.
+- [R9-SIP-v1](r9-sip-v1-protocol.md) is the current execution contract that decomposes Roadmap v9 into SI0-SI12.
+- [R9-SIP-v1 Template](r9-sip-v1-template.json) is the machine-readable unit dependency and authority-default contract.
+- Roadmap v8 and RTIP-v1 remain the preceding trust contract and implementation record. Roadmap v9 and R9-SIP-v1 override current decisions in the same responsibility area.
 
 ### Reading Order
 
@@ -64,7 +80,7 @@ This subindex separates RepoSeiri design documentation into long-term premises, 
 - Roadmap v5 is the implementation record for the 0.2.0 architecture and legacy removal.
 - Roadmap v6 is the implementation record for the 1.0.0 completion baseline. Use Roadmap v8 for the current trust contract.
 - Use Roadmap v7 for evidence-backed claim strength, claim-local boundaries, and underclaim loss.
-- Use Roadmap v8 and RTIP-v1 for the current trust/contract-integrity implementation and completion v2.
+- Use Roadmap v9 and R9-SIP-v1 for the current semantic-identity, verification-closure, and completion v3 implementation.
 - RCBP-v1 owns execution of Roadmap v6; it does not override product semantics, Git authority, or release decisions.
 - Trust Graph and Baseline And Profiles own premises and the analysis model, but do not override current symbols or commands.
 - Git history and the changelog record changes; they are not current implementation instructions.

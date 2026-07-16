@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://reposeiri.invalid/schemas/seiri.completion.v2.json",
-  "title": "RepoSeiri completion record v2",
-  "schema_version": "seiri.completion.v2",
+  "$id": "https://reposeiri.invalid/schemas/seiri.completion.v3.json",
+  "title": "RepoSeiri completion record v3",
+  "schema_version": "seiri.completion.v3",
   "owner": "xtask::CompletionRecord",
-  "compatibility": "v2-only",
+  "compatibility": "v3-only",
   "type": "object",
   "required": ["schema_version", "state", "tool_version", "source", "checks", "required_hosts", "skipped_checks", "boundary"],
   "properties": {
-    "schema_version": { "const": "seiri.completion.v2" },
+    "schema_version": { "const": "seiri.completion.v3" },
     "state": { "enum": ["ready_for_git", "incomplete"] },
     "tool_version": { "type": "string" },
     "source": {

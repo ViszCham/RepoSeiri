@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_GITFILE_BYTES: u64 = 4_096;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DiscoveredRepository {
     root: RepositoryScopeRoot,
     analysis_root: PathBuf,
@@ -16,6 +16,20 @@ pub struct DiscoveredRepository {
     git_dir: Option<PathBuf>,
     common_dir: Option<PathBuf>,
     diagnostic: Option<GitDiagnostic>,
+}
+
+impl std::fmt::Debug for DiscoveredRepository {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DiscoveredRepository")
+            .field("root", &self.root)
+            .field("analysis_root", &".")
+            .field("worktree_root", &self.worktree_root.as_ref().map(|_| "."))
+            .field("git_dir", &self.git_dir.as_ref().map(|_| "<git-dir>"))
+            .field("common_dir", &self.common_dir.as_ref().map(|_| "<git-dir>"))
+            .field("diagnostic", &self.diagnostic)
+            .finish()
+    }
 }
 
 impl DiscoveredRepository {
@@ -50,7 +64,6 @@ impl DiscoveredRepository {
     }
 }
 
-#[derive(Debug)]
 pub enum RepositoryDiscoveryError {
     Io { path: PathBuf, source: io::Error },
     NotDirectory(PathBuf),
@@ -59,24 +72,24 @@ pub enum RepositoryDiscoveryError {
     InvalidGitDirectory(PathBuf),
 }
 
+impl std::fmt::Debug for RepositoryDiscoveryError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, formatter)
+    }
+}
+
 impl Display for RepositoryDiscoveryError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io { path, source } => {
-                write!(formatter, "failed to read {}: {source}", path.display())
+            Self::Io { source, .. } => {
+                write!(formatter, "failed to read repository metadata: {source}")
             }
-            Self::NotDirectory(path) => write!(formatter, "{} is not a directory", path.display()),
-            Self::GitFileTooLarge(path) => {
-                write!(formatter, "gitfile {} exceeds 4096 bytes", path.display())
+            Self::NotDirectory(_) => formatter.write_str("repository path is not a directory"),
+            Self::GitFileTooLarge(_) => formatter.write_str("gitfile exceeds 4096 bytes"),
+            Self::MalformedGitFile(_) => formatter.write_str("gitfile is malformed"),
+            Self::InvalidGitDirectory(_) => {
+                formatter.write_str("git metadata directory is invalid")
             }
-            Self::MalformedGitFile(path) => {
-                write!(formatter, "gitfile {} is malformed", path.display())
-            }
-            Self::InvalidGitDirectory(path) => write!(
-                formatter,
-                "git metadata directory {} is invalid",
-                path.display()
-            ),
         }
     }
 }
@@ -358,15 +371,18 @@ fn public_relative_path(root: &Path, path: &Path) -> String {
 }
 
 fn normalize(path: &Path) -> String {
-    normalize_windows_prefix(path.to_string_lossy().replace('\\', "/"))
-}
-
-fn normalize_windows_prefix(path: String) -> String {
-    if let Some(rest) = path.strip_prefix("//?/UNC/") {
-        format!("//{rest}")
-    } else if let Some(rest) = path.strip_prefix("//?/") {
-        rest.to_string()
-    } else {
-        path
+    let mut value = String::new();
+    for component in path.components() {
+        let std::path::Component::Normal(segment) = component else {
+            return "<invalid-repository-path>".to_string();
+        };
+        let Some(segment) = segment.to_str() else {
+            return "<non-utf8-repository-path>".to_string();
+        };
+        if !value.is_empty() {
+            value.push('/');
+        }
+        value.push_str(segment);
     }
+    value
 }

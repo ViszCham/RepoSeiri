@@ -1,0 +1,33 @@
+{
+  "schema_version": "reposeiri.r9-sip.v1",
+  "protocol": "R9-SIP-v1",
+  "roadmap": "docs/design/roadmap-v9-semantic-identity-verification-closure.md",
+  "protocol_document": "docs/design/r9-sip-v1-protocol.md",
+  "units": [
+    { "id": "SI0", "depends_on": [] },
+    { "id": "SI1", "depends_on": ["SI0"] },
+    { "id": "SI2", "depends_on": ["SI1"] },
+    { "id": "SI3", "depends_on": ["SI2"] },
+    { "id": "SI4", "depends_on": ["SI3"] },
+    { "id": "SI5", "depends_on": ["SI4"] },
+    { "id": "SI6", "depends_on": ["SI5"] },
+    { "id": "SI7", "depends_on": ["SI6"] },
+    { "id": "SI8", "depends_on": ["SI7"] },
+    { "id": "SI9", "depends_on": ["SI8"] },
+    { "id": "SI10", "depends_on": ["SI9"] },
+    { "id": "SI11", "depends_on": ["SI10"] },
+    { "id": "SI12", "depends_on": ["SI11"] }
+  ],
+  "authority_defaults": {
+    "mutation": true,
+    "tests": true,
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "release": false,
+    "publication": false,
+    "plugin_install": false
+  },
+  "states": ["implemented", "locally_verified", "evidence_complete", "environment_blocked"],
+  "blocked_check_policy": "never_promote_to_pass"
+}
