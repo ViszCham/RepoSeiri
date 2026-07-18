@@ -10,10 +10,63 @@
   "required": ["schema_version", "operations", "held", "writes_files", "boundary"],
   "properties": {
     "schema_version": { "const": "seiri.patch-plan.v2" },
-    "operations": { "type": "array" },
-    "held": { "type": "array" },
+    "operations": { "type": "array", "items": { "$ref": "#/$defs/operation" } },
+    "held": { "type": "array", "items": { "$ref": "#/$defs/hold" } },
     "writes_files": { "const": false },
     "boundary": { "type": "string" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "route": { "enum": ["identity", "docs", "quickstart", "support", "intake", "contributing", "security", "release", "lifecycle", "governance", "license", "automation", "ownership", "hygiene", "unknown"] },
+    "fingerprint": {
+      "type": "object",
+      "required": ["identity", "state", "occurrence"],
+      "properties": { "identity": { "$ref": "#/$defs/sha256" }, "state": { "$ref": "#/$defs/sha256" }, "occurrence": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "decision_basis": {
+      "type": "object",
+      "required": ["gate", "priority_rank", "claim_ids", "evidence_fingerprints", "claim_semantic_revision", "planner_semantic_revision", "source_session_digest"],
+      "properties": {
+        "gate": { "enum": ["safe", "guarded", "manual"] },
+        "priority_rank": { "type": ["integer", "null"], "minimum": 1 },
+        "claim_ids": { "type": "array", "items": { "type": "string" } },
+        "evidence_fingerprints": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } },
+        "claim_semantic_revision": { "const": "seiri.claim-semantics.v2" },
+        "planner_semantic_revision": { "const": "seiri.patch-planner.v4" },
+        "source_session_digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": ["route", "target", "target_path", "target_role", "document", "insertion_anchor", "analysis_run", "proposal", "binding", "paired_language", "decision_basis"],
+      "properties": {
+        "route": { "$ref": "#/$defs/route" },
+        "target": { "type": "integer", "minimum": 0 },
+        "target_path": { "type": "string" },
+        "target_role": { "enum": ["canonical", "detail", "example", "alternate", "migration", "shared_hub", "unknown"] },
+        "document": { "type": "integer", "minimum": 1 },
+        "insertion_anchor": { "type": "object", "additionalProperties": true },
+        "analysis_run": { "type": "object", "additionalProperties": true },
+        "proposal": { "type": "object", "additionalProperties": true },
+        "binding": { "type": "object", "additionalProperties": true },
+        "paired_language": { "type": "boolean" },
+        "decision_basis": { "$ref": "#/$defs/decision_basis" }
+      },
+      "additionalProperties": false
+    },
+    "hold": {
+      "type": "object",
+      "required": ["route", "target_path", "reason", "decision_basis"],
+      "properties": {
+        "route": { "$ref": "#/$defs/route" },
+        "target_path": { "type": ["string", "null"] },
+        "reason": { "enum": ["no_existing_target", "target_not_repository_local", "canonical_conflict", "unknown_target_relation", "missing_readme", "stale_base", "stale_anchor", "paired_language_incomplete", "unsupported_encoding"] },
+        "decision_basis": { "$ref": "#/$defs/decision_basis" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

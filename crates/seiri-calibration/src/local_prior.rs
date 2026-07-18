@@ -21,6 +21,7 @@ pub struct LocalCalibrationProvider {
     registry_fingerprint: Box<str>,
     _private_digest: PrivateCalibrationDigest,
     comparison_binding: Option<Box<str>>,
+    freshness: PrivateCalibrationFreshness,
     source_bytes: u64,
 }
 
@@ -44,6 +45,18 @@ impl LocalCalibrationProvider {
     pub fn prior_count(&self) -> usize {
         self.priors.len()
     }
+
+    #[must_use]
+    pub const fn freshness(&self) -> PrivateCalibrationFreshness {
+        self.freshness
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateCalibrationFreshness {
+    Unverified,
+    Current,
 }
 
 impl CalibrationProvider for LocalCalibrationProvider {
@@ -74,6 +87,8 @@ pub enum LocalPriorLoadError {
     InvalidPrior,
     InvalidRuleId,
     InvalidOpaqueRevision,
+    StaleOpaqueRevision,
+    SymlinkSource,
     DuplicateKey,
 }
 
@@ -106,6 +121,12 @@ impl Display for LocalPriorLoadError {
             Self::InvalidOpaqueRevision => {
                 formatter.write_str("local calibration pack contains an invalid opaque revision")
             }
+            Self::StaleOpaqueRevision => formatter.write_str(
+                "local calibration pack opaque revision does not match the owner binding",
+            ),
+            Self::SymlinkSource => {
+                formatter.write_str("local calibration pack source must not be a symlink")
+            }
             Self::DuplicateKey => {
                 formatter.write_str("local calibration pack contains a duplicate key")
             }
@@ -116,6 +137,7 @@ impl Display for LocalPriorLoadError {
 impl std::error::Error for LocalPriorLoadError {}
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WirePack {
     schema_version: String,
     registry_fingerprint: String,
@@ -127,6 +149,7 @@ struct WirePack {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WirePrior {
     key: WireKey,
     observed: u64,
@@ -136,6 +159,7 @@ struct WirePrior {
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 enum WireKey {
     RouteGap { route: RouteKind },
     CoOccurrence { rule_id: String },
@@ -155,6 +179,22 @@ pub fn load_local_calibration_provider_for_registry(
     path: impl AsRef<Path>,
     expected_fingerprint: &str,
 ) -> Result<LocalCalibrationProvider, LocalPriorLoadError> {
+    load_local_calibration_provider_for_registry_and_revision(path, expected_fingerprint, None)
+}
+
+pub fn load_local_calibration_provider_for_registry_and_revision(
+    path: impl AsRef<Path>,
+    expected_fingerprint: &str,
+    expected_opaque_revision: Option<&str>,
+) -> Result<LocalCalibrationProvider, LocalPriorLoadError> {
+    let metadata = std::fs::symlink_metadata(path.as_ref())
+        .map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
+    if metadata.file_type().is_symlink() {
+        return Err(LocalPriorLoadError::SymlinkSource);
+    }
+    if metadata.len() > MAX_LOCAL_PRIOR_BYTES {
+        return Err(LocalPriorLoadError::SourceTooLarge);
+    }
     let file = File::open(path.as_ref()).map_err(|error| LocalPriorLoadError::Io(error.kind()))?;
     let mut bytes = Vec::new();
     let mut bounded: Take<File> = file.take(MAX_LOCAL_PRIOR_BYTES + 1);
@@ -206,7 +246,6 @@ pub fn load_local_calibration_provider_for_registry(
         }
     }
 
-    let private_digest = private_calibration_digest(&priors, &wire.registry_fingerprint);
     let comparison_binding = wire
         .opaque_revision
         .map(|value| {
@@ -221,11 +260,24 @@ pub fn load_local_calibration_provider_for_registry(
             Ok(value.into_boxed_str())
         })
         .transpose()?;
+    let freshness = match expected_opaque_revision {
+        None => PrivateCalibrationFreshness::Unverified,
+        Some(expected) if comparison_binding.as_deref() == Some(expected) => {
+            PrivateCalibrationFreshness::Current
+        }
+        Some(_) => return Err(LocalPriorLoadError::StaleOpaqueRevision),
+    };
+    let private_digest = private_calibration_digest(
+        &priors,
+        &wire.registry_fingerprint,
+        comparison_binding.as_deref(),
+    );
     Ok(LocalCalibrationProvider {
         priors,
         registry_fingerprint: wire.registry_fingerprint.into_boxed_str(),
         _private_digest: private_digest,
         comparison_binding,
+        freshness,
         source_bytes: bytes.len() as u64,
     })
 }
@@ -233,15 +285,17 @@ pub fn load_local_calibration_provider_for_registry(
 fn private_calibration_digest(
     priors: &BTreeMap<CalibrationKey, AggregatePrior>,
     registry_fingerprint: &str,
+    comparison_binding: Option<&str>,
 ) -> PrivateCalibrationDigest {
-    let mut hasher = StableHasher::new(b"seiri.private-calibration.semantic.v2");
+    let mut hasher = StableHasher::new(b"seiri.private-calibration.semantic.v2", 8);
     hasher.str(1, registry_fingerprint);
     hasher.usize(2, priors.len());
+    hasher.str(8, comparison_binding.unwrap_or(""));
     for (key, prior) in priors {
         match key {
             CalibrationKey::RouteGap(route) => {
                 hasher.u8(3, 0);
-                hasher.u8(4, *route as u8);
+                hasher.str(4, route_tag(*route));
             }
             CalibrationKey::CoOccurrence(rule) => {
                 hasher.u8(3, 1);
@@ -249,7 +303,7 @@ fn private_calibration_digest(
             }
             CalibrationKey::ProfileBranch(profile) => {
                 hasher.u8(3, 2);
-                hasher.u8(4, *profile as u8);
+                hasher.str(4, profile_tag(*profile));
             }
         }
         hasher.u64(5, prior.observed());
@@ -258,5 +312,41 @@ fn private_calibration_digest(
     }
     PrivateCalibrationDigest {
         _value: hasher.finish(),
+    }
+}
+
+const fn route_tag(value: seiri_core::RouteKind) -> &'static str {
+    match value {
+        seiri_core::RouteKind::Identity => "identity",
+        seiri_core::RouteKind::Docs => "docs",
+        seiri_core::RouteKind::Quickstart => "quickstart",
+        seiri_core::RouteKind::Support => "support",
+        seiri_core::RouteKind::Intake => "intake",
+        seiri_core::RouteKind::Contributing => "contributing",
+        seiri_core::RouteKind::Security => "security",
+        seiri_core::RouteKind::Release => "release",
+        seiri_core::RouteKind::Lifecycle => "lifecycle",
+        seiri_core::RouteKind::Governance => "governance",
+        seiri_core::RouteKind::License => "license",
+        seiri_core::RouteKind::Automation => "automation",
+        seiri_core::RouteKind::Ownership => "ownership",
+        seiri_core::RouteKind::Hygiene => "hygiene",
+        seiri_core::RouteKind::Unknown => "unknown",
+    }
+}
+
+const fn profile_tag(value: seiri_core::ProfileKind) -> &'static str {
+    match value {
+        seiri_core::ProfileKind::Common => "common",
+        seiri_core::ProfileKind::Library => "library",
+        seiri_core::ProfileKind::Cli => "cli",
+        seiri_core::ProfileKind::Infra => "infra",
+        seiri_core::ProfileKind::Product => "product",
+        seiri_core::ProfileKind::Runtime => "runtime",
+        seiri_core::ProfileKind::Docs => "docs",
+        seiri_core::ProfileKind::Tutorial => "tutorial",
+        seiri_core::ProfileKind::Ml => "ml",
+        seiri_core::ProfileKind::Research => "research",
+        seiri_core::ProfileKind::Template => "template",
     }
 }

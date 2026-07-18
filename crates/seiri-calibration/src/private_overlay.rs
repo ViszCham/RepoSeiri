@@ -1,5 +1,7 @@
 use crate::{
-    load_local_calibration_provider_for_registry, LocalCalibrationProvider, LocalPriorLoadError,
+    load_local_calibration_provider_for_registry,
+    load_local_calibration_provider_for_registry_and_revision, LocalCalibrationProvider,
+    LocalPriorLoadError, PrivateCalibrationFreshness,
 };
 use seiri_core::{CalibrationKey, CalibrationLookup, CalibrationProvider, PriorVisibility};
 use seiri_patterns::{load_executable_pattern_pack, ExecutablePatternPack, PatternPackLoadError};
@@ -37,6 +39,7 @@ impl PrivateCalibrationOverlay {
             source_path_redacted: true,
             source_body_redacted: true,
             exact_priors_redacted: true,
+            freshness: self.calibration.freshness(),
         }
     }
 }
@@ -53,6 +56,7 @@ pub struct PrivateOverlayMetadata {
     pub source_path_redacted: bool,
     pub source_body_redacted: bool,
     pub exact_priors_redacted: bool,
+    pub freshness: PrivateCalibrationFreshness,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -84,6 +88,25 @@ pub fn load_private_calibration_overlay(
     let calibration =
         load_local_calibration_provider_for_registry(calibration_path, pattern_pack.fingerprint())
             .map_err(PrivateOverlayLoadError::Calibration)?;
+    Ok(PrivateCalibrationOverlay {
+        pattern_pack,
+        calibration,
+    })
+}
+
+pub fn load_private_calibration_overlay_for_revision(
+    pattern_pack_path: impl AsRef<Path>,
+    calibration_path: impl AsRef<Path>,
+    expected_opaque_revision: &str,
+) -> Result<PrivateCalibrationOverlay, PrivateOverlayLoadError> {
+    let pattern_pack = load_executable_pattern_pack(pattern_pack_path)
+        .map_err(PrivateOverlayLoadError::Pattern)?;
+    let calibration = load_local_calibration_provider_for_registry_and_revision(
+        calibration_path,
+        pattern_pack.fingerprint(),
+        Some(expected_opaque_revision),
+    )
+    .map_err(PrivateOverlayLoadError::Calibration)?;
     Ok(PrivateCalibrationOverlay {
         pattern_pack,
         calibration,

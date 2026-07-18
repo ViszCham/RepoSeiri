@@ -35,6 +35,7 @@ pub struct PredicateProgram {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PredicateProgramWire {
     atoms: Vec<PredicateAtom>,
     instructions: Vec<PredicateInstruction>,

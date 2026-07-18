@@ -18,7 +18,28 @@ fn deterministic_hostile_corpus_is_bounded_and_panic_free() {
             max_diagnostics: 8,
         },
     );
-    assert!(markdown.is_ok() || markdown.is_err());
+    match markdown {
+        Ok(scan) => {
+            assert_eq!(scan.path(), "README.md");
+            assert_eq!(scan.source_bytes(), deep_markdown.len());
+            assert!(scan.events().len() <= 64);
+            assert!(scan.diagnostics().len() <= 8);
+            assert!(scan.events().iter().all(|event| {
+                event
+                    .span()
+                    .is_some_and(|span| span.byte_end <= deep_markdown.len())
+            }));
+        }
+        Err(seiri_markdown::MarkdownError::EventLimitExceeded { path, limit }) => {
+            assert_eq!(path, "README.md");
+            assert_eq!(limit, 64);
+        }
+        Err(seiri_markdown::MarkdownError::DiagnosticLimitExceeded { path, limit }) => {
+            assert_eq!(path, "README.md");
+            assert_eq!(limit, 8);
+        }
+        Err(error) => panic!("hostile Markdown violated the bounded-result contract: {error}"),
+    }
 
     assert!(
         PredicateProgram::try_new(Vec::new(), vec![PredicateInstruction::PushAtom(u8::MAX)])

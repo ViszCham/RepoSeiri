@@ -1,11 +1,9 @@
-use crate::{audit_repository_with_profile, plan_to_markdown, AuditError};
+use crate::{plan_to_markdown, AuditError};
 use seiri_core::{
-    stable_id, ClaimBoundaryKind, FileKind, ProfileKind, WordingBoundaryException,
-    WordingLintFinding, WordingLintReport, WordingLintSourceKind, WordingLintSummary,
-    WordingRuleKind, TOOL_NAME, WORDING_LINT_SCHEMA_VERSION,
+    stable_id, ClaimBoundaryKind, DocumentEvent, DocumentScan, RepositoryAnalysis,
+    WordingBoundaryException, WordingLintFinding, WordingLintReport, WordingLintSourceKind,
+    WordingLintSummary, WordingRuleKind, TOOL_NAME, WORDING_LINT_SCHEMA_VERSION,
 };
-use std::fs;
-use std::path::{Path, PathBuf};
 
 const WORDING_BOUNDARY: &str = "Wording lint is a review aid for overclaim phrasing. It reports evidence-scoped wording risks only; it does not make legal, security, quality, popularity, trust, or publication-readiness judgments.";
 
@@ -149,6 +147,9 @@ struct WordingTextTarget {
     source: WordingLintSourceKind,
     path: String,
     text: String,
+    base_line: usize,
+    base_column: usize,
+    base_byte: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,30 +160,39 @@ struct RawMatch {
     rule_index: usize,
 }
 
-pub(crate) fn lint_repository_with_profile(
-    path: impl AsRef<Path>,
-    profile: ProfileKind,
+pub(crate) fn lint_source_session(
+    analysis: &RepositoryAnalysis,
+    source_documents: &[seiri_markdown::SourceDocument],
 ) -> Result<WordingLintReport, AuditError> {
-    let fs_scan = seiri_fs::scan_repository(path)?;
     let repo_root = ".".to_string();
     let mut targets = Vec::new();
+    let mut repository_files = 0usize;
 
-    for record in &fs_scan.files {
-        if record.kind != FileKind::File || !is_wording_source_path(&record.path) {
+    for document in source_documents {
+        if !is_wording_source_path(document.path()) {
             continue;
         }
-        let path = relative_path(&fs_scan.repo_root, &record.path);
-        let text = fs::read_to_string(&path).map_err(|source| AuditError::Io { path, source })?;
-        targets.push(WordingTextTarget {
-            source: WordingLintSourceKind::RepositoryFile,
-            path: record.path.clone(),
-            text,
-        });
+        repository_files += 1;
+        let Some(scan) = analysis
+            .document_index
+            .entries()
+            .iter()
+            .find(|entry| entry.path == document.path())
+            .and_then(|entry| entry.scan.as_ref())
+        else {
+            continue;
+        };
+        targets.extend(visible_prose_targets(
+            WordingLintSourceKind::RepositoryFile,
+            document.path(),
+            document.text(),
+            scan,
+        ));
     }
 
-    let repository_files = targets.len();
-    let generated = generated_report_targets(&fs_scan.repo_root, profile)?;
-    let generated_surfaces = generated.len();
+    let plan = seiri_planner::plan_patches(analysis);
+    let generated = generated_report_targets(analysis, &plan)?;
+    let generated_surfaces = 3;
     targets.extend(generated);
 
     let mut findings = Vec::new();
@@ -257,32 +267,35 @@ pub(crate) fn render_markdown(report: &WordingLintReport) -> String {
 }
 
 fn generated_report_targets(
-    path: impl AsRef<Path>,
-    profile: ProfileKind,
+    snapshot: &RepositoryAnalysis,
+    plan: &seiri_core::PatchPlan,
 ) -> Result<Vec<WordingTextTarget>, AuditError> {
-    let snapshot = audit_repository_with_profile(path.as_ref(), profile)?;
-    let plan = seiri_planner::plan_patches(&snapshot);
-    let view = seiri_codex::CodexView::new(&snapshot, &plan, None);
-
-    Ok(vec![
-        WordingTextTarget {
-            source: WordingLintSourceKind::GeneratedReport,
-            path: "generated/audit.md".to_string(),
-            text: crate::to_markdown(&snapshot),
-        },
-        WordingTextTarget {
-            source: WordingLintSourceKind::GeneratedReport,
-            path: "generated/plan.md".to_string(),
-            text: plan_to_markdown(&plan),
-        },
-        WordingTextTarget {
-            source: WordingLintSourceKind::GeneratedReport,
-            path: "generated/codex.md".to_string(),
-            text: seiri_codex::render_query_markdown(
+    let view = seiri_codex::CodexView::new(snapshot, plan, None);
+    let generated = [
+        ("generated/audit.md", crate::to_markdown(snapshot)),
+        ("generated/plan.md", plan_to_markdown(plan)),
+        (
+            "generated/codex.md",
+            seiri_codex::render_query_markdown(
                 &view.query(seiri_codex::CodexQueryKind::Governance),
             ),
-        },
-    ])
+        ),
+    ];
+    let mut targets = Vec::new();
+    for (path, text) in generated {
+        let scan = seiri_markdown::scan_document_with_options(
+            path,
+            &text,
+            &seiri_markdown::DocumentScanOptions::derived_for_source(text.len()),
+        )?;
+        targets.extend(visible_prose_targets(
+            WordingLintSourceKind::GeneratedReport,
+            path,
+            &text,
+            &scan,
+        ));
+    }
+    Ok(targets)
 }
 
 fn lint_text_target(
@@ -311,21 +324,54 @@ fn lint_text_target(
             continue;
         }
         accepted_spans.push((raw.start, raw.end));
-        let (line, column) = line_column(&target.text, raw.start);
+        let (relative_line, relative_column) = line_column(&target.text, raw.start);
+        let line = target.base_line + relative_line - 1;
+        let column = if relative_line == 1 {
+            target.base_column + relative_column - 1
+        } else {
+            relative_column
+        };
         findings.push(WordingLintFinding {
             id: String::new(),
             source: target.source,
             path: target.path.clone(),
             line,
             column,
-            byte_start: raw.start,
-            byte_end: raw.end,
+            byte_start: target.base_byte + raw.start,
+            byte_end: target.base_byte + raw.end,
             matched: target.text[raw.start..raw.end].to_string(),
             rule: raw.rule.rule,
             boundary: raw.rule.boundary,
             replacement_hint: replacement_hint(raw.rule.boundary).to_string(),
         });
     }
+}
+
+fn visible_prose_targets(
+    source: WordingLintSourceKind,
+    path: &str,
+    original: &str,
+    scan: &DocumentScan,
+) -> Vec<WordingTextTarget> {
+    scan.events()
+        .iter()
+        .filter_map(|event| {
+            let DocumentEvent::VisibleProse(prose) = event else {
+                return None;
+            };
+            let text = original
+                .get(prose.span.byte_start..prose.span.byte_end)?
+                .to_string();
+            (!text.trim().is_empty()).then(|| WordingTextTarget {
+                source,
+                path: path.to_string(),
+                text,
+                base_line: prose.span.line,
+                base_column: prose.span.column,
+                base_byte: prose.span.byte_start,
+            })
+        })
+        .collect()
 }
 
 fn raw_matches(text: &str) -> Vec<RawMatch> {
@@ -539,10 +585,4 @@ fn is_text_doc_path(path: &str) -> bool {
         || path.ends_with(".txt")
         || path.ends_with(".rst")
         || !path.rsplit('/').next().unwrap_or(path).contains('.')
-}
-
-fn relative_path(root: &Path, relative: &str) -> PathBuf {
-    relative
-        .split('/')
-        .fold(root.to_path_buf(), |path, segment| path.join(segment))
 }

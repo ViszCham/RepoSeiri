@@ -1,3 +1,4 @@
+use crate::propositions::build_proposition_consistency;
 use seiri_core::{
     classify_target_relation, ConditionalObligation, CoverageIncompleteReason, CoverageScope,
     CoverageStatus, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
@@ -7,9 +8,9 @@ use seiri_core::{
 };
 use std::collections::BTreeMap;
 
-const MAX_DOCUMENT_CONFLICTS: usize = 64;
+const MAX_DOCUMENT_CONFLICTS: usize = 8_192;
 const MAX_ROUTE_TARGETS: usize = 128;
-const MAX_ROUTE_TARGET_RELATIONS: usize = 256;
+const MAX_ROUTE_TARGET_RELATIONS: usize = 8_192;
 
 pub(crate) struct RouteTargetBuild {
     pub(crate) targets: Vec<RouteTargetRef>,
@@ -81,8 +82,9 @@ pub(crate) fn build_document_consistency_report(
     relations.sort_by(|left, right| left.id.cmp(&right.id));
     let mut conflicts = conflict_build.conflicts;
     conflicts.sort_by(|left, right| left.id.cmp(&right.id));
+    let proposition_build = build_proposition_consistency(snapshot);
 
-    let conflict_coverage = if conflict_build.truncated {
+    let conflict_coverage = if conflict_build.truncated || proposition_build.truncated {
         CoverageStatus::Partial(CoverageIncompleteReason::LimitExceeded)
     } else {
         snapshot
@@ -90,7 +92,14 @@ pub(crate) fn build_document_consistency_report(
             .record(CoverageScope::MarkdownDocuments)
             .map_or(CoverageStatus::NotRequested, |record| record.status)
     };
-    DocumentConsistencyReport::try_new(obligations, relations, conflicts, conflict_coverage)
+    DocumentConsistencyReport::try_new(
+        obligations,
+        relations,
+        conflicts,
+        proposition_build.propositions,
+        proposition_build.conflicts,
+        conflict_coverage,
+    )
 }
 
 fn build_conditional_obligations(snapshot: &RepositoryAnalysis) -> Vec<ConditionalObligation> {

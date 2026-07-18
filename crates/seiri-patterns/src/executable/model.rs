@@ -61,6 +61,7 @@ impl From<RelativeFixturePath> for String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FixtureScanBudget {
     pub max_depth: usize,
     pub max_entries: usize,
@@ -133,6 +134,7 @@ pub enum FixtureExpectation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutableFixtureSpec {
     pub id: String,
     pub kind: PatternFixtureKind,
@@ -144,12 +146,19 @@ pub struct ExecutableFixtureSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DataPatternDefinition {
     pub id: String,
     pub group: PatternGroup,
     pub predicate: PredicateProgram,
     pub boundaries: Vec<ClaimBoundaryKind>,
     pub adoption_stage: PatternAdoptionStage,
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+const fn enabled_by_default() -> bool {
+    true
 }
 
 pub struct ExecutablePatternPack {

@@ -5,17 +5,197 @@
   "schema_version": "seiri.calibration.v2",
   "owner": "seiri-calibration::CalibrationRun",
   "compatibility": "v2-only",
+  "migration": "old confidence aliases are rejected",
   "claim_boundary": "local_calibration_is_review_evidence_not_performance_proof",
   "type": "object",
-  "required": ["schema_version", "run_id", "dataset_id", "sources", "summary", "stats", "resource_trace", "claim_boundary"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "dataset_id",
+    "pattern_pack",
+    "sources",
+    "summary",
+    "stats",
+    "route_requirements",
+    "profile_branches",
+    "pending_patterns",
+    "weight_suggestions",
+    "resource_trace",
+    "claim_boundary"
+  ],
   "properties": {
     "schema_version": { "const": "seiri.calibration.v2" },
-    "run_id": { "type": "string" },
-    "dataset_id": { "type": "string" },
-    "sources": { "type": "array" },
-    "summary": { "type": "object" },
-    "stats": { "type": "array" },
-    "resource_trace": { "type": "object" },
-    "claim_boundary": { "type": "object" }
-  }
+    "run_id": { "type": "string", "minLength": 1 },
+    "dataset_id": { "type": "string", "minLength": 1 },
+    "pattern_pack": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object" }
+      ]
+    },
+    "sources": { "type": "array", "items": { "type": "object" } },
+    "summary": {
+      "type": "object",
+      "required": ["records", "sources", "known_pattern_stats", "route_requirements", "profile_branches", "pending_patterns", "weight_suggestions"],
+      "properties": {
+        "records": { "type": "integer", "minimum": 0 },
+        "sources": { "type": "integer", "minimum": 0 },
+        "known_pattern_stats": { "type": "integer", "minimum": 0 },
+        "route_requirements": { "type": "integer", "minimum": 0 },
+        "profile_branches": { "type": "integer", "minimum": 0 },
+        "pending_patterns": { "type": "integer", "minimum": 0 },
+        "weight_suggestions": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pattern_stats" }
+    },
+    "route_requirements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/route_requirement" }
+    },
+    "profile_branches": { "type": "array", "items": { "type": "object" } },
+    "pending_patterns": { "type": "array", "items": { "type": "object" } },
+    "weight_suggestions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/weight_suggestion" }
+    },
+    "resource_trace": {
+      "type": "object",
+      "required": [
+        "aggregation_mode",
+        "record_identity",
+        "records_seen",
+        "max_buffered_line_bytes",
+        "max_patterns_per_record",
+        "known_pattern_slots",
+        "route_slots",
+        "profile_slots",
+        "co_occurrence_slots",
+        "pending_pattern_slots",
+        "metadata_source_slots",
+        "retained_records",
+        "retained_repository_id_entries",
+        "per_pattern_repository_sets",
+        "replay_digest"
+      ],
+      "properties": {
+        "aggregation_mode": { "enum": ["materialized_dataset", "streaming_jsonl"] },
+        "record_identity": { "enum": ["repository_id_deduplicated", "one_nonempty_jsonl_line_per_repository"] },
+        "records_seen": { "type": "integer", "minimum": 0 },
+        "max_buffered_line_bytes": { "type": "integer", "minimum": 0 },
+        "max_patterns_per_record": { "type": "integer", "minimum": 0 },
+        "known_pattern_slots": { "type": "integer", "minimum": 0 },
+        "route_slots": { "type": "integer", "minimum": 0 },
+        "profile_slots": { "type": "integer", "minimum": 0 },
+        "co_occurrence_slots": { "type": "integer", "minimum": 0 },
+        "pending_pattern_slots": { "type": "integer", "minimum": 0 },
+        "metadata_source_slots": { "type": "integer", "minimum": 0 },
+        "retained_records": { "type": "integer", "minimum": 0 },
+        "retained_repository_id_entries": { "type": "integer", "minimum": 0 },
+        "per_pattern_repository_sets": { "type": "integer", "minimum": 0 },
+        "replay_digest": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_boundary": {
+      "type": "object",
+      "required": ["summary", "review_required", "runtime_rule_adoption_allowed", "automatic_weight_adoption_allowed", "guarantee_allowed", "blocked_claims"],
+      "properties": {
+        "summary": { "type": "string" },
+        "review_required": { "type": "boolean" },
+        "runtime_rule_adoption_allowed": { "const": false },
+        "automatic_weight_adoption_allowed": { "const": false },
+        "guarantee_allowed": { "const": false },
+        "blocked_claims": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "support_tier": {
+      "enum": ["limited", "moderate", "strong"]
+    },
+    "support_interval": {
+      "type": "object",
+      "required": ["method", "lower_x1000", "upper_x1000"],
+      "properties": {
+        "method": { "const": "wilson_95" },
+        "lower_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "upper_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "pattern_stats": {
+      "type": "object",
+      "required": ["pattern_id", "route", "repositories", "observations", "frequency_x1000", "sample_size", "support_interval", "source_ids", "profile_correlations", "co_occurrences", "local_support_tier", "support_note", "review_status"],
+      "properties": {
+        "pattern_id": { "type": "string" },
+        "route": {},
+        "repositories": { "type": "integer", "minimum": 0 },
+        "observations": { "type": "integer", "minimum": 0 },
+        "frequency_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "support_interval": { "$ref": "#/$defs/support_interval" },
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "profile_correlations": { "type": "array", "items": { "type": "object" } },
+        "co_occurrences": { "type": "array", "items": { "type": "object" } },
+        "local_support_tier": { "$ref": "#/$defs/support_tier" },
+        "support_note": { "type": "string" },
+        "review_status": {}
+      },
+      "additionalProperties": false
+    },
+    "route_requirement": {
+      "type": "object",
+      "required": ["id", "route", "supporting_repositories", "observations", "frequency_x1000", "sample_size", "support_interval", "suggested_requirement", "priority", "source_ids", "local_support_tier", "review_status", "rationale"],
+      "properties": {
+        "id": { "type": "string" },
+        "route": {},
+        "supporting_repositories": { "type": "integer", "minimum": 0 },
+        "observations": { "type": "integer", "minimum": 0 },
+        "frequency_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "support_interval": { "$ref": "#/$defs/support_interval" },
+        "suggested_requirement": {},
+        "priority": {},
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "local_support_tier": { "$ref": "#/$defs/support_tier" },
+        "review_status": {},
+        "rationale": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "weight_suggestion": {
+      "type": "object",
+      "required": ["id", "profile", "pattern_id", "route", "current_weight", "suggested_weight", "suggested_delta", "priority", "support_repositories", "frequency_x1000", "sample_size", "support_interval", "source_ids", "local_support_tier", "review_status", "rationale"],
+      "properties": {
+        "id": { "type": "string" },
+        "profile": {},
+        "pattern_id": { "type": "string" },
+        "route": {},
+        "current_weight": {},
+        "suggested_weight": { "type": "integer", "minimum": 0 },
+        "suggested_delta": { "type": "integer" },
+        "priority": {},
+        "support_repositories": { "type": "integer", "minimum": 0 },
+        "frequency_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "support_interval": { "$ref": "#/$defs/support_interval" },
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "local_support_tier": { "$ref": "#/$defs/support_tier" },
+        "review_status": {},
+        "rationale": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
 }

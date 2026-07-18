@@ -9,16 +9,160 @@
   "required": ["schema_version", "configuration", "digest", "routes", "content_slots", "coverage", "conflicts", "obligations", "facets", "documents", "boundary"],
   "properties": {
     "schema_version": { "const": "seiri.portable-audit.v2" },
-    "configuration": { "type": "object" },
-    "digest": { "type": "object" },
-    "routes": { "type": "array" },
-    "content_slots": { "type": "array" },
-    "coverage": { "type": "array" },
-    "conflicts": { "type": "array" },
-    "obligations": { "type": "array" },
-    "facets": { "type": "array" },
-    "documents": { "type": "array" },
+    "configuration": { "$ref": "#/$defs/configuration" },
+    "digest": { "$ref": "#/$defs/snapshot_digest" },
+    "routes": { "type": "array", "items": { "$ref": "#/$defs/route" } },
+    "content_slots": { "type": "array", "items": { "$ref": "#/$defs/content_slot" } },
+    "coverage": { "type": "array", "items": { "$ref": "#/$defs/coverage_record" } },
+    "conflicts": { "type": "array", "items": { "$ref": "#/$defs/conflict" } },
+    "obligations": { "type": "array", "items": { "$ref": "#/$defs/obligation" } },
+    "facets": { "type": "array", "items": { "$ref": "#/$defs/facet" } },
+    "documents": { "type": "array", "items": { "$ref": "#/$defs/document" } },
     "boundary": { "type": "string" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "route_kind": { "enum": ["identity", "docs", "quickstart", "support", "intake", "contributing", "security", "release", "lifecycle", "governance", "license", "automation", "ownership", "hygiene", "unknown"] },
+    "observation": { "enum": ["present", "absent", "conflict", "unknown"] },
+    "coverage_status": {
+      "oneOf": [
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "complete" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "reason"], "properties": { "kind": { "const": "partial" }, "reason": { "enum": ["limit_exceeded", "invalid_utf8", "parse_failed", "unsupported_syntax", "permission_denied", "rate_limited", "unavailable"] } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "not_requested" } }, "additionalProperties": false }
+      ]
+    },
+    "fingerprint": {
+      "type": "object",
+      "required": ["identity", "state", "occurrence"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256" },
+        "state": { "$ref": "#/$defs/sha256" },
+        "occurrence": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "required": ["schema_version", "scope", "profile", "budgets", "pattern_registry_fingerprint", "visibility", "calibration_binding", "source_session_digest"],
+      "properties": {
+        "schema_version": { "const": "seiri.analysis.v2" },
+        "scope": { "enum": ["repository", "workspace", "subtree"] },
+        "profile": { "enum": ["common", "library", "cli", "infra", "product", "runtime", "docs", "tutorial", "ml", "research", "template"] },
+        "budgets": { "$ref": "#/$defs/budgets" },
+        "pattern_registry_fingerprint": { "$ref": "#/$defs/sha256" },
+        "visibility": { "enum": ["standard", "public_synthetic_calibration", "local_private_calibration", "redacted_calibration"] },
+        "calibration_binding": { "type": ["string", "null"] },
+        "source_session_digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "budgets": {
+      "type": "object",
+      "required": ["filesystem_max_depth", "filesystem_max_entries", "filesystem_max_directory_entries", "filesystem_max_ignored_records", "filesystem_additional_ignored_names", "document_max_documents", "document_max_total_source_bytes", "document_max_source_bytes", "document_max_events", "document_max_diagnostics", "git_max_refs", "git_max_tags", "git_max_commit_headers", "scope"],
+      "properties": {
+        "filesystem_max_depth": { "type": "integer", "minimum": 0 },
+        "filesystem_max_entries": { "type": "integer", "minimum": 0 },
+        "filesystem_max_directory_entries": { "type": "integer", "minimum": 0 },
+        "filesystem_max_ignored_records": { "type": "integer", "minimum": 0 },
+        "filesystem_additional_ignored_names": { "type": "array", "items": { "type": "string" } },
+        "document_max_documents": { "type": "integer", "minimum": 0 },
+        "document_max_total_source_bytes": { "type": "integer", "minimum": 0 },
+        "document_max_source_bytes": { "type": "integer", "minimum": 0 },
+        "document_max_events": { "type": "integer", "minimum": 0 },
+        "document_max_diagnostics": { "type": "integer", "minimum": 0 },
+        "git_max_refs": { "type": "integer", "minimum": 0 },
+        "git_max_tags": { "type": "integer", "minimum": 0 },
+        "git_max_commit_headers": { "type": "integer", "minimum": 0 },
+        "scope": {
+          "type": "object",
+          "required": ["max_nodes", "max_manifest_bytes", "max_ignored_records"],
+          "properties": {
+            "max_nodes": { "type": "integer", "minimum": 0 },
+            "max_manifest_bytes": { "type": "integer", "minimum": 0 },
+            "max_ignored_records": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_digest": {
+      "type": "object",
+      "required": ["schema", "configuration", "source_session", "evidence", "routes", "documents"],
+      "properties": {
+        "schema": { "const": "seiri.portable-audit.v2" },
+        "configuration": { "$ref": "#/$defs/sha256" },
+        "source_session": { "$ref": "#/$defs/sha256" },
+        "evidence": { "$ref": "#/$defs/sha256" },
+        "routes": { "$ref": "#/$defs/sha256" },
+        "documents": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "required": ["route", "root_structured", "inherited", "readme_routed", "repository_local_targets", "shared_target_conflicts", "freshness", "policy", "missing_pattern", "observation", "coverage", "evidence", "digest"],
+      "properties": {
+        "route": { "$ref": "#/$defs/route_kind" },
+        "root_structured": { "type": "boolean" },
+        "inherited": { "type": "boolean" },
+        "readme_routed": { "type": "boolean" },
+        "repository_local_targets": { "type": "integer", "minimum": 0 },
+        "shared_target_conflicts": { "type": "integer", "minimum": 0 },
+        "freshness": { "enum": ["not_applicable", "current", "stale", "mixed"] },
+        "policy": { "enum": ["suggestible", "maintainer_decision_required"] },
+        "missing_pattern": { "type": "boolean" },
+        "observation": { "$ref": "#/$defs/observation" },
+        "coverage": { "$ref": "#/$defs/coverage_status" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } },
+        "digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "content_slot": {
+      "type": "object",
+      "required": ["slot", "code", "route", "observation", "coverage", "evidence", "digest"],
+      "properties": {
+        "slot": { "type": "integer", "minimum": 0 },
+        "code": { "type": "string" },
+        "route": { "$ref": "#/$defs/route_kind" },
+        "observation": { "$ref": "#/$defs/observation" },
+        "coverage": { "$ref": "#/$defs/coverage_status" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } },
+        "digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "coverage_record": {
+      "type": "object",
+      "required": ["key", "status", "digest"],
+      "properties": { "key": { "type": "string" }, "status": { "$ref": "#/$defs/coverage_status" }, "digest": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "conflict": {
+      "type": "object",
+      "required": ["id", "route", "evidence", "digest"],
+      "properties": { "id": { "type": "string" }, "route": { "$ref": "#/$defs/route_kind" }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } }, "digest": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "obligation": {
+      "type": "object",
+      "required": ["id", "route", "observation", "evidence", "coverage", "digest"],
+      "properties": { "id": { "type": "string" }, "route": { "$ref": "#/$defs/route_kind" }, "observation": { "$ref": "#/$defs/observation" }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } }, "coverage": { "$ref": "#/$defs/coverage_status" }, "digest": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "facet": {
+      "type": "object",
+      "required": ["facet", "observation", "evidence", "coverage", "digest"],
+      "properties": { "facet": { "enum": ["package", "binary", "infrastructure", "documentation", "research", "template", "product"] }, "observation": { "$ref": "#/$defs/observation" }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/fingerprint" } }, "coverage": { "$ref": "#/$defs/coverage_status" }, "digest": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "document": {
+      "type": "object",
+      "required": ["path", "coverage", "digest"],
+      "properties": { "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|\\\\\\\\).+$" }, "coverage": { "$ref": "#/$defs/coverage_status" }, "digest": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

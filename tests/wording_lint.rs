@@ -85,3 +85,38 @@ fn wording_linter_renders_json_and_markdown() {
     assert!(markdown.contains("- Boundary: `Not"));
     assert!(markdown.contains("Replacement hint:"));
 }
+
+#[test]
+fn wording_linter_ignores_markdown_dead_zones() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("README.md"),
+        concat!(
+            "# Claims\n\n",
+            "Visible prose guarantees security.\n\n",
+            "```text\nHidden block guarantees trust.\n```\n\n",
+            "    Hidden indent guarantees quality.\n\n",
+            "`inline guarantees popularity`\n\n",
+            "<!-- comment guarantees maintenance -->\n\n",
+            "<pre>raw HTML guarantees security</pre>\n",
+        ),
+    )
+    .expect("write README");
+
+    let report = seiri_report::lint_wording_repository(root.path()).expect("wording lint report");
+    let repository_findings = report
+        .findings
+        .iter()
+        .filter(|finding| finding.source == seiri_core::WordingLintSourceKind::RepositoryFile)
+        .collect::<Vec<_>>();
+    assert_eq!(repository_findings.len(), 1, "{repository_findings:#?}");
+    assert_eq!(repository_findings[0].matched, "guarantees security");
+    assert_eq!(repository_findings[0].line, 3);
+    assert_eq!(
+        repository_findings[0].byte_start,
+        std::fs::read_to_string(root.path().join("README.md"))
+            .expect("read README")
+            .find("guarantees security")
+            .expect("visible phrase")
+    );
+}

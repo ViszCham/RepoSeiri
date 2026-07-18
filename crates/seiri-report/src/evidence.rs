@@ -50,6 +50,16 @@ pub(crate) fn build_evidence_kernel(
 
         for event in document.events() {
             match event {
+                DocumentEvent::VisibleProse(prose) => drafts.push(markdown_draft(
+                    EvidenceAtom::Markdown {
+                        event: MarkdownEvidenceKind::VisibleProse,
+                        route: None,
+                    },
+                    Some(document.path().to_string()),
+                    Some(prose.span),
+                    EvidenceConfidence::Medium,
+                    scope,
+                )),
                 DocumentEvent::Heading(heading) => {
                     let route = seiri_markdown::classify_route(&heading.text, None);
                     drafts.push(markdown_draft(

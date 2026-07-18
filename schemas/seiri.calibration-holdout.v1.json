@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.calibration-holdout.v1.json",
+  "title": "RepoSeiri holdout calibration report v1",
+  "schema_version": "seiri.calibration-holdout.v1",
+  "owner": "seiri-report::HoldoutCalibrationReport",
+  "compatibility": "v1-only",
+  "type": "object",
+  "required": ["schema_version", "corpus_id", "corpus_digest", "visibility", "split_method", "task_metrics", "status", "private_overlay", "boundary"],
+  "properties": {
+    "schema_version": { "const": "seiri.calibration-holdout.v1" },
+    "corpus_id": { "type": "string", "minLength": 1 },
+    "corpus_digest": { "$ref": "#/$defs/sha256" },
+    "visibility": { "const": "public_synthetic" },
+    "split_method": { "type": "string", "minLength": 1 },
+    "task_metrics": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/task_metric" }
+    },
+    "status": { "$ref": "#/$defs/calibration_status" },
+    "private_overlay": { "const": "not_included" },
+    "boundary": { "type": "string" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "calibration_status": { "enum": ["insufficient_sample", "calibrated"] },
+    "counts": {
+      "type": "object",
+      "required": ["true_positive", "true_negative", "false_positive", "false_negative"],
+      "properties": {
+        "true_positive": { "type": "integer", "minimum": 0 },
+        "true_negative": { "type": "integer", "minimum": 0 },
+        "false_positive": { "type": "integer", "minimum": 0 },
+        "false_negative": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "interval": {
+      "type": "object",
+      "required": ["method", "lower_x1000", "upper_x1000"],
+      "properties": {
+        "method": { "const": "wilson_95" },
+        "lower_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "upper_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "task_metric": {
+      "type": "object",
+      "required": ["task", "train", "holdout", "independent_holdout_cases", "precision_x1000", "recall_x1000", "false_positives", "false_negatives", "coverage_x1000", "accuracy_interval", "minimum_holdout_cases", "status", "resources"],
+      "properties": {
+        "task": { "enum": ["route", "wording", "consistency", "profile", "planner"] },
+        "train": { "$ref": "#/$defs/counts" },
+        "holdout": { "$ref": "#/$defs/counts" },
+        "independent_holdout_cases": { "type": "integer", "minimum": 0 },
+        "precision_x1000": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000 },
+        "recall_x1000": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000 },
+        "false_positives": { "type": "integer", "minimum": 0 },
+        "false_negatives": { "type": "integer", "minimum": 0 },
+        "coverage_x1000": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "accuracy_interval": { "$ref": "#/$defs/interval" },
+        "minimum_holdout_cases": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/calibration_status" },
+        "resources": {
+          "type": "object",
+          "required": ["runtime_micros", "peak_allocation"],
+          "properties": {
+            "runtime_micros": { "type": "integer", "minimum": 0 },
+            "peak_allocation": {
+              "type": "object",
+              "required": ["status", "reason"],
+              "properties": {
+                "status": { "const": "not_measured" },
+                "reason": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

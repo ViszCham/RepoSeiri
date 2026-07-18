@@ -498,7 +498,7 @@ fn missing_candidate_patterns(
     registry: &seiri_patterns::PatternRegistry,
     route: RouteKind,
 ) -> Vec<MissingCandidatePattern> {
-    registry
+    let mut patterns = registry
         .definitions()
         .iter()
         .filter(|definition| {
@@ -510,7 +510,24 @@ fn missing_candidate_patterns(
             id: definition.id.to_string(),
             gate: definition.boundary.missing_gate,
         })
-        .collect()
+        .collect::<Vec<_>>();
+    patterns.extend(
+        snapshot
+            .pattern_extensions
+            .evaluations
+            .iter()
+            .filter(|evaluation| {
+                evaluation.route == route
+                    && evaluation.state == seiri_core::PatternExtensionState::Absent
+            })
+            .map(|evaluation| MissingCandidatePattern {
+                id: evaluation.pattern_id.clone(),
+                gate: default_route_gate(route),
+            }),
+    );
+    patterns.sort_by(|left, right| left.id.cmp(&right.id));
+    patterns.dedup_by(|left, right| left.id == right.id);
+    patterns
 }
 
 fn finding_gates(snapshot: &RepositoryAnalysis) -> BTreeMap<&str, GateKind> {

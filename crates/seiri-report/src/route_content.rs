@@ -187,6 +187,11 @@ fn slot_allows_document(spec: &ContentSlotSpec, entry: &seiri_core::IndexedDocum
 
 fn searchable_event(event: &DocumentEvent) -> Option<(MarkdownEvidenceKind, SourceSpan, String)> {
     match event {
+        DocumentEvent::VisibleProse(value) => Some((
+            MarkdownEvidenceKind::VisibleProse,
+            value.span,
+            value.text.clone(),
+        )),
         DocumentEvent::Heading(value) => Some((
             MarkdownEvidenceKind::Heading,
             value.span?,

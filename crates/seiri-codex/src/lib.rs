@@ -2,11 +2,12 @@
 
 use seiri_core::{
     calibrate_content_claim, project_content_claim, stable_id, ClaimStrength, CodexAction,
-    CodexCommand, ContentClaim, ContentClaimProjection, CoverageIndex, DocumentConsistencyReport,
-    DocumentIndex, EvidenceKernel, FacetReport, FreshnessReport, GithubLocalDocuments,
-    GithubSemanticsReport, MissingRoutePriorityReport, PatchPlan, ProfileKind,
+    CodexCommand, ContentClaim, ContentClaimProjection, CoverageIncompleteReason, CoverageIndex,
+    CoverageScope, CoverageStatus, DocumentConsistencyReport, DocumentIndex,
+    DocumentSelectionSummary, EvidenceKernel, FacetReport, FreshnessReport, GithubLocalDocuments,
+    GithubSemanticsReport, MissingRoutePriorityReport, Observation, PatchPlan, ProfileKind,
     RemoteEvidenceReport, RepositoryAnalysis, RepositoryScopeReport, RouteAssessment,
-    RouteContentReport, WordingLintReport, CODEX_SCHEMA_VERSION,
+    RouteContentReport, UnknownReason, WordingLintReport, CODEX_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
@@ -123,7 +124,9 @@ impl<'a> CodexView<'a> {
     #[must_use]
     pub fn query(&self, kind: CodexQueryKind) -> CodexQueryView<'_> {
         let query = match kind {
-            CodexQueryKind::Summary => CodexQuery::Summary(summary(self.analysis, self.plan)),
+            CodexQueryKind::Summary => {
+                CodexQuery::Summary(Box::new(summary(self.analysis, self.plan)))
+            }
             CodexQueryKind::Routes => CodexQuery::Routes(CodexRoutesQuery {
                 assessments: &self.analysis.route_assessments,
                 priorities: &self.analysis.missing_route_priority,
@@ -182,7 +185,7 @@ pub struct CodexQueryView<'a> {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum CodexQuery<'a> {
-    Summary(CodexSummary),
+    Summary(Box<CodexSummary>),
     Routes(CodexRoutesQuery<'a>),
     Evidence(CodexEvidenceQuery<'a>),
     Documents(CodexDocumentsQuery<'a>),
@@ -196,6 +199,7 @@ pub enum CodexQuery<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CodexSummary {
+    pub source_session_digest: seiri_core::SourceSessionDigest,
     pub entries_scanned: usize,
     pub document_events: usize,
     pub document_diagnostics: usize,
@@ -212,6 +216,29 @@ pub struct CodexSummary {
     pub missing_route_priorities: usize,
     pub patch_operations: usize,
     pub patch_holds: usize,
+    pub documents: DocumentSelectionSummary,
+    pub coverage: CodexCoverageSummary,
+    pub observations: CodexObservationSummary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CodexCoverageSummary {
+    pub complete_scopes: usize,
+    pub partial_scopes: usize,
+    pub not_requested_scopes: usize,
+    pub limit_exceeded_scopes: usize,
+    pub markdown_documents: CoverageStatus,
+    pub conflict_coverage: CoverageStatus,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct CodexObservationSummary {
+    pub present: usize,
+    pub absent: usize,
+    pub unknown: usize,
+    pub unacknowledged_unknown: usize,
+    pub conflict: usize,
+    pub limit_exceeded: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -268,7 +295,19 @@ fn summary(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexSummary {
                 diagnostics.saturating_add(document.diagnostics().len()),
             )
         });
+    let mut observations = CodexObservationSummary::default();
+    for assessment in &analysis.route_content.assessments {
+        observations.record(&assessment.observation);
+    }
+    for assessment in &analysis.facets.facets {
+        observations.record(&assessment.observation);
+    }
+    for obligation in &analysis.document_consistency.obligations {
+        observations.record(&obligation.observation);
+    }
+    let coverage = coverage_summary(analysis);
     CodexSummary {
+        source_session_digest: analysis.analysis_configuration.source_session_digest,
         entries_scanned: analysis.entry_count,
         document_events,
         document_diagnostics,
@@ -297,6 +336,60 @@ fn summary(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexSummary {
         missing_route_priorities: analysis.missing_route_priority.priorities.len(),
         patch_operations: plan.operations.len(),
         patch_holds: plan.held.len(),
+        documents: analysis.document_index.selection(),
+        coverage,
+        observations,
+    }
+}
+
+impl CodexObservationSummary {
+    fn record<T>(&mut self, observation: &Observation<T>) {
+        match observation {
+            Observation::Present { .. } => self.present = self.present.saturating_add(1),
+            Observation::Absent { .. } => self.absent = self.absent.saturating_add(1),
+            Observation::Unknown(reason) => {
+                self.unknown = self.unknown.saturating_add(1);
+                if *reason != UnknownReason::NotRequested {
+                    self.unacknowledged_unknown = self.unacknowledged_unknown.saturating_add(1);
+                }
+                if *reason == UnknownReason::LimitExceeded {
+                    self.limit_exceeded = self.limit_exceeded.saturating_add(1);
+                }
+            }
+            Observation::Conflict { .. } => self.conflict = self.conflict.saturating_add(1),
+        }
+    }
+}
+
+fn coverage_summary(analysis: &RepositoryAnalysis) -> CodexCoverageSummary {
+    let mut complete_scopes = 0usize;
+    let mut partial_scopes = 0usize;
+    let mut not_requested_scopes = 0usize;
+    let mut limit_exceeded_scopes = 0usize;
+    for record in analysis.coverage.records() {
+        match record.status {
+            CoverageStatus::Complete => complete_scopes = complete_scopes.saturating_add(1),
+            CoverageStatus::Partial(reason) => {
+                partial_scopes = partial_scopes.saturating_add(1);
+                if reason == CoverageIncompleteReason::LimitExceeded {
+                    limit_exceeded_scopes = limit_exceeded_scopes.saturating_add(1);
+                }
+            }
+            CoverageStatus::NotRequested => {
+                not_requested_scopes = not_requested_scopes.saturating_add(1);
+            }
+        }
+    }
+    CodexCoverageSummary {
+        complete_scopes,
+        partial_scopes,
+        not_requested_scopes,
+        limit_exceeded_scopes,
+        markdown_documents: analysis
+            .coverage
+            .record(CoverageScope::MarkdownDocuments)
+            .map_or(CoverageStatus::NotRequested, |record| record.status),
+        conflict_coverage: analysis.document_consistency.conflict_coverage,
     }
 }
 
@@ -390,12 +483,29 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
     match &view.query {
         CodexQuery::Summary(summary) => {
             out.push_str(&format!(
-                "\n- Entries: `{}`\n- Evidence facts: `{}`\n- Route assessments: `{}`\n- Content slots: `{}`\n- Findings: `{}`\n- Patch operations: `{}`\n- Patch holds: `{}`\n",
+                "\n- Entries: `{}`\n- Evidence facts: `{}`\n- Route assessments: `{}`\n- Content slots: `{}`\n- Findings: `{}`\n- Documents: `{}` selected / `{}` candidates; primary `{}` / `{}`\n- Document budget skips: `{}`; byte budget skips: `{}`\n- Coverage: `{}` complete / `{}` partial / `{}` not requested; limit exceeded `{}`\n- Markdown coverage: `{:?}`; conflict coverage: `{:?}`\n- Observations: `{}` present / `{}` absent / `{}` unknown (`{}` unacknowledged) / `{}` conflict\n- Patch operations: `{}`\n- Patch holds: `{}`\n",
                 summary.entries_scanned,
                 summary.evidence_facts,
                 summary.route_assessments,
                 summary.route_content_slots,
                 summary.findings,
+                summary.documents.selected,
+                summary.documents.candidates,
+                summary.documents.primary_selected,
+                summary.documents.primary_candidates,
+                summary.documents.skipped_document_budget,
+                summary.documents.skipped_byte_budget,
+                summary.coverage.complete_scopes,
+                summary.coverage.partial_scopes,
+                summary.coverage.not_requested_scopes,
+                summary.coverage.limit_exceeded_scopes,
+                summary.coverage.markdown_documents,
+                summary.coverage.conflict_coverage,
+                summary.observations.present,
+                summary.observations.absent,
+                summary.observations.unknown,
+                summary.observations.unacknowledged_unknown,
+                summary.observations.conflict,
                 summary.patch_operations,
                 summary.patch_holds,
             ));
@@ -426,10 +536,11 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
         )),
         CodexQuery::Governance(governance) => {
             out.push_str(&format!(
-                "\n- Facets: `{}`\n- Content slots: `{}`\n- Conflicts: `{}`\n- Claims: `{}`\n\n## Evidence-Backed Claims\n",
+                "\n- Facets: `{}`\n- Content slots: `{}`\n- Target conflicts: `{}`\n- Proposition conflicts: `{}`\n- Claims: `{}`\n\n## Evidence-Backed Claims\n",
                 governance.facets.facets.len(),
                 governance.route_content.assessments.len(),
                 governance.consistency.conflicts.len(),
+                governance.consistency.proposition_conflicts.len(),
                 governance.claims.len(),
             ));
             for claim in governance.claims {

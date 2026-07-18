@@ -1,14 +1,14 @@
 use crate::{common_registry, PatternRegistry, PatternRegistryError};
 use seiri_core::{BenchmarkRepoRecord, CalibrationPatternPack, PatternGroup, ProfileKind};
+use seiri_digest::{Digest32, StableHasher};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
 
 const COMMON_PATTERN_PACK_VERSION: &str = "seiri.pattern-pack.v1";
+const REGISTRY_FINGERPRINT_DOMAIN: &[u8] = b"seiri.pattern-registry.semantic.v2";
 
 const MAX_PATTERN_PACK_FIXTURES: usize = 512;
-const FNV1A64_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV1A64_PRIME: u64 = 0x100000001b3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,11 +76,11 @@ impl PatternPackCondition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RegistryFingerprint(u64);
+pub struct RegistryFingerprint(Digest32);
 
 impl Display for RegistryFingerprint {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "fnv1a64:{:016x}", self.0)
+        Display::fmt(&self.0, formatter)
     }
 }
 
@@ -274,43 +274,76 @@ fn fingerprint_for(
     registry: &PatternRegistry,
     fixtures: &[PatternFixture],
 ) -> RegistryFingerprint {
-    let mut items = vec![
-        format!("pack:{id}"),
-        format!("version:{version}"),
-        format!("condition:{}", condition.description()),
-    ];
-    items.extend(registry.definitions().iter().map(|definition| {
-        format!(
-            "pattern:{}:{:?}:{}:{:?}:{}:{}:{}:{}",
-            definition.id,
-            definition.group,
-            definition.title,
-            definition.route,
-            definition.detector.basis(),
-            definition.detector.label(),
-            definition.adoption_stage.as_str(),
-            definition
-                .predicate
-                .as_ref()
-                .map_or_else(|| "none".to_string(), |predicate| format!("{predicate:?}")),
-        )
-    }));
-    items.extend(fixtures.iter().map(|fixture| {
-        format!(
-            "fixture:{}:{:?}:{:?}:{}:{}",
-            fixture.id, fixture.kind, fixture.group, fixture.repository, fixture.pattern_id
-        )
-    }));
-    items.sort();
-
-    let mut state = FNV1A64_OFFSET;
-    for item in items {
-        for byte in item.bytes().chain([0]) {
-            state ^= u64::from(byte);
-            state = state.wrapping_mul(FNV1A64_PRIME);
-        }
+    #[derive(Serialize)]
+    struct DefinitionWire<'a> {
+        id: &'a str,
+        group: &'a str,
+        title: &'a str,
+        route: Option<&'a str>,
+        detector: &'a crate::PatternDetector,
+        adoption_stage: &'a str,
+        boundary: &'a crate::PatternBoundary,
+        predicate: Option<&'a crate::PredicateProgram>,
     }
-    RegistryFingerprint(state)
+
+    let mut definitions = registry
+        .definitions()
+        .iter()
+        .map(|definition| {
+            serde_json::to_vec(&DefinitionWire {
+                id: definition.id,
+                group: definition.group.code(),
+                title: definition.title,
+                route: definition.route.map(route_tag),
+                detector: &definition.detector,
+                adoption_stage: definition.adoption_stage.as_str(),
+                boundary: &definition.boundary,
+                predicate: definition.predicate.as_ref(),
+            })
+            .expect("pattern fingerprint wire contains serializable values")
+        })
+        .collect::<Vec<_>>();
+    definitions.sort();
+    let mut fixture_wires = fixtures
+        .iter()
+        .map(|fixture| serde_json::to_vec(fixture).expect("fixture fingerprint wire"))
+        .collect::<Vec<_>>();
+    fixture_wires.sort();
+
+    let mut hasher = StableHasher::new(REGISTRY_FINGERPRINT_DOMAIN, 7);
+    hasher
+        .str(1, id)
+        .str(2, version)
+        .str(3, &condition.description())
+        .usize(4, definitions.len());
+    for definition in definitions {
+        hasher.field(5, &definition);
+    }
+    hasher.usize(6, fixture_wires.len());
+    for fixture in fixture_wires {
+        hasher.field(7, &fixture);
+    }
+    RegistryFingerprint(hasher.finish())
+}
+
+const fn route_tag(route: seiri_core::RouteKind) -> &'static str {
+    match route {
+        seiri_core::RouteKind::Identity => "identity",
+        seiri_core::RouteKind::Docs => "docs",
+        seiri_core::RouteKind::Quickstart => "quickstart",
+        seiri_core::RouteKind::Support => "support",
+        seiri_core::RouteKind::Intake => "intake",
+        seiri_core::RouteKind::Contributing => "contributing",
+        seiri_core::RouteKind::Security => "security",
+        seiri_core::RouteKind::Release => "release",
+        seiri_core::RouteKind::Lifecycle => "lifecycle",
+        seiri_core::RouteKind::Governance => "governance",
+        seiri_core::RouteKind::License => "license",
+        seiri_core::RouteKind::Automation => "automation",
+        seiri_core::RouteKind::Ownership => "ownership",
+        seiri_core::RouteKind::Hygiene => "hygiene",
+        seiri_core::RouteKind::Unknown => "unknown",
+    }
 }
 
 #[derive(Debug)]

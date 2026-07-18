@@ -1,0 +1,3 @@
+# Documentation
+
+Training documentation target.

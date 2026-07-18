@@ -1,9 +1,9 @@
 use super::{PatternSlot, StreamingAccumulator};
 use crate::{
-    build_profile_branches, build_weight_suggestions, confidence_for, confidence_note,
-    current_weight_map, default_claim_boundary, default_evidence_schema,
+    build_profile_branches, build_weight_suggestions, current_weight_map, default_claim_boundary,
+    default_evidence_schema, local_support_interval, local_support_tier_for,
     priority_from_route_frequency, profiles_for_suggestions, ratio_x1000,
-    route_requirement_from_frequency, scale_for_records,
+    route_requirement_from_frequency, scale_for_records, support_note,
 };
 use seiri_core::{
     stable_id, CalibrationAggregationMode, CalibrationRecordIdentity, CalibrationReplayDigest,
@@ -144,21 +144,27 @@ impl StreamingAccumulator {
                         })
                     })
                     .collect();
-                let confidence = confidence_for(self.records_seen, counter.repositories);
+                let local_support_tier =
+                    local_support_tier_for(self.records_seen, counter.repositories);
                 PatternStats {
                     pattern_id: catalog.id.to_string(),
                     route: catalog.route,
                     repositories: counter.repositories,
                     observations: counter.observations,
                     frequency_x1000: ratio_x1000(counter.repositories, self.records_seen),
+                    sample_size: self.records_seen,
+                    support_interval: local_support_interval(
+                        counter.repositories,
+                        self.records_seen,
+                    ),
                     source_ids: source_ids.to_vec(),
                     profile_correlations,
                     co_occurrences,
-                    confidence,
-                    confidence_note: confidence_note(
+                    local_support_tier,
+                    support_note: support_note(
                         self.records_seen,
                         counter.repositories,
-                        confidence,
+                        local_support_tier,
                     ),
                     review_status: CalibrationReviewStatus::PendingReview,
                 }
@@ -172,17 +178,23 @@ impl StreamingAccumulator {
             .enumerate()
             .map(|(index, (route, counter))| {
                 let frequency_x1000 = ratio_x1000(counter.repositories, self.records_seen);
-                let confidence = confidence_for(self.records_seen, counter.repositories);
+                let local_support_tier =
+                    local_support_tier_for(self.records_seen, counter.repositories);
                 RouteRequirement {
                     id: stable_id("route-requirement", index + 1),
                     route: *route,
                     supporting_repositories: counter.repositories,
                     observations: counter.observations,
                     frequency_x1000,
+                    sample_size: self.records_seen,
+                    support_interval: local_support_interval(
+                        counter.repositories,
+                        self.records_seen,
+                    ),
                     suggested_requirement: route_requirement_from_frequency(frequency_x1000),
                     priority: priority_from_route_frequency(frequency_x1000),
                     source_ids: source_ids.to_vec(),
-                    confidence,
+                    local_support_tier,
                     review_status: CalibrationReviewStatus::PendingReview,
                     rationale: format!(
                         "Reviewable route requirement candidate only. Route `{:?}` appeared in {} of {} records; maintainers must review source quality and repository purpose before adopting.",

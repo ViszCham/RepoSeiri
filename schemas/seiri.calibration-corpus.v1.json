@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reposeiri.invalid/schemas/seiri.calibration-corpus.v1.json",
+  "title": "RepoSeiri public synthetic calibration corpus v1",
+  "schema_version": "seiri.calibration-corpus.v1",
+  "owner": "seiri-report::holdout::CalibrationCorpus",
+  "compatibility": "v1-only",
+  "type": "object",
+  "required": ["schema_version", "corpus_id", "visibility", "split_method", "cases"],
+  "properties": {
+    "schema_version": { "const": "seiri.calibration-corpus.v1" },
+    "corpus_id": { "type": "string", "minLength": 1 },
+    "visibility": { "const": "public_synthetic" },
+    "split_method": { "const": "fixed_case_ids_no_random_reshuffle_disjoint_task_fixtures" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["id", "split", "fixture", "expectation"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "split": { "enum": ["train", "holdout"] },
+        "fixture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "not": { "pattern": "(^[/\\\\])|(^[A-Za-z]:)|(^|[/\\\\])\\.\\.([/\\\\]|$)" }
+        },
+        "expectation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["task", "route", "expected_present"],
+              "properties": {
+                "task": { "const": "route" },
+                "route": {
+                  "enum": ["identity", "docs", "quickstart", "support", "intake", "contributing", "security", "release", "lifecycle", "governance", "license", "automation", "ownership", "hygiene", "unknown"]
+                },
+                "expected_present": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["task", "expected_finding"],
+              "properties": {
+                "task": { "const": "wording" },
+                "expected_finding": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["task", "expected_conflict"],
+              "properties": {
+                "task": { "const": "consistency" },
+                "expected_conflict": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["task", "profile", "expected_top"],
+              "properties": {
+                "task": { "const": "profile" },
+                "profile": {
+                  "enum": ["common", "library", "cli", "infra", "product", "runtime", "docs", "tutorial", "ml", "research", "template"]
+                },
+                "expected_top": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["task", "expected_operation"],
+              "properties": {
+                "task": { "const": "planner" },
+                "expected_operation": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -139,7 +139,7 @@ fn pattern_pack_requires_all_fixture_classes_and_uses_a_conditional_denominator(
     assert_eq!(metadata.eligible_records, 1);
     assert_eq!(metadata.excluded_records, 1);
     assert_eq!(run.summary.records, 1);
-    assert!(metadata.registry_fingerprint.starts_with("fnv1a64:"));
+    assert!(metadata.registry_fingerprint.starts_with("sha256:"));
     assert!(run
         .stats
         .iter()

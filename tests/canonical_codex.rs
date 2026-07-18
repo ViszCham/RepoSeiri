@@ -37,6 +37,27 @@ fn every_codex_query_uses_one_borrowed_schema() {
         adapter.query(CodexQueryKind::PrBody).query,
         CodexQuery::PrBody(_)
     ));
+    let summary = adapter.query(CodexQueryKind::Summary);
+    let CodexQuery::Summary(summary) = summary.query else {
+        panic!("summary query");
+    };
+    assert_eq!(summary.documents.primary_skipped_document_budget, 0);
+    assert_eq!(summary.coverage.partial_scopes, 0);
+    assert_eq!(summary.observations.unacknowledged_unknown, 0);
+    assert_eq!(
+        summary.source_session_digest,
+        analysis.analysis_configuration.source_session_digest
+    );
+    assert!(plan
+        .operations
+        .iter()
+        .map(|operation| operation.decision_basis.source_session_digest)
+        .chain(
+            plan.held
+                .iter()
+                .map(|hold| hold.decision_basis.source_session_digest)
+        )
+        .all(|digest| digest == summary.source_session_digest));
     let actions = adapter.query(CodexQueryKind::Actions);
     let CodexQuery::Actions(actions) = actions.query else {
         panic!("actions query");

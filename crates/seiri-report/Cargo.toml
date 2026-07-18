@@ -19,5 +19,6 @@ seiri-planner = { path = "../seiri-planner" }
 seiri-calibration = { path = "../seiri-calibration" }
 seiri-codex = { path = "../seiri-codex" }
 seiri-delta = { path = "../seiri-delta" }
+seiri-digest = { path = "../seiri-digest" }
 serde.workspace = true
 serde_json.workspace = true

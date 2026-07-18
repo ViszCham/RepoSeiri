@@ -1,5 +1,6 @@
 use seiri_core::{
-    CalibrationKey, CalibrationLookup, CalibrationProvider, PatternGroup, ProfileKind, RouteKind,
+    AnalysisScope, CalibrationKey, CalibrationLookup, CalibrationProvider, PatternExtensionState,
+    PatternGroup, ProfileKind, RouteKind,
 };
 use seiri_patterns::{
     evaluate_adoption_gate, load_executable_pattern_pack, AdoptionBlocker, AdoptionGateDecision,
@@ -22,6 +23,7 @@ fn loads_and_executes_all_group_fixture_classes_without_process_or_network() {
             .expect("reload executable pack")
             .fingerprint()
     );
+    assert!(pack.fingerprint().starts_with("sha256:"));
 
     let report = seiri_report::run_executable_pattern_pack(&pack);
     assert!(report.all_passed(), "{:#?}", report.results);
@@ -40,6 +42,145 @@ fn loads_and_executes_all_group_fixture_classes_without_process_or_network() {
             }));
         }
     }
+}
+
+#[test]
+fn executable_overlay_changes_normal_audit_without_collapsing_states() {
+    let fixture = BlockZFixture::new();
+    let pack = load_executable_pattern_pack(&fixture.pack_path).expect("load executable pack");
+    let positive = pack
+        .fixture_root("fixture.idn.positive")
+        .expect("positive fixture root");
+    let baseline = seiri_report::audit_repository_with_scope(
+        positive,
+        ProfileKind::Common,
+        AnalysisScope::Subtree,
+    )
+    .expect("baseline audit");
+    let applied = seiri_report::audit_repository_with_executable_pattern_pack_and_scope(
+        positive,
+        ProfileKind::Common,
+        AnalysisScope::Subtree,
+        &pack,
+    )
+    .expect("audit with executable overlay");
+
+    assert_eq!(
+        applied.pattern_extensions.evaluations.len(),
+        pack.definitions().len()
+    );
+    assert_eq!(
+        applied
+            .pattern_extensions
+            .pack
+            .as_ref()
+            .expect("pack provenance")
+            .fingerprint,
+        pack.fingerprint()
+    );
+    assert!(applied
+        .pattern_extensions
+        .evaluations
+        .iter()
+        .all(|item| item.state == PatternExtensionState::Present));
+    assert!(applied
+        .pattern_matches
+        .iter()
+        .any(|item| item.pattern_id == "data.idn"));
+    assert_ne!(
+        baseline.analysis_configuration.pattern_registry_fingerprint,
+        applied.analysis_configuration.pattern_registry_fingerprint
+    );
+    assert!(applied
+        .analysis_configuration
+        .pattern_registry_fingerprint
+        .starts_with("sha256:"));
+
+    let negative = pack
+        .fixture_root("fixture.idn.negative")
+        .expect("negative fixture root");
+    let absent = seiri_report::audit_repository_with_executable_pattern_pack_and_scope(
+        negative,
+        ProfileKind::Common,
+        AnalysisScope::Subtree,
+        &pack,
+    )
+    .expect("negative audit with executable overlay");
+    assert!(absent
+        .pattern_extensions
+        .evaluations
+        .iter()
+        .all(|item| item.state == PatternExtensionState::Absent));
+    assert!(absent
+        .missing_route_priority
+        .priorities
+        .iter()
+        .flat_map(|item| &item.candidate_pattern_ids)
+        .any(|id| id == "data.idn"));
+}
+
+#[test]
+fn executable_overlay_honors_disable_and_rejects_common_id_conflicts() {
+    let fixture = BlockZFixture::new();
+    let mut disabled_value = fixture.pack_value.clone();
+    disabled_value["definitions"][0]["enabled"] = json!(false);
+    let disabled_path = fixture.write_variant("disabled.json", &disabled_value);
+    let disabled_pack =
+        load_executable_pattern_pack(disabled_path).expect("load disabled executable pack");
+    let negative = disabled_pack
+        .fixture_root("fixture.idn.negative")
+        .expect("negative fixture root");
+    let disabled = seiri_report::audit_repository_with_executable_pattern_pack_and_scope(
+        negative,
+        ProfileKind::Common,
+        AnalysisScope::Subtree,
+        &disabled_pack,
+    )
+    .expect("audit with disabled pattern");
+    assert_eq!(
+        disabled
+            .pattern_extensions
+            .evaluations
+            .iter()
+            .find(|item| item.pattern_id == "data.idn")
+            .expect("disabled evaluation")
+            .state,
+        PatternExtensionState::Disabled
+    );
+    assert!(!disabled
+        .pattern_matches
+        .iter()
+        .any(|item| item.pattern_id == "data.idn"));
+
+    let mut conflict_value = fixture.pack_value.clone();
+    conflict_value["definitions"][0]["id"] = json!("common.identity.readme_present");
+    for fixture_value in conflict_value["fixtures"]
+        .as_array_mut()
+        .expect("fixture array")
+    {
+        for expectation in fixture_value["expectations"]
+            .as_array_mut()
+            .expect("expectation array")
+        {
+            if expectation["pattern"] == "data.idn" {
+                expectation["pattern"] = json!("common.identity.readme_present");
+            }
+        }
+    }
+    let conflict_path = fixture.write_variant("common-conflict.json", &conflict_value);
+    let conflict_pack =
+        load_executable_pattern_pack(conflict_path).expect("load common-conflict pack");
+    assert!(matches!(
+        seiri_report::audit_repository_with_executable_pattern_pack_and_scope(
+            negative,
+            ProfileKind::Common,
+            AnalysisScope::Subtree,
+            &conflict_pack,
+        ),
+        Err(seiri_report::AuditError::PatternExtension(
+            seiri_patterns::PatternExtensionError::CommonPatternConflict(ref id)
+        )) if id == "common.identity.readme_present"
+    ));
 }
 
 #[test]
@@ -182,6 +323,10 @@ fn private_overlay_applies_locally_without_public_prior_values() {
     assert!(metadata.source_path_redacted);
     assert!(metadata.source_body_redacted);
     assert!(metadata.exact_priors_redacted);
+    assert_eq!(
+        metadata.freshness,
+        seiri_calibration::PrivateCalibrationFreshness::Unverified
+    );
     assert_eq!(metadata.resource_trace.prior_count, 1);
     let metadata_json = serde_json::to_string(&metadata).expect("metadata JSON");
     assert!(!metadata_json.contains("PRIVATE_OVERLAY_SENTINEL"));
@@ -205,6 +350,42 @@ fn private_overlay_applies_locally_without_public_prior_values() {
         assert!(!output.contains("rank_weight_x100"));
         assert!(!output.contains("0.700"));
     }
+}
+
+#[test]
+fn private_overlay_revision_fails_closed_when_stale() {
+    let fixture = BlockZFixture::new();
+    let pack = load_executable_pattern_pack(&fixture.pack_path).expect("load executable pack");
+    let private_prior = json!({
+        "schema_version": seiri_calibration::LOCAL_PRIOR_SCHEMA_VERSION,
+        "registry_fingerprint": pack.fingerprint(),
+        "opaque_revision": "owner-revision-8",
+        "priors": []
+    });
+    let prior_path = fixture.write_variant("revision-bound-priors.json", &private_prior);
+    let current = seiri_calibration::load_private_calibration_overlay_for_revision(
+        &fixture.pack_path,
+        &prior_path,
+        "owner-revision-8",
+    )
+    .expect("current private overlay");
+    assert_eq!(
+        current.metadata().freshness,
+        seiri_calibration::PrivateCalibrationFreshness::Current
+    );
+    assert!(matches!(
+        seiri_calibration::load_private_calibration_overlay_for_revision(
+            &fixture.pack_path,
+            &prior_path,
+            "owner-revision-9",
+        ),
+        Err(seiri_calibration::PrivateOverlayLoadError::Calibration(
+            seiri_calibration::LocalPriorLoadError::StaleOpaqueRevision
+        ))
+    ));
+    let public = serde_json::to_string(&current.metadata()).expect("metadata JSON");
+    assert!(!public.contains(prior_path.to_string_lossy().as_ref()));
+    assert!(!public.contains("owner-revision-8"));
 }
 
 #[test]
