@@ -311,8 +311,10 @@ fn reject_unexpected_stderr(stderr: &[u8]) -> Result<(), String> {
 fn process_failure(failure: supervisor::ProcessFailure) -> String {
     let error_code =
         structured_error_code(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
+    let shell_error_id =
+        powershell_error_id(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
     format!(
-        "bundle smoke process failed: {:?}; error_code={error_code}; captured stdout={} stderr={} bytes",
+        "bundle smoke process failed: {:?}; error_code={error_code}; shell_error_id={shell_error_id}; captured stdout={} stderr={} bytes",
         failure.kind,
         failure.stdout.len(),
         failure.stderr.len()
@@ -321,14 +323,28 @@ fn process_failure(failure: supervisor::ProcessFailure) -> String {
 
 fn structured_error_code(stderr: &[u8]) -> Option<String> {
     const MARKER: &str = "\"code\":\"";
-    const MAX_CODE_LEN: usize = 64;
-    let stderr = std::str::from_utf8(stderr).ok()?;
-    let value = stderr.split_once(MARKER)?.1.split_once('"')?.0;
+    let stderr = String::from_utf8_lossy(stderr);
+    bounded_diagnostic_token(stderr.split_once(MARKER)?.1.split_once('"')?.0, 64)
+}
+
+fn powershell_error_id(stderr: &[u8]) -> Option<String> {
+    const MARKER: &str = "FullyQualifiedErrorId";
+    let stderr = String::from_utf8_lossy(stderr);
+    let line = stderr
+        .lines()
+        .find(|line| line.contains(MARKER))?
+        .split_once(':')?
+        .1
+        .trim();
+    bounded_diagnostic_token(line, 160)
+}
+
+fn bounded_diagnostic_token(value: &str, max_len: usize) -> Option<String> {
     if value.is_empty()
-        || value.len() > MAX_CODE_LEN
+        || value.len() > max_len
         || !value
             .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b','))
     {
         return None;
     }
@@ -596,6 +612,16 @@ mod tests {
         )
         .is_none());
         assert!(structured_error_code(br#"C:\Users\name\private"#).is_none());
+        assert_eq!(
+            powershell_error_id(
+                b"    + FullyQualifiedErrorId : InvalidOperation,Microsoft.PowerShell.Commands.WriteErrorException\r\n"
+            )
+            .as_deref(),
+            Some("InvalidOperation,Microsoft.PowerShell.Commands.WriteErrorException")
+        );
+        assert!(
+            powershell_error_id(b"FullyQualifiedErrorId : C:\\Users\\name\\private\r\n").is_none()
+        );
     }
 
     #[test]
