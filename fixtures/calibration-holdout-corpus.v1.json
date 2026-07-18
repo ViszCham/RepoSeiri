@@ -1,0 +1,290 @@
+{
+  "schema_version": "seiri.calibration-corpus.v1",
+  "corpus_id": "reposeiri-public-synthetic-holdout-v1",
+  "visibility": "public_synthetic",
+  "split_method": "fixed_case_ids_no_random_reshuffle_disjoint_task_fixtures",
+  "cases": [
+    {
+      "id": "train-route-docs-present",
+      "split": "train",
+      "fixture": "readme-route-repo",
+      "expectation": {
+        "task": "route",
+        "route": "docs",
+        "expected_present": true
+      }
+    },
+    {
+      "id": "train-route-security-absent",
+      "split": "train",
+      "fixture": "train-route-minimal",
+      "expectation": {
+        "task": "route",
+        "route": "security",
+        "expected_present": false
+      }
+    },
+    {
+      "id": "holdout-route-security-present",
+      "split": "holdout",
+      "fixture": "verified-security-route-repo",
+      "expectation": {
+        "task": "route",
+        "route": "security",
+        "expected_present": true
+      }
+    },
+    {
+      "id": "holdout-route-docs-present",
+      "split": "holdout",
+      "fixture": "docs-routed-repo",
+      "expectation": {
+        "task": "route",
+        "route": "docs",
+        "expected_present": true
+      }
+    },
+    {
+      "id": "holdout-route-security-absent-minimal",
+      "split": "holdout",
+      "fixture": "minimal-repo",
+      "expectation": {
+        "task": "route",
+        "route": "security",
+        "expected_present": false
+      }
+    },
+    {
+      "id": "holdout-route-security-absent-nested-license",
+      "split": "holdout",
+      "fixture": "nested-license-only-repo",
+      "expectation": {
+        "task": "route",
+        "route": "security",
+        "expected_present": false
+      }
+    },
+    {
+      "id": "train-wording-visible",
+      "split": "train",
+      "fixture": "train-wording-visible",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": true
+      }
+    },
+    {
+      "id": "train-wording-safe",
+      "split": "train",
+      "fixture": "train-wording-safe",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": false
+      }
+    },
+    {
+      "id": "holdout-wording-visible",
+      "split": "holdout",
+      "fixture": "wording-lint-repo",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": true
+      }
+    },
+    {
+      "id": "holdout-wording-visible-minimal",
+      "split": "holdout",
+      "fixture": "holdout-wording-visible",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": true
+      }
+    },
+    {
+      "id": "holdout-wording-safe",
+      "split": "holdout",
+      "fixture": "wording-safe-repo",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": false
+      }
+    },
+    {
+      "id": "holdout-wording-code-only",
+      "split": "holdout",
+      "fixture": "holdout-wording-code-only",
+      "expectation": {
+        "task": "wording",
+        "expected_finding": false
+      }
+    },
+    {
+      "id": "train-consistency-conflict",
+      "split": "train",
+      "fixture": "train-consistency-proposition",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": true
+      }
+    },
+    {
+      "id": "train-consistency-clean",
+      "split": "train",
+      "fixture": "train-consistency-clean",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": false
+      }
+    },
+    {
+      "id": "holdout-consistency-proposition-conflict",
+      "split": "holdout",
+      "fixture": "holdout-consistency-proposition",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": true
+      }
+    },
+    {
+      "id": "holdout-consistency-target-conflict",
+      "split": "holdout",
+      "fixture": "conflicting-canonical-targets",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": true
+      }
+    },
+    {
+      "id": "holdout-consistency-clean",
+      "split": "holdout",
+      "fixture": "holdout-consistency-clean",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": false
+      }
+    },
+    {
+      "id": "holdout-consistency-minimal",
+      "split": "holdout",
+      "fixture": "minimal-repo",
+      "expectation": {
+        "task": "consistency",
+        "expected_conflict": false
+      }
+    },
+    {
+      "id": "train-profile-cli-positive",
+      "split": "train",
+      "fixture": "train-profile-cli",
+      "expectation": {
+        "task": "profile",
+        "profile": "cli",
+        "expected_top": true
+      }
+    },
+    {
+      "id": "train-profile-cli-negative",
+      "split": "train",
+      "fixture": "train-profile-cli",
+      "expectation": {
+        "task": "profile",
+        "profile": "docs",
+        "expected_top": false
+      }
+    },
+    {
+      "id": "holdout-profile-cli-positive",
+      "split": "holdout",
+      "fixture": "profile-cli-regression",
+      "expectation": {
+        "task": "profile",
+        "profile": "cli",
+        "expected_top": true
+      }
+    },
+    {
+      "id": "holdout-profile-library-positive",
+      "split": "holdout",
+      "fixture": "profile-library-regression",
+      "expectation": {
+        "task": "profile",
+        "profile": "library",
+        "expected_top": true
+      }
+    },
+    {
+      "id": "holdout-profile-library-negative",
+      "split": "holdout",
+      "fixture": "profile-infra-regression",
+      "expectation": {
+        "task": "profile",
+        "profile": "library",
+        "expected_top": false
+      }
+    },
+    {
+      "id": "holdout-profile-cli-negative",
+      "split": "holdout",
+      "fixture": "profile-docs-regression",
+      "expectation": {
+        "task": "profile",
+        "profile": "cli",
+        "expected_top": false
+      }
+    },
+    {
+      "id": "train-planner-operation",
+      "split": "train",
+      "fixture": "train-planner-operation",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": true
+      }
+    },
+    {
+      "id": "train-planner-hold-only",
+      "split": "train",
+      "fixture": "train-planner-hold-only",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": false
+      }
+    },
+    {
+      "id": "holdout-planner-safe-operation",
+      "split": "holdout",
+      "fixture": "safe-plan-repo",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": true
+      }
+    },
+    {
+      "id": "holdout-planner-route-operation",
+      "split": "holdout",
+      "fixture": "readme-route-repo",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": true
+      }
+    },
+    {
+      "id": "holdout-planner-minimal-hold",
+      "split": "holdout",
+      "fixture": "minimal-repo",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": false
+      }
+    },
+    {
+      "id": "holdout-planner-security-hold",
+      "split": "holdout",
+      "fixture": "verified-security-route-repo",
+      "expectation": {
+        "task": "planner",
+        "expected_operation": false
+      }
+    }
+  ]
+}

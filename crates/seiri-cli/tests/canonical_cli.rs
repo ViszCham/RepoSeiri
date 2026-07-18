@@ -92,6 +92,32 @@ fn codex_queries_and_plan_use_single_cli_surface() {
         .expect("help");
     assert!(help.status.success());
     assert!(help.stderr.is_empty());
+    let help = String::from_utf8(help.stdout).expect("UTF-8 help");
+    assert!(help.contains("bounded local evidence"));
+    assert!(help.contains("audit"));
+    assert!(help.contains("plan"));
+    assert!(help.contains("codex"));
+
+    let codex_help = Command::new(env!("CARGO_BIN_EXE_seiri"))
+        .args(["codex", "--help"])
+        .output()
+        .expect("codex help");
+    assert!(codex_help.status.success());
+    let codex_help = String::from_utf8(codex_help.stdout).expect("UTF-8 Codex help");
+    for query in [
+        "summary",
+        "routes",
+        "evidence",
+        "documents",
+        "governance",
+        "patches",
+        "linter",
+        "actions",
+        "remote",
+        "pr-body",
+    ] {
+        assert!(codex_help.contains(query), "Codex help omitted {query}");
+    }
     fs::remove_dir_all(root).expect("remove temp repository");
 }
 

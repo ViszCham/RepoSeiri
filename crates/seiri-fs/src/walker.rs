@@ -22,6 +22,7 @@ pub const DEFAULT_IGNORED_NAMES: &[&str] = &[
 pub struct ScanOptions {
     pub max_depth: usize,
     pub max_entries: usize,
+    pub max_directory_entries: usize,
     pub ignore_policy: IgnorePolicy,
     pub max_ignored_records: usize,
 }
@@ -31,6 +32,7 @@ impl Default for ScanOptions {
         Self {
             max_depth: 32,
             max_entries: 100_000,
+            max_directory_entries: 16_384,
             ignore_policy: IgnorePolicy::default(),
             max_ignored_records: 4_096,
         }
@@ -111,6 +113,7 @@ impl RepositoryRoot {
 pub enum WalkLimitKind {
     Depth,
     Entries,
+    DirectoryEntries,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +140,7 @@ impl WalkCompletion {
 pub struct RepositoryWalkSummary {
     pub max_depth: usize,
     pub max_entries: usize,
+    pub max_directory_entries: usize,
     pub visited_entries: usize,
     pub ignored_entries: usize,
     pub ignored_records_truncated: bool,
@@ -249,6 +253,7 @@ pub fn walk_repository_with_options(
     let summary = RepositoryWalkSummary {
         max_depth: options.max_depth,
         max_entries: options.max_entries,
+        max_directory_entries: options.max_directory_entries,
         visited_entries: state.records.len(),
         ignored_entries: state.ignored_entries,
         ignored_records_truncated: state.ignored_records_truncated,
@@ -288,17 +293,24 @@ fn walk_dir(
         return Ok(());
     }
 
-    let entries = fs::read_dir(dir)
-        .map_err(|source| FsError::Io {
+    let mut entries = Vec::with_capacity(options.max_directory_entries.min(1_024));
+    for entry in fs::read_dir(dir).map_err(|source| FsError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })? {
+        if entries.len() >= options.max_directory_entries {
+            state.completion = Some(WalkCompletion::Truncated(WalkTruncation {
+                kind: WalkLimitKind::DirectoryEntries,
+                path: walk_display_path(root, dir)?,
+                limit: options.max_directory_entries,
+            }));
+            return Ok(());
+        }
+        entries.push(entry.map_err(|source| FsError::Io {
             path: dir.to_path_buf(),
             source,
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|source| FsError::Io {
-            path: dir.to_path_buf(),
-            source,
-        })?;
-    let mut entries = entries;
+        })?);
+    }
     entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
@@ -412,4 +424,12 @@ fn normalize_relative_path(root: &Path, path: &Path) -> Result<String, FsError> 
     RepoRelativePath::from_rooted(root, path)
         .map(RepoRelativePath::into_string)
         .map_err(FsError::InvalidRepositoryPath)
+}
+
+fn walk_display_path(root: &Path, path: &Path) -> Result<String, FsError> {
+    if root == path {
+        Ok(".".to_string())
+    } else {
+        normalize_relative_path(root, path)
+    }
 }

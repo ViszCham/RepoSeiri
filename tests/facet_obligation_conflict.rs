@@ -177,7 +177,7 @@ fn partial_filesystem_coverage_keeps_unsatisfied_obligations_unknown() {
 fn conflict_pair_limit_is_visible_as_partial_coverage() {
     let repo = TempRepo::new("conflict-bound");
     repo.write("README.md", "# Fixture\n");
-    for index in 0..12 {
+    for index in 0..130 {
         repo.write(
             &format!("docs/route-{index}.md"),
             &format!("# Documentation\n\n[Documentation](../DOCS-{index}.md)\n"),
@@ -185,10 +185,66 @@ fn conflict_pair_limit_is_visible_as_partial_coverage() {
     }
 
     let snapshot = seiri_report::audit_repository(repo.path()).expect("audit repository");
-    assert_eq!(snapshot.document_consistency.conflicts.len(), 64);
+    assert_eq!(snapshot.route_targets.len(), 128);
+    assert!(snapshot.document_consistency.conflicts.len() <= 8_192);
     assert_eq!(
         snapshot.document_consistency.conflict_coverage,
         CoverageStatus::Partial(CoverageIncompleteReason::LimitExceeded)
+    );
+}
+
+#[test]
+fn visible_primary_propositions_retain_two_spans_and_exclude_fixtures() {
+    let repo = TempRepo::new("proposition-conflicts");
+    repo.write(
+        "README.md",
+        "# Product\n\nVersion 1.2.0 is current.\n\nThis tool supports Windows.\n",
+    );
+    repo.write(
+        "docs/release.md",
+        "# Release\n\nVersion 2.0.0 is current.\n\nThis tool does not support Windows.\n",
+    );
+    repo.write(
+        "fixtures/README.md",
+        "# Fixture\n\nVersion 9.9.9 is current.\n",
+    );
+    repo.write(
+        "docs/design/roadmap-old.md",
+        "# Historical design\n\nVersion 0.1.0 was proposed.\n",
+    );
+
+    let snapshot = seiri_report::audit_repository(repo.path()).expect("audit repository");
+    assert!(snapshot
+        .document_consistency
+        .propositions
+        .iter()
+        .all(|proposition| {
+            !proposition.path.starts_with("fixtures/")
+                && !proposition.path.starts_with("docs/design/")
+        }));
+    for kind in [
+        seiri_core::DocumentPropositionKind::Version,
+        seiri_core::DocumentPropositionKind::Capability,
+    ] {
+        let conflict = snapshot
+            .document_consistency
+            .proposition_conflicts
+            .iter()
+            .find(|conflict| conflict.kind == kind)
+            .expect("typed proposition conflict");
+        assert_ne!(conflict.left.path, conflict.right.path);
+        assert!(conflict.left.span.byte_end > conflict.left.span.byte_start);
+        assert!(conflict.right.span.byte_end > conflict.right.span.byte_start);
+        assert!(conflict.confidence_boundary.starts_with("candidate_only:"));
+        for side in [&conflict.left, &conflict.right] {
+            let source = fs::read_to_string(repo.path().join(&side.path)).expect("source document");
+            assert!(side.span.byte_end <= source.len());
+            assert!(!source[side.span.byte_start..side.span.byte_end].is_empty());
+        }
+    }
+    assert_eq!(
+        snapshot.document_consistency.conflict_coverage,
+        CoverageStatus::Complete
     );
 }
 

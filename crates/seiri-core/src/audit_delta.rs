@@ -10,10 +10,74 @@ pub const AUDIT_DELTA_SCHEMA_VERSION: &str = "seiri.audit-delta.v2";
 pub const PATCH_PLAN_SCHEMA_VERSION: &str = "seiri.patch-plan.v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EvidenceIdentityDigest(Digest32);
+
+impl EvidenceIdentityDigest {
+    #[must_use]
+    pub const fn new(value: Digest32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> Digest32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EvidenceStateDigest(Digest32);
+
+impl EvidenceStateDigest {
+    #[must_use]
+    pub const fn new(value: Digest32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> Digest32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EvidenceOccurrenceDigest(Digest32);
+
+impl EvidenceOccurrenceDigest {
+    #[must_use]
+    pub const fn new(value: Digest32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> Digest32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceSessionDigest(Digest32);
+
+impl SourceSessionDigest {
+    #[must_use]
+    pub const fn new(value: Digest32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> Digest32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EvidenceFingerprint {
-    pub identity: Digest32,
-    pub state: Digest32,
-    pub occurrence: Digest32,
+    pub identity: EvidenceIdentityDigest,
+    pub state: EvidenceStateDigest,
+    pub occurrence: EvidenceOccurrenceDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +88,8 @@ pub struct PatchDecisionBasis {
     pub evidence_fingerprints: Vec<EvidenceFingerprint>,
     pub claim_semantic_revision: String,
     pub planner_semantic_revision: String,
+    #[serde(default)]
+    pub source_session_digest: SourceSessionDigest,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +106,8 @@ pub enum AnalysisVisibility {
 pub struct AnalysisBudgetConfiguration {
     pub filesystem_max_depth: usize,
     pub filesystem_max_entries: usize,
+    #[serde(default = "default_filesystem_max_directory_entries")]
+    pub filesystem_max_directory_entries: usize,
     pub filesystem_max_ignored_records: usize,
     pub filesystem_additional_ignored_names: Vec<String>,
     pub document_max_documents: usize,
@@ -58,6 +126,7 @@ impl Default for AnalysisBudgetConfiguration {
         Self {
             filesystem_max_depth: 32,
             filesystem_max_entries: 100_000,
+            filesystem_max_directory_entries: default_filesystem_max_directory_entries(),
             filesystem_max_ignored_records: 4_096,
             filesystem_additional_ignored_names: Vec::new(),
             document_max_documents: 32,
@@ -73,6 +142,10 @@ impl Default for AnalysisBudgetConfiguration {
     }
 }
 
+const fn default_filesystem_max_directory_entries() -> usize {
+    16_384
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisConfiguration {
     pub schema_version: String,
@@ -82,6 +155,8 @@ pub struct AnalysisConfiguration {
     pub pattern_registry_fingerprint: String,
     pub visibility: AnalysisVisibility,
     pub calibration_binding: Option<String>,
+    #[serde(default)]
+    pub source_session_digest: SourceSessionDigest,
 }
 
 impl Default for AnalysisConfiguration {
@@ -94,6 +169,7 @@ impl Default for AnalysisConfiguration {
             pattern_registry_fingerprint: String::new(),
             visibility: AnalysisVisibility::Standard,
             calibration_binding: None,
+            source_session_digest: SourceSessionDigest::default(),
         }
     }
 }
@@ -171,7 +247,6 @@ pub struct PortableFacetRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortableDocumentRecord {
-    pub document: Option<DocumentId>,
     pub path: String,
     pub coverage: CoverageStatus,
     pub digest: Digest32,
@@ -181,6 +256,7 @@ pub struct PortableDocumentRecord {
 pub struct AuditSnapshotDigest {
     pub schema: String,
     pub configuration: Digest32,
+    pub source_session: SourceSessionDigest,
     pub evidence: Digest32,
     pub routes: Digest32,
     pub documents: Digest32,

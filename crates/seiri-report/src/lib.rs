@@ -5,6 +5,7 @@ use seiri_core::{
     NoCalibrationProvider, PatchPlan, ProfileKind, RepositoryAnalysis, RouteKind,
     WordingLintReport,
 };
+use seiri_digest::StableHasher;
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
 use std::io;
@@ -15,7 +16,9 @@ pub use seiri_codex::{CodexQueryKind, CodexQueryParseError};
 mod claims;
 mod evidence;
 mod fixture_runner;
+mod holdout;
 mod obligation_graph;
+mod propositions;
 mod route_content;
 mod route_priority;
 mod wording;
@@ -23,6 +26,12 @@ mod wording;
 use claims::build_content_claims;
 use evidence::{build_evidence_kernel, build_route_assessments};
 pub use fixture_runner::run_executable_pattern_pack;
+pub use holdout::{
+    evaluate_public_holdout, CalibrationTask, ConfusionCounts, CorpusVisibility,
+    EmpiricalCalibrationStatus, HoldoutCalibrationReport, HoldoutError, PeakAllocationMeasurement,
+    TaskCalibrationMetrics, TaskResourceMeasurement, HOLDOUT_CORPUS_SCHEMA_VERSION,
+    HOLDOUT_REPORT_SCHEMA_VERSION, HOLDOUT_SPLIT_METHOD, MINIMUM_HOLDOUT_CASES_PER_TASK,
+};
 use obligation_graph::{build_document_consistency_report, build_route_targets};
 use route_content::build_route_content;
 use route_priority::{build_missing_route_priority_report, build_review_priority_report};
@@ -40,6 +49,7 @@ pub enum AuditError {
     DocumentConsistency(seiri_core::DocumentConsistencyError),
     GitLocal(seiri_git_local::GitLocalError),
     Delta(seiri_delta::DeltaError),
+    PatternExtension(seiri_patterns::PatternExtensionError),
     Json(serde_json::Error),
     Io {
         path: std::path::PathBuf,
@@ -68,6 +78,7 @@ impl Display for AuditError {
             Self::DocumentConsistency(error) => write!(f, "{error}"),
             Self::GitLocal(error) => write!(f, "{error}"),
             Self::Delta(error) => write!(f, "{error}"),
+            Self::PatternExtension(error) => write!(f, "{error}"),
             Self::Json(error) => write!(f, "{error}"),
             Self::Io { source, .. } => write!(f, "failed to read repository input: {source}"),
         }
@@ -89,6 +100,7 @@ impl std::error::Error for AuditError {
             Self::DocumentConsistency(error) => Some(error),
             Self::GitLocal(error) => Some(error),
             Self::Delta(error) => Some(error),
+            Self::PatternExtension(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io { source, .. } => Some(source),
         }
@@ -164,6 +176,12 @@ impl From<seiri_git_local::GitLocalError> for AuditError {
 impl From<seiri_delta::DeltaError> for AuditError {
     fn from(value: seiri_delta::DeltaError) -> Self {
         Self::Delta(value)
+    }
+}
+
+impl From<seiri_patterns::PatternExtensionError> for AuditError {
+    fn from(value: seiri_patterns::PatternExtensionError) -> Self {
+        Self::PatternExtension(value)
     }
 }
 
@@ -343,6 +361,30 @@ pub fn audit_repository_with_remote<T: seiri_remote::RemoteTransport>(
     Ok(snapshot)
 }
 
+pub fn audit_repository_with_executable_pattern_pack(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    pack: &seiri_patterns::ExecutablePatternPack,
+) -> Result<RepositoryAnalysis, AuditError> {
+    audit_repository_with_executable_pattern_pack_and_scope(
+        path,
+        profile,
+        seiri_core::AnalysisScope::Repository,
+        pack,
+    )
+}
+
+pub fn audit_repository_with_executable_pattern_pack_and_scope(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    scope: seiri_core::AnalysisScope,
+    pack: &seiri_patterns::ExecutablePatternPack,
+) -> Result<RepositoryAnalysis, AuditError> {
+    let mut snapshot = audit_repository_with_scope(path, profile, scope)?;
+    apply_executable_pattern_pack(&mut snapshot, pack)?;
+    Ok(snapshot)
+}
+
 pub fn audit_repository_with_options(
     path: impl AsRef<Path>,
     profile: ProfileKind,
@@ -384,6 +426,30 @@ fn audit_repository_with_options_and_calibration(
     analysis_scope: seiri_core::AnalysisScope,
     calibration: &dyn CalibrationProvider,
 ) -> Result<RepositoryAnalysis, AuditError> {
+    Ok(audit_repository_session_with_options_and_calibration(
+        path,
+        profile,
+        fs_options,
+        document_options,
+        analysis_scope,
+        calibration,
+    )?
+    .analysis)
+}
+
+struct AuditSourceSession {
+    analysis: RepositoryAnalysis,
+    document_sources: Vec<seiri_markdown::SourceDocument>,
+}
+
+fn audit_repository_session_with_options_and_calibration(
+    path: impl AsRef<Path>,
+    profile: ProfileKind,
+    fs_options: &seiri_fs::ScanOptions,
+    document_options: &seiri_markdown::DocumentIndexOptions,
+    analysis_scope: seiri_core::AnalysisScope,
+    calibration: &dyn CalibrationProvider,
+) -> Result<AuditSourceSession, AuditError> {
     let discovered = seiri_git_local::discover_repository(path.as_ref(), analysis_scope)
         .map_err(seiri_git_local::GitLocalError::from)?;
     let fs_scan = seiri_fs::scan_repository_with_options(discovered.analysis_root(), fs_options)?;
@@ -398,13 +464,16 @@ fn audit_repository_with_options_and_calibration(
         },
         &seiri_git_local::GixReadBackend,
     );
-    let document_index = seiri_markdown::scan_document_index_with_options_and_scope(
+    let document_session = seiri_markdown::scan_document_source_session_with_options_and_scope(
         &fs_scan.repo_root,
         &fs_scan.files,
         fs_scan.walk_summary.completion.is_complete(),
         document_options,
         Some(&repository_scope.graph),
     )?;
+    let (document_index, document_sources) = document_session.into_parts();
+    let source_session_digest =
+        build_source_session_digest(&fs_scan, &document_index, &repository_scope)?;
     let readme_document = document_index.root_readme_document().cloned();
     let readme_summary = readme_document.as_ref().map(|document| {
         seiri_markdown::summarize_readme_document(document, Some(&fs_scan.repo_root))
@@ -421,6 +490,7 @@ fn audit_repository_with_options_and_calibration(
         budgets: seiri_core::AnalysisBudgetConfiguration {
             filesystem_max_depth: fs_options.max_depth,
             filesystem_max_entries: fs_options.max_entries,
+            filesystem_max_directory_entries: fs_options.max_directory_entries,
             filesystem_max_ignored_records: fs_options.max_ignored_records,
             filesystem_additional_ignored_names: fs_options
                 .ignore_policy
@@ -452,6 +522,7 @@ fn audit_repository_with_options_and_calibration(
             }
         },
         calibration_binding: calibration.comparison_binding().map(str::to_owned),
+        source_session_digest,
     };
     snapshot.entry_count = fs_scan.files.len();
     snapshot.files = fs_scan.files.clone();
@@ -508,7 +579,83 @@ fn audit_repository_with_options_and_calibration(
     snapshot.review_priority =
         build_review_priority_report(&snapshot.missing_route_priority, &snapshot.route_content);
     snapshot.claims = build_content_claims(&snapshot);
-    Ok(snapshot)
+    Ok(AuditSourceSession {
+        analysis: snapshot,
+        document_sources,
+    })
+}
+
+fn apply_executable_pattern_pack(
+    snapshot: &mut RepositoryAnalysis,
+    pack: &seiri_patterns::ExecutablePatternPack,
+) -> Result<(), AuditError> {
+    let extension = seiri_patterns::evaluate_executable_overlay(snapshot, pack)?;
+    snapshot.pattern_extensions = extension.report;
+    snapshot.pattern_matches.extend(extension.pattern_matches);
+    snapshot.findings.extend(extension.findings);
+
+    let mut fingerprint = StableHasher::new(b"seiri.pattern-registry-overlay.v1", 2);
+    fingerprint
+        .str(
+            1,
+            &seiri_patterns::common_pattern_pack()
+                .fingerprint()
+                .to_string(),
+        )
+        .str(2, pack.fingerprint());
+    snapshot.analysis_configuration.pattern_registry_fingerprint = fingerprint.finish().to_string();
+
+    snapshot.route_assessments = build_route_assessments(snapshot)?;
+    snapshot.freshness = build_freshness_report(snapshot);
+    snapshot.profile = seiri_profiles::evaluate_profile_with_calibration(
+        snapshot,
+        snapshot.analysis_configuration.profile,
+        &NoCalibrationProvider,
+    );
+    snapshot.missing_route_priority =
+        build_missing_route_priority_report(snapshot, &NoCalibrationProvider);
+    snapshot.review_priority =
+        build_review_priority_report(&snapshot.missing_route_priority, &snapshot.route_content);
+    snapshot.claims = build_content_claims(snapshot);
+    Ok(())
+}
+
+fn build_source_session_digest(
+    fs_scan: &seiri_fs::RepoFsScan,
+    document_index: &seiri_core::DocumentIndex,
+    repository_scope: &seiri_core::RepositoryScopeReport,
+) -> Result<seiri_core::SourceSessionDigest, AuditError> {
+    let mut hash = StableHasher::new(b"seiri.audit-source-session.v1", 9);
+    match &fs_scan.walk_summary.completion {
+        seiri_fs::WalkCompletion::Complete => {
+            hash.str(1, "complete");
+        }
+        seiri_fs::WalkCompletion::Truncated(truncation) => {
+            hash.str(1, "truncated")
+                .str(2, walk_limit_tag(truncation.kind))
+                .str(3, &truncation.path)
+                .usize(4, truncation.limit);
+        }
+    }
+
+    hash.usize(5, fs_scan.files.len());
+    for file in &fs_scan.files {
+        hash.field(6, &serde_json::to_vec(file)?);
+    }
+    hash.usize(7, document_index.entries().len());
+    for document in document_index.entries() {
+        hash.field(8, &serde_json::to_vec(document)?);
+    }
+    hash.field(9, &serde_json::to_vec(repository_scope)?);
+    Ok(seiri_core::SourceSessionDigest::new(hash.finish()))
+}
+
+const fn walk_limit_tag(kind: seiri_fs::WalkLimitKind) -> &'static str {
+    match kind {
+        seiri_fs::WalkLimitKind::Depth => "depth",
+        seiri_fs::WalkLimitKind::Entries => "entries",
+        seiri_fs::WalkLimitKind::DirectoryEntries => "directory_entries",
+    }
 }
 
 fn build_coverage_index(
@@ -582,7 +729,7 @@ fn markdown_coverage_status(
     document_index
         .entries()
         .iter()
-        .filter(|entry| entry.is_markdown())
+        .filter(|entry| entry.is_markdown() && entry.classification.is_primary_repository_content())
         .map(|entry| entry.status.coverage_status())
         .find(|status| *status != seiri_core::CoverageStatus::Complete)
         .unwrap_or(seiri_core::CoverageStatus::Complete)
@@ -696,6 +843,7 @@ struct AuditWire<'a> {
     repository_scope: &'a seiri_core::RepositoryScopeReport,
     freshness: &'a seiri_core::FreshnessReport,
     pattern_matches: &'a [seiri_core::PatternMatch],
+    pattern_extensions: &'a seiri_core::PatternExtensionReport,
     route_assessments: &'a [seiri_core::RouteAssessment],
     missing_route_priority: &'a seiri_core::MissingRoutePriorityReport,
     review_priority: &'a seiri_core::ReviewPriorityReport,
@@ -730,6 +878,7 @@ impl<'a> From<&'a RepositoryAnalysis> for AuditWire<'a> {
             repository_scope: &value.repository_scope,
             freshness: &value.freshness,
             pattern_matches: &value.pattern_matches,
+            pattern_extensions: &value.pattern_extensions,
             route_assessments: &value.route_assessments,
             missing_route_priority: &value.missing_route_priority,
             review_priority: &value.review_priority,
@@ -816,7 +965,15 @@ pub fn lint_wording_repository_with_profile(
     path: impl AsRef<Path>,
     profile: ProfileKind,
 ) -> Result<WordingLintReport, AuditError> {
-    wording::lint_repository_with_profile(path, profile)
+    let session = audit_repository_session_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        seiri_core::AnalysisScope::Subtree,
+        &NoCalibrationProvider,
+    )?;
+    wording::lint_source_session(&session.analysis, &session.document_sources)
 }
 
 pub fn wording_lint_to_json(report: &WordingLintReport) -> Result<String, AuditError> {
@@ -853,15 +1010,24 @@ pub fn codex_query_repository_to_json(
     scope: seiri_core::AnalysisScope,
     query: CodexQueryKind,
 ) -> Result<String, AuditError> {
-    let path = path.as_ref();
-    let analysis = audit_repository_with_scope(path, profile, scope)?;
-    let plan = seiri_planner::plan_patches(&analysis);
+    let session = audit_repository_session_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        scope,
+        &NoCalibrationProvider,
+    )?;
+    let plan = seiri_planner::plan_patches(&session.analysis);
     let wording_lint = if query == CodexQueryKind::Linter {
-        Some(wording::lint_repository_with_profile(path, profile)?)
+        Some(wording::lint_source_session(
+            &session.analysis,
+            &session.document_sources,
+        )?)
     } else {
         None
     };
-    let view = seiri_codex::CodexView::new(&analysis, &plan, wording_lint.as_ref());
+    let view = seiri_codex::CodexView::new(&session.analysis, &plan, wording_lint.as_ref());
     Ok(serde_json::to_string_pretty(&view.query(query))?)
 }
 
@@ -871,15 +1037,24 @@ pub fn codex_query_repository_to_markdown(
     scope: seiri_core::AnalysisScope,
     query: CodexQueryKind,
 ) -> Result<String, AuditError> {
-    let path = path.as_ref();
-    let analysis = audit_repository_with_scope(path, profile, scope)?;
-    let plan = seiri_planner::plan_patches(&analysis);
+    let session = audit_repository_session_with_options_and_calibration(
+        path,
+        profile,
+        &seiri_fs::ScanOptions::default(),
+        &seiri_markdown::DocumentIndexOptions::default(),
+        scope,
+        &NoCalibrationProvider,
+    )?;
+    let plan = seiri_planner::plan_patches(&session.analysis);
     let wording_lint = if query == CodexQueryKind::Linter {
-        Some(wording::lint_repository_with_profile(path, profile)?)
+        Some(wording::lint_source_session(
+            &session.analysis,
+            &session.document_sources,
+        )?)
     } else {
         None
     };
-    let view = seiri_codex::CodexView::new(&analysis, &plan, wording_lint.as_ref());
+    let view = seiri_codex::CodexView::new(&session.analysis, &plan, wording_lint.as_ref());
     Ok(seiri_codex::render_query_markdown(&view.query(query)))
 }
 
@@ -1011,10 +1186,18 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
             out.push_str(&format!("- Repositories: `{}`\n", stat.repositories));
             out.push_str(&format!("- Observations: `{}`\n", stat.observations));
             out.push_str(&format!("- Frequency x1000: `{}`\n", stat.frequency_x1000));
+            out.push_str(&format!("- Sample size: `{}`\n", stat.sample_size));
+            out.push_str(&format!(
+                "- Wilson 95% interval x1000: `{}..={}`\n",
+                stat.support_interval.lower_x1000, stat.support_interval.upper_x1000
+            ));
             out.push_str(&format!("- Sources: `{}`\n", stat.source_ids.join("`, `")));
-            out.push_str(&format!("- Confidence: `{:?}`\n", stat.confidence));
+            out.push_str(&format!(
+                "- Local support tier: `{:?}`\n",
+                stat.local_support_tier
+            ));
             out.push_str(&format!("- Review status: `{:?}`\n", stat.review_status));
-            out.push_str(&format!("- Note: {}\n\n", stat.confidence_note));
+            out.push_str(&format!("- Note: {}\n\n", stat.support_note));
         }
     }
 
@@ -1024,14 +1207,17 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
     } else {
         for requirement in &run.route_requirements {
             out.push_str(&format!(
-                "- `{}` route `{:?}` repositories `{}` frequency `{}` requirement `{:?}` priority `{:?}` confidence `{:?}` status `{:?}`\n",
+                "- `{}` route `{:?}` repositories `{}` sample `{}` frequency `{}` interval `{}..={}` requirement `{:?}` priority `{:?}` local support `{:?}` status `{:?}`\n",
                 requirement.id,
                 requirement.route,
                 requirement.supporting_repositories,
+                requirement.sample_size,
                 requirement.frequency_x1000,
+                requirement.support_interval.lower_x1000,
+                requirement.support_interval.upper_x1000,
                 requirement.suggested_requirement,
                 requirement.priority,
-                requirement.confidence,
+                requirement.local_support_tier,
                 requirement.review_status
             ));
         }
@@ -1085,7 +1271,7 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
                 .route
                 .map_or_else(|| "none".to_string(), |route| format!("{route:?}"));
             out.push_str(&format!(
-                "- `{}` `{}` route `{}` profile `{}` current `{}` suggested `{}` delta `{}` confidence `{:?}` status `{:?}`\n",
+                "- `{}` `{}` route `{}` profile `{}` current `{}` suggested `{}` delta `{}` sample `{}` interval `{}..={}` local support `{:?}` status `{:?}`\n",
                 suggestion.id,
                 suggestion.pattern_id,
                 route,
@@ -1093,7 +1279,10 @@ pub fn calibration_to_markdown(run: &CalibrationRun) -> String {
                 current,
                 suggestion.suggested_weight,
                 suggestion.suggested_delta,
-                suggestion.confidence,
+                suggestion.sample_size,
+                suggestion.support_interval.lower_x1000,
+                suggestion.support_interval.upper_x1000,
+                suggestion.local_support_tier,
                 suggestion.review_status
             ));
         }

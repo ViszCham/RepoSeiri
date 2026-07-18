@@ -326,7 +326,7 @@ fn local_prior_loader_rejects_invalid_counts_fingerprint_and_duplicates() {
 
     write_pack(
         &temp,
-        "fnv1a64:0000000000000000",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         vec![serde_json::json!({
             "key": key.clone(),
             "observed": 1,

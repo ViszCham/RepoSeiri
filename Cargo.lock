@@ -1708,6 +1708,7 @@ name = "seiri-patterns"
 version = "1.0.0"
 dependencies = [
  "seiri-core",
+ "seiri-digest",
  "serde",
  "serde_json",
 ]
@@ -1745,6 +1746,7 @@ dependencies = [
  "seiri-codex",
  "seiri-core",
  "seiri-delta",
+ "seiri-digest",
  "seiri-fs",
  "seiri-git-local",
  "seiri-github-local",
@@ -2112,9 +2114,11 @@ version = "1.0.0"
 dependencies = [
  "seiri-core",
  "seiri-digest",
+ "seiri-report",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

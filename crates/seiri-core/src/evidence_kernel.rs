@@ -183,6 +183,7 @@ pub enum MarkdownEvidenceKind {
     Link,
     Badge,
     RouteCandidate,
+    VisibleProse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

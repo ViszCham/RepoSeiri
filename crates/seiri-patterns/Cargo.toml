@@ -8,5 +8,6 @@ publish.workspace = true
 
 [dependencies]
 seiri-core = { path = "../seiri-core" }
+seiri-digest = { path = "../seiri-digest" }
 serde.workspace = true
 serde_json.workspace = true

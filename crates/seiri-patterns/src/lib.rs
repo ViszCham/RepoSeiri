@@ -13,12 +13,14 @@ pub const PATTERN_REGISTRY_SCHEMA_VERSION: &str = "seiri.pattern-registry.v1";
 pub use boundary::PatternBoundary;
 pub use detector::PatternDetector;
 pub use executable::{
-    evaluate_adoption_gate, load_executable_pattern_pack, AdoptionBlocker, AdoptionGateDecision,
-    DataPatternDefinition, EvidenceExpectation, ExecutableFixtureSpec, ExecutablePatternPack,
+    evaluate_adoption_gate, evaluate_executable_overlay, load_executable_pattern_pack,
+    AdoptionBlocker, AdoptionGateDecision, DataPatternDefinition, EvidenceExpectation,
+    ExecutableFixtureSpec, ExecutableOverlayEvaluation, ExecutablePatternPack,
     FixtureExecutionResult, FixtureExecutionStatus, FixtureExpectation, FixtureExpectationActual,
     FixtureExpectationResult, FixtureScanBudget, FixtureSuiteReport, PatternAdoptionReview,
-    PatternPackLoadError, RelativeFixturePath, EXECUTABLE_PATTERN_PACK_SCHEMA_VERSION,
-    MAX_DATA_PATTERN_DEFINITIONS, MAX_EXECUTABLE_FIXTURES, MAX_FIXTURE_EXPECTATIONS,
+    PatternExtensionError, PatternPackLoadError, RelativeFixturePath,
+    EXECUTABLE_PATTERN_PACK_SCHEMA_VERSION, MAX_DATA_PATTERN_DEFINITIONS, MAX_EXECUTABLE_FIXTURES,
+    MAX_FIXTURE_EXPECTATIONS,
 };
 pub use fixture::{common_negative_fixtures, PatternNegativeFixture};
 pub use pack::{

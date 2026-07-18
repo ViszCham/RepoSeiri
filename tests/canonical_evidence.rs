@@ -116,6 +116,58 @@ fn evidence_fingerprint_is_independent_of_storage_ordinal() {
 }
 
 #[test]
+fn evidence_state_change_preserves_identity_only() {
+    let root = repository("fingerprint-state");
+    let analysis = seiri_report::audit_repository(&root).expect("analysis");
+    let fact = analysis
+        .evidence_kernel
+        .facts()
+        .iter()
+        .find(|fact| analysis.evidence_kernel.path_for_fact(fact) == Some("LICENSE"))
+        .expect("LICENSE evidence");
+    let before = seiri_delta::evidence_fingerprint(&analysis, fact).expect("before");
+    let mut changed = fact.clone();
+    changed.confidence = EvidenceConfidence::Low;
+    let after = seiri_delta::evidence_fingerprint(&analysis, &changed).expect("after");
+    assert_eq!(before.identity, after.identity);
+    assert_ne!(before.state, after.state);
+    assert_ne!(before.occurrence, after.occurrence);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn earlier_path_insertion_does_not_reidentify_portable_documents() {
+    let root = repository("portable-document-identity");
+    let before_analysis = seiri_report::audit_repository(&root).expect("before analysis");
+    let before = seiri_delta::portable_snapshot(&before_analysis).expect("before portable");
+
+    fs::write(root.join("AAA.md"), "# Earlier path\n").expect("insert earlier path");
+    let after_analysis = seiri_report::audit_repository(&root).expect("after analysis");
+    let after = seiri_delta::portable_snapshot(&after_analysis).expect("after portable");
+
+    for document in &before.documents {
+        let matching = after
+            .documents
+            .iter()
+            .find(|candidate| candidate.path == document.path)
+            .expect("existing portable document");
+        assert_eq!(document.digest, matching.digest, "{}", document.path);
+    }
+    assert_ne!(
+        before.digest.source_session, after.digest.source_session,
+        "the source binding must still record the added input"
+    );
+    assert!(after
+        .coverage
+        .iter()
+        .filter(|record| record.key.starts_with("document:"))
+        .all(|record| !record.key["document:".len()..]
+            .chars()
+            .all(|character| character.is_ascii_digit())));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn evidence_identity_binds_normalized_markdown_target() {
     let first_root = repository("target-first");
     let second_root = repository("target-second");

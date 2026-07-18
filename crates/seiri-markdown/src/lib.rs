@@ -4,19 +4,26 @@ use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, DocumentEvent, DocumentIndex, DocumentRole,
     DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus, FileKind,
     FileRecord, IndexedDocument, PathClassification, ReadmeSummary, RepositoryScopeGraph,
-    RouteKind, SourceSpan, TextDocumentBase,
+    SourceSpan, TextDocumentBase,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod classifier;
 mod context;
 mod events;
 mod route_map;
+mod source;
 
 use route_map::build_route_map;
+use source::{
+    prepare_markdown_document, read_bounded_file, scan_status_for_error, PreparedMarkdown,
+};
+
+pub use classifier::{classify_route, classify_routes};
+pub use source::{DocumentSourceSession, SourceDocument};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentScanOptions {
@@ -35,7 +42,7 @@ pub struct DocumentIndexOptions {
 impl Default for DocumentIndexOptions {
     fn default() -> Self {
         Self {
-            max_documents: 32,
+            max_documents: 256,
             max_total_source_bytes: 4 * 1024 * 1024,
             document: DocumentScanOptions::default(),
         }
@@ -53,7 +60,8 @@ impl Default for DocumentScanOptions {
 }
 
 impl DocumentScanOptions {
-    fn derived_for_source(source_bytes: usize) -> Self {
+    #[must_use]
+    pub fn derived_for_source(source_bytes: usize) -> Self {
         Self {
             max_source_bytes: source_bytes,
             max_events: source_bytes.saturating_mul(2).saturating_add(1),
@@ -181,6 +189,23 @@ pub fn scan_document_index_with_options_and_scope(
     options: &DocumentIndexOptions,
     scope_graph: Option<&RepositoryScopeGraph>,
 ) -> Result<DocumentIndex, seiri_core::DocumentIndexError> {
+    scan_document_source_session_with_options_and_scope(
+        repo_root,
+        files,
+        repository_complete,
+        options,
+        scope_graph,
+    )
+    .map(DocumentSourceSession::into_index)
+}
+
+pub fn scan_document_source_session_with_options_and_scope(
+    repo_root: impl AsRef<Path>,
+    files: &[FileRecord],
+    repository_complete: bool,
+    options: &DocumentIndexOptions,
+    scope_graph: Option<&RepositoryScopeGraph>,
+) -> Result<DocumentSourceSession, seiri_core::DocumentIndexError> {
     let repo_root = repo_root.as_ref();
     let mut candidates = files
         .iter()
@@ -197,7 +222,8 @@ pub fn scan_document_index_with_options_and_scope(
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
     candidates.dedup_by(|left, right| left.path == right.path);
 
-    let readme_links = readme_linked_targets(repo_root, &candidates, options);
+    let mut prepared = BTreeMap::new();
+    let readme_links = readme_linked_targets(repo_root, &candidates, options, &mut prepared);
     candidates.sort_by(|left, right| {
         selection_rank(left, &readme_links)
             .cmp(&selection_rank(right, &readme_links))
@@ -207,6 +233,7 @@ pub fn scan_document_index_with_options_and_scope(
     let mut indexed_documents = 0usize;
     let mut used_source_bytes = 0usize;
     let mut entries = Vec::with_capacity(candidates.len());
+    let mut sources = Vec::new();
     for candidate in candidates {
         let DocumentCandidate {
             path,
@@ -242,7 +269,10 @@ pub fn scan_document_index_with_options_and_scope(
 
         let full_path = repo_root.join(&path);
         if !is_markdown_path(&path) {
-            match fs::read(&full_path) {
+            let remaining = options
+                .max_total_source_bytes
+                .saturating_sub(used_source_bytes);
+            match read_bounded_file(&full_path, &path, remaining) {
                 Ok(bytes) => {
                     used_source_bytes = used_source_bytes.saturating_add(bytes.len());
                     indexed_documents += 1;
@@ -259,19 +289,24 @@ pub fn scan_document_index_with_options_and_scope(
                     role,
                     classification,
                     declared_bytes,
-                    if error.kind() == io::ErrorKind::PermissionDenied {
-                        DocumentScanStatus::PermissionDenied
-                    } else {
-                        DocumentScanStatus::ParseFailed
-                    },
+                    scan_status_for_error(&error),
                 )),
             }
             continue;
         }
-        match scan_document_file_with_options(&full_path, path.clone(), &options.document) {
-            Ok(scan) => {
+        let remaining = options
+            .max_total_source_bytes
+            .saturating_sub(used_source_bytes);
+        let mut document_options = options.document.clone();
+        document_options.max_source_bytes = document_options.max_source_bytes.min(remaining);
+        let prepared_document = prepared
+            .remove(&path)
+            .unwrap_or_else(|| prepare_markdown_document(&full_path, &path, &document_options));
+        match prepared_document {
+            PreparedMarkdown::Scanned { scan, source } => {
                 used_source_bytes = used_source_bytes.saturating_add(scan.source_bytes());
                 indexed_documents += 1;
+                sources.push(SourceDocument::new(path.clone(), source));
                 entries.push(IndexedDocument::scanned(
                     path,
                     role,
@@ -280,12 +315,12 @@ pub fn scan_document_index_with_options_and_scope(
                     scan,
                 ));
             }
-            Err(error) => entries.push(IndexedDocument::unavailable(
+            PreparedMarkdown::Unavailable(status) => entries.push(IndexedDocument::unavailable(
                 path,
                 role,
                 classification,
                 declared_bytes,
-                scan_status_for_error(&error),
+                status,
             )),
         }
     }
@@ -298,7 +333,9 @@ pub fn scan_document_index_with_options_and_scope(
             status: role_coverage_status(role, &entries, repository_complete),
         })
         .collect();
-    DocumentIndex::try_new(entries, role_coverage)
+    let index = DocumentIndex::try_new(entries, role_coverage)?;
+    sources.sort_by(|left, right| left.path().cmp(right.path()));
+    Ok(DocumentSourceSession::new(index, sources))
 }
 
 #[derive(Debug)]
@@ -313,6 +350,7 @@ fn readme_linked_targets(
     repo_root: &Path,
     candidates: &[DocumentCandidate],
     options: &DocumentIndexOptions,
+    prepared: &mut BTreeMap<String, PreparedMarkdown>,
 ) -> BTreeSet<String> {
     let Some(readme) = candidates
         .iter()
@@ -326,20 +364,25 @@ fn readme_linked_targets(
     {
         return BTreeSet::new();
     }
-    let Ok(scan) = scan_document_file_with_options(
+    let prepared_readme = prepare_markdown_document(
         &repo_root.join(&readme.path),
-        readme.path.clone(),
+        &readme.path,
         &options.document,
-    ) else {
+    );
+    let PreparedMarkdown::Scanned { scan, .. } = &prepared_readme else {
+        prepared.insert(readme.path.clone(), prepared_readme);
         return BTreeSet::new();
     };
-    scan.events()
+    let targets = scan
+        .events()
         .iter()
         .filter_map(|event| match event {
             DocumentEvent::Link(link) => local_target_key(&link.target),
             _ => None,
         })
-        .collect()
+        .collect();
+    prepared.insert(readme.path.clone(), prepared_readme);
+    targets
 }
 
 fn local_target_key(target: &str) -> Option<String> {
@@ -409,17 +452,7 @@ fn scan_document_file_with_options(
     relative_path: String,
     options: &DocumentScanOptions,
 ) -> Result<DocumentScan, MarkdownError> {
-    let bytes = fs::read(full_path).map_err(|source| MarkdownError::Io {
-        path: full_path.to_path_buf(),
-        source,
-    })?;
-    if bytes.len() > options.max_source_bytes {
-        return Err(MarkdownError::SourceLimitExceeded {
-            path: relative_path,
-            bytes: bytes.len(),
-            limit: options.max_source_bytes,
-        });
-    }
+    let bytes = read_bounded_file(full_path, &relative_path, options.max_source_bytes)?;
     let text = String::from_utf8(bytes).map_err(|error| MarkdownError::InvalidUtf8 {
         path: full_path.to_path_buf(),
         valid_up_to: error.utf8_error().valid_up_to(),
@@ -456,6 +489,7 @@ pub fn summarize_readme_document(
 
     for event in document.events() {
         match event {
+            DocumentEvent::VisibleProse(_) => {}
             DocumentEvent::Heading(value) => headings.push(value.clone()),
             DocumentEvent::Link(value) => links.push(value.clone()),
             DocumentEvent::Badge(value) => badges.push(value.clone()),
@@ -478,203 +512,6 @@ pub fn summarize_readme_document(
         badges,
         route_candidates,
     }
-}
-
-pub fn classify_route(text: &str, target: Option<&str>) -> RouteKind {
-    let text_only = text.to_ascii_lowercase();
-    let text_route = classify_route_text(&text_only);
-    if text_route != RouteKind::Unknown {
-        return text_route;
-    }
-
-    let combined = match target {
-        Some(target) => format!("{text} {target}").to_ascii_lowercase(),
-        None => text.to_ascii_lowercase(),
-    };
-
-    if is_hygiene_route_text(&combined) {
-        RouteKind::Hygiene
-    } else if contains_any(&combined, &["docs", "documentation", "guide", "manual"]) {
-        RouteKind::Docs
-    } else if contains_any(
-        &combined,
-        &[
-            "quickstart",
-            "quick start",
-            "getting started",
-            "install",
-            "usage",
-            "example",
-        ],
-    ) {
-        RouteKind::Quickstart
-    } else if is_intake_route_text(&combined) {
-        RouteKind::Intake
-    } else if is_lifecycle_route_text(&combined) {
-        RouteKind::Lifecycle
-    } else if contains_any(
-        &combined,
-        &[
-            "support",
-            "discussion",
-            "help",
-            "contact",
-            "question",
-            "issue",
-        ],
-    ) {
-        RouteKind::Support
-    } else if contains_any(&combined, &["contributing", "contribute", "development"]) {
-        RouteKind::Contributing
-    } else if contains_any(&combined, &["security", "vulnerability", "disclosure"]) {
-        RouteKind::Security
-    } else if contains_any(
-        &combined,
-        &[
-            "release",
-            "changelog",
-            "changes",
-            "version",
-            "compatibility",
-        ],
-    ) {
-        RouteKind::Release
-    } else if contains_any(&combined, &["governance", "roadmap", "rfc", "proposal"]) {
-        RouteKind::Governance
-    } else if contains_any(&combined, &["license", "copying"]) {
-        RouteKind::License
-    } else if contains_any(
-        &combined,
-        &["codeowners", "maintainer", "ownership", "owner"],
-    ) {
-        RouteKind::Ownership
-    } else if contains_any(&combined, &["workflow", "actions", "ci", "build", "badge"]) {
-        RouteKind::Automation
-    } else if combined.starts_with('#') || combined.contains("readme") {
-        RouteKind::Identity
-    } else {
-        RouteKind::Unknown
-    }
-}
-
-fn classify_route_text(value: &str) -> RouteKind {
-    if is_hygiene_route_text(value) {
-        RouteKind::Hygiene
-    } else if contains_any(
-        value,
-        &[
-            "quickstart",
-            "quick start",
-            "getting started",
-            "install",
-            "usage",
-            "example",
-        ],
-    ) {
-        RouteKind::Quickstart
-    } else if contains_any(value, &["docs", "documentation", "guide", "manual"]) {
-        RouteKind::Docs
-    } else if is_intake_route_text(value) {
-        RouteKind::Intake
-    } else if is_lifecycle_route_text(value) {
-        RouteKind::Lifecycle
-    } else if contains_any(
-        value,
-        &[
-            "support",
-            "discussion",
-            "help",
-            "contact",
-            "question",
-            "issue",
-        ],
-    ) {
-        RouteKind::Support
-    } else if contains_any(value, &["contributing", "contribute", "development"]) {
-        RouteKind::Contributing
-    } else if contains_any(value, &["security", "vulnerability", "disclosure"]) {
-        RouteKind::Security
-    } else if contains_any(
-        value,
-        &[
-            "release",
-            "changelog",
-            "changes",
-            "version",
-            "compatibility",
-        ],
-    ) {
-        RouteKind::Release
-    } else if contains_any(value, &["governance", "roadmap", "rfc", "proposal"]) {
-        RouteKind::Governance
-    } else if contains_any(value, &["license", "copying"]) {
-        RouteKind::License
-    } else if contains_any(value, &["codeowners", "maintainer", "ownership", "owner"]) {
-        RouteKind::Ownership
-    } else if contains_any(value, &["workflow", "actions", "ci", "build", "badge"]) {
-        RouteKind::Automation
-    } else if value.starts_with('#') || value.contains("readme") {
-        RouteKind::Identity
-    } else {
-        RouteKind::Unknown
-    }
-}
-
-fn is_intake_route_text(value: &str) -> bool {
-    contains_any(
-        value,
-        &[
-            "issue template",
-            "issue form",
-            "bug report",
-            "feature request",
-            "pull request template",
-            "pr template",
-            "triage",
-            "intake",
-        ],
-    ) || (contains_any(value, &["issues", "issue"])
-        && contains_any(value, &["bug", "feature", "template", "form"]))
-}
-
-fn is_lifecycle_route_text(value: &str) -> bool {
-    contains_any(
-        value,
-        &[
-            "lifecycle",
-            "life cycle",
-            "maintenance",
-            "maintained",
-            "deprecation",
-            "deprecated",
-            "end of life",
-            "end-of-life",
-            "eol",
-            "lts",
-            "long term support",
-            "supported versions",
-            "version support",
-            "support matrix",
-            "compatibility policy",
-            "archive policy",
-            "archival",
-            "sunset",
-        ],
-    )
-}
-
-fn is_hygiene_route_text(value: &str) -> bool {
-    contains_any(
-        value,
-        &[
-            "hygiene",
-            "repository hygiene",
-            "cleanup",
-            "clean-up",
-            "self-audit",
-            "self audit",
-        ],
-    )
 }
 
 fn find_readme(repo_root: &Path) -> Option<PathBuf> {
@@ -732,7 +569,7 @@ fn role_coverage_status(
     }
     let matching = entries
         .iter()
-        .filter(|entry| entry.role == role)
+        .filter(|entry| entry.role == role && entry.classification.is_primary_repository_content())
         .collect::<Vec<_>>();
     if role == DocumentRole::GithubConfiguration && !matching.is_empty() {
         return CoverageStatus::NotRequested;
@@ -742,19 +579,6 @@ fn role_coverage_status(
         .map(|entry| entry.status.coverage_status())
         .find(|status| *status != CoverageStatus::Complete)
         .unwrap_or(CoverageStatus::Complete)
-}
-
-fn scan_status_for_error(error: &MarkdownError) -> DocumentScanStatus {
-    match error {
-        MarkdownError::InvalidUtf8 { .. } => DocumentScanStatus::InvalidUtf8,
-        MarkdownError::Io { source, .. } if source.kind() == io::ErrorKind::PermissionDenied => {
-            DocumentScanStatus::PermissionDenied
-        }
-        MarkdownError::SourceLimitExceeded { .. }
-        | MarkdownError::EventLimitExceeded { .. }
-        | MarkdownError::DiagnosticLimitExceeded { .. } => DocumentScanStatus::SkippedByteBudget,
-        MarkdownError::Io { .. } | MarkdownError::Invariant(_) => DocumentScanStatus::ParseFailed,
-    }
 }
 
 fn is_root_readme_path(path: &str) -> bool {

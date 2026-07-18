@@ -255,3 +255,18 @@ fn wire_rejects_inverted_spans_and_malformed_digests() {
         .preflight_against(source)
         .has_issue(PatchProposalIssueKind::LineEndingTerminationMismatch));
 }
+
+#[test]
+fn patch_base_emits_sha256_and_accepts_legacy_only_as_a_migration_input() {
+    let current = seiri_core::PatchBaseDigest::from_bytes(b"same source");
+    let current_wire = serde_json::to_string(&current).expect("current digest wire");
+    assert!(current_wire.contains("sha256:"));
+    assert!(!current_wire.contains("fnv1a64:"));
+
+    let migrated: seiri_core::PatchBaseDigest =
+        serde_json::from_str("\"fnv1a64:0123456789abcdef\"").expect("legacy decode boundary");
+    let migrated_wire = serde_json::to_string(&migrated).expect("migrated digest wire");
+    assert!(migrated_wire.contains("sha256:"));
+    assert!(!migrated_wire.contains("fnv1a64:"));
+    assert_ne!(migrated, current);
+}

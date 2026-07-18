@@ -8,6 +8,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum DocumentEvent {
+    VisibleProse(MarkdownProse),
     Heading(MarkdownHeading),
     Link(MarkdownLink),
     Badge(MarkdownBadge),
@@ -18,6 +19,7 @@ impl DocumentEvent {
     #[must_use]
     pub const fn span(&self) -> Option<SourceSpan> {
         match self {
+            Self::VisibleProse(value) => Some(value.span),
             Self::Heading(value) => value.span,
             Self::Link(value) => value.span,
             Self::Badge(value) => value.span,
@@ -27,12 +29,20 @@ impl DocumentEvent {
 
     pub const fn order_rank(&self) -> u8 {
         match self {
-            Self::Heading(_) => 0,
-            Self::Link(_) => 1,
-            Self::Badge(_) => 2,
-            Self::RouteCandidate(_) => 3,
+            Self::VisibleProse(_) => 0,
+            Self::Heading(_) => 1,
+            Self::Link(_) => 2,
+            Self::Badge(_) => 3,
+            Self::RouteCandidate(_) => 4,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarkdownProse {
+    pub text: String,
+    pub line: usize,
+    pub span: SourceSpan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

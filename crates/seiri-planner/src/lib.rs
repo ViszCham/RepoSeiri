@@ -251,6 +251,7 @@ fn decision_basis(
         evidence_fingerprints,
         claim_semantic_revision: seiri_core::CLAIM_SEMANTIC_REVISION.to_string(),
         planner_semantic_revision: PLANNER_SEMANTIC_REVISION.to_string(),
+        source_session_digest: analysis.analysis_configuration.source_session_digest,
     }
 }
 

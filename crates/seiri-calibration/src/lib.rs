@@ -6,11 +6,13 @@ mod streaming;
 
 pub use local_prior::{
     load_local_calibration_provider, load_local_calibration_provider_for_registry,
-    LocalCalibrationProvider, LocalPriorLoadError, LOCAL_PRIOR_SCHEMA_VERSION,
+    load_local_calibration_provider_for_registry_and_revision, LocalCalibrationProvider,
+    LocalPriorLoadError, PrivateCalibrationFreshness, LOCAL_PRIOR_SCHEMA_VERSION,
 };
 pub use private_overlay::{
-    load_private_calibration_overlay, PrivateCalibrationOverlay, PrivateOverlayLoadError,
-    PrivateOverlayMetadata, PrivateOverlayResourceTrace, PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION,
+    load_private_calibration_overlay, load_private_calibration_overlay_for_revision,
+    PrivateCalibrationOverlay, PrivateOverlayLoadError, PrivateOverlayMetadata,
+    PrivateOverlayResourceTrace, PRIVATE_OVERLAY_METADATA_SCHEMA_VERSION,
 };
 
 pub use streaming::{
@@ -20,14 +22,14 @@ pub use streaming::{
 
 use seiri_core::{
     stable_id, BaselineRequirement, BenchmarkDataset, BenchmarkRepoRecord,
-    CalibrationAggregationMode, CalibrationConfidence, CalibrationPriorState,
+    CalibrationAggregationMode, CalibrationIntervalMethod, CalibrationPriorState,
     CalibrationRecordIdentity, CalibrationResourceTrace, CalibrationReviewStatus, CalibrationRun,
     CalibrationScale, CalibrationSource, CalibrationSourceKind, CalibrationSourceVisibility,
-    CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion, ObservedPattern, PatternCoOccurrence,
-    PatternStats, PendingPatternCandidate, ProfileBranch, ProfileBranchSemantics, ProfileFit,
-    ProfileKind, ProfilePatternCorrelation, ProfilePriority, ProfilePurposeAffinity,
-    ProfileRankScore, RouteKind, RouteRequirement, WeightSuggestion, CALIBRATION_SCHEMA_VERSION,
-    EVIDENCE_SCHEMA_VERSION,
+    CalibrationSummary, ClaimBoundary, EvidenceSchemaVersion, LocalSupportInterval,
+    LocalSupportTier, ObservedPattern, PatternCoOccurrence, PatternStats, PendingPatternCandidate,
+    ProfileBranch, ProfileBranchSemantics, ProfileFit, ProfileKind, ProfilePatternCorrelation,
+    ProfilePriority, ProfilePurposeAffinity, ProfileRankScore, RouteKind, RouteRequirement,
+    WeightSuggestion, CALIBRATION_SCHEMA_VERSION, EVIDENCE_SCHEMA_VERSION,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -676,18 +678,20 @@ fn build_pattern_stats(
                     co_frequency_x1000: ratio_x1000(repos.len(), repositories),
                 })
                 .collect();
-            let confidence = confidence_for(total_records, repositories);
+            let local_support_tier = local_support_tier_for(total_records, repositories);
             PatternStats {
                 pattern_id: pattern_id.clone(),
                 route: pattern_routes.get(pattern_id).copied(),
                 repositories,
                 observations: stat.observations,
                 frequency_x1000: ratio_x1000(repositories, total_records),
+                sample_size: total_records,
+                support_interval: local_support_interval(repositories, total_records),
                 source_ids: source_ids.to_vec(),
                 profile_correlations,
                 co_occurrences,
-                confidence,
-                confidence_note: confidence_note(total_records, repositories, confidence),
+                local_support_tier,
+                support_note: support_note(total_records, repositories, local_support_tier),
                 review_status: CalibrationReviewStatus::PendingReview,
             }
         })
@@ -726,17 +730,19 @@ fn build_route_requirements(
             let frequency_x1000 = ratio_x1000(repositories, total_records);
             let suggested_requirement = route_requirement_from_frequency(frequency_x1000);
             let priority = priority_from_route_frequency(frequency_x1000);
-            let confidence = confidence_for(total_records, repositories);
+            let local_support_tier = local_support_tier_for(total_records, repositories);
             RouteRequirement {
                 id: stable_id("route-requirement", index + 1),
                 route: *route,
                 supporting_repositories: repositories,
                 observations: item.observations,
                 frequency_x1000,
+                sample_size: total_records,
+                support_interval: local_support_interval(repositories, total_records),
                 suggested_requirement,
                 priority,
                 source_ids: source_ids.to_vec(),
-                confidence,
+                local_support_tier,
                 review_status: CalibrationReviewStatus::PendingReview,
                 rationale: format!(
                     "Reviewable route requirement candidate only. Route `{:?}` appeared in {repositories} of {total_records} records; maintainers must review source quality and repository purpose before adopting.",
@@ -813,6 +819,10 @@ fn build_weight_suggestions(
             if support == 0 {
                 continue;
             }
+            let sample_size = profile_totals
+                .get(profile)
+                .copied()
+                .unwrap_or(stat.sample_size);
             let suggested_weight = weight_from_frequency(profile_frequency);
             let current_weight = current_weights
                 .get(&(*profile, stat.pattern_id.clone()))
@@ -832,8 +842,10 @@ fn build_weight_suggestions(
                 priority: priority_from_weight(suggested_weight),
                 support_repositories: support,
                 frequency_x1000: profile_frequency,
+                sample_size,
+                support_interval: local_support_interval(support, sample_size),
                 source_ids: source_ids.to_vec(),
-                confidence: stat.confidence,
+                local_support_tier: local_support_tier_for(sample_size, support),
                 review_status: CalibrationReviewStatus::PendingReview,
                 rationale: "Reviewable calibration suggestion only. A maintainer must review source quality, sampling bias, route fit, and product intent before adopting this rule.".to_string(),
             });
@@ -901,32 +913,55 @@ fn rank_score_x100_for(total_records: usize, repositories: usize) -> u8 {
     frequency.min(sample_factor) as u8
 }
 
-fn confidence_for(total_records: usize, repositories: usize) -> CalibrationConfidence {
+fn local_support_tier_for(total_records: usize, repositories: usize) -> LocalSupportTier {
     if total_records < 30 || repositories < 5 {
-        CalibrationConfidence::Low
+        LocalSupportTier::Limited
     } else if total_records >= 300 && repositories.saturating_mul(100) >= total_records * 40 {
-        CalibrationConfidence::High
+        LocalSupportTier::Strong
     } else {
-        CalibrationConfidence::Medium
+        LocalSupportTier::Moderate
     }
 }
 
-fn confidence_note(
-    total_records: usize,
-    repositories: usize,
-    confidence: CalibrationConfidence,
-) -> String {
-    match confidence {
-        CalibrationConfidence::Low => format!(
-            "Low confidence: sample has {total_records} records and {repositories} supporting repositories."
+fn support_note(total_records: usize, repositories: usize, tier: LocalSupportTier) -> String {
+    match tier {
+        LocalSupportTier::Limited => format!(
+            "Limited local support: {repositories} supporting repositories in a sample of {total_records}."
         ),
-        CalibrationConfidence::Medium => format!(
-            "Medium confidence: sample has {total_records} records and {repositories} supporting repositories; review sampling bias before adoption."
+        LocalSupportTier::Moderate => format!(
+            "Moderate local support: {repositories} supporting repositories in a sample of {total_records}; review sampling bias before adoption."
         ),
-        CalibrationConfidence::High => format!(
-            "High local support in this dataset: {repositories} of {total_records} repositories; still requires review before adoption."
+        LocalSupportTier::Strong => format!(
+            "Strong local support in this dataset: {repositories} of {total_records} repositories; this remains a frequency tier, not a probability or general-performance claim."
         ),
     }
+}
+
+fn local_support_interval(successes: usize, sample_size: usize) -> LocalSupportInterval {
+    if sample_size == 0 {
+        return LocalSupportInterval {
+            method: CalibrationIntervalMethod::Wilson95,
+            lower_x1000: 0,
+            upper_x1000: 1000,
+        };
+    }
+    let n = sample_size as f64;
+    let p = successes.min(sample_size) as f64 / n;
+    let z = 1.959_963_984_540_054_f64;
+    let z2 = z * z;
+    let denominator = 1.0 + z2 / n;
+    let center = (p + z2 / (2.0 * n)) / denominator;
+    let margin = z * (p * (1.0 - p) / n + z2 / (4.0 * n * n)).sqrt() / denominator;
+    LocalSupportInterval {
+        method: CalibrationIntervalMethod::Wilson95,
+        lower_x1000: ((center - margin).clamp(0.0, 1.0) * 1000.0).round() as u16,
+        upper_x1000: ((center + margin).clamp(0.0, 1.0) * 1000.0).round() as u16,
+    }
+}
+
+#[must_use]
+pub fn wilson_95_interval(successes: usize, sample_size: usize) -> LocalSupportInterval {
+    local_support_interval(successes, sample_size)
 }
 
 fn route_requirement_from_frequency(frequency_x1000: u16) -> BaselineRequirement {

@@ -9,6 +9,7 @@ use crate::{
     PatternAdoptionStage, PatternFixtureKind, PredicateAtom, PredicateInstruction, PredicateProgram,
 };
 use seiri_core::{ClaimBoundaryKind, PatternGroup, PatternOutcome};
+use seiri_digest::StableHasher;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -18,10 +19,10 @@ const MAX_PACK_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 128;
 const MAX_DEFINITION_BOUNDARIES: usize = 16;
 const MAX_EXPECTED_EVIDENCE_IDS: usize = 64;
-const FNV1A64_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV1A64_PRIME: u64 = 0x100000001b3;
+const EXECUTABLE_PACK_FINGERPRINT_DOMAIN: &[u8] = b"seiri.executable-pattern-pack.wire.v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PatternPackWire {
     schema_version: String,
     id: String,
@@ -31,6 +32,7 @@ struct PatternPackWire {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PredicatePreflight {
     atoms: Vec<PredicateAtom>,
     instructions: Vec<PredicateInstruction>,
@@ -307,12 +309,9 @@ fn validate_fixture_tree(
 
 fn fingerprint_wire(wire: &PatternPackWire) -> Result<String, PatternPackLoadError> {
     let bytes = serde_json::to_vec(wire).map_err(|_| PatternPackLoadError::Fingerprint)?;
-    let mut state = FNV1A64_OFFSET;
-    for byte in bytes {
-        state ^= u64::from(byte);
-        state = state.wrapping_mul(FNV1A64_PRIME);
-    }
-    Ok(format!("fnv1a64:{state:016x}"))
+    let mut hasher = StableHasher::new(EXECUTABLE_PACK_FINGERPRINT_DOMAIN, 1);
+    hasher.field(1, &bytes);
+    Ok(hasher.finish().to_string())
 }
 
 fn redacted_io(error: std::io::Error) -> PatternPackLoadError {

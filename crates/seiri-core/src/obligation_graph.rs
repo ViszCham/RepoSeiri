@@ -139,6 +139,10 @@ pub struct DocumentConsistencyReport {
     #[serde(default)]
     pub relations: Vec<DocumentTargetRelation>,
     pub conflicts: Vec<DocumentConflict>,
+    #[serde(default)]
+    pub propositions: Vec<DocumentProposition>,
+    #[serde(default)]
+    pub proposition_conflicts: Vec<PropositionConflict>,
     pub conflict_coverage: CoverageStatus,
     pub boundary: String,
 }
@@ -148,6 +152,8 @@ impl DocumentConsistencyReport {
         obligations: Vec<ConditionalObligation>,
         relations: Vec<DocumentTargetRelation>,
         conflicts: Vec<DocumentConflict>,
+        propositions: Vec<DocumentProposition>,
+        proposition_conflicts: Vec<PropositionConflict>,
         conflict_coverage: CoverageStatus,
     ) -> Result<Self, DocumentConsistencyError> {
         validate_unique_ordered(
@@ -162,12 +168,26 @@ impl DocumentConsistencyReport {
             conflicts.iter().map(|conflict| conflict.id.as_str()),
             "document conflicts",
         )?;
+        validate_unique_ordered(
+            propositions
+                .iter()
+                .map(|proposition| proposition.id.as_str()),
+            "document propositions",
+        )?;
+        validate_unique_ordered(
+            proposition_conflicts
+                .iter()
+                .map(|conflict| conflict.id.as_str()),
+            "proposition conflicts",
+        )?;
         Ok(Self {
             obligations,
             relations,
             conflicts,
+            propositions,
+            proposition_conflicts,
             conflict_coverage,
-            boundary: "Each conditional obligation is enabled only by observed facet evidence. A missing obligation observation requires complete repository coverage. Target relations distinguish equivalent, refining, shared-hub, competing, and unknown links. Only Competes becomes a document conflict; Unknown does not mean consistent. Conflict coverage becomes partial when the bounded graph reaches its candidate or pair limit.".to_string(),
+            boundary: "Each conditional obligation is enabled only by observed facet evidence. A missing obligation observation requires complete repository coverage. Target relations distinguish equivalent, refining, shared-hub, competing, and unknown links. Visible-prose proposition conflicts are bounded review candidates with two repository-relative spans; they do not establish author intent. Conflict coverage becomes partial when a bounded candidate or pair limit is reached.".to_string(),
         })
     }
 }
@@ -178,10 +198,62 @@ impl Default for DocumentConsistencyReport {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             CoverageStatus::NotRequested,
         )
         .expect("empty document consistency report is valid")
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentPropositionKind {
+    Version,
+    Support,
+    SecurityIntake,
+    Release,
+    Capability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropositionModality {
+    Affirmed,
+    Negated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentProposition {
+    pub id: String,
+    pub kind: DocumentPropositionKind,
+    pub key: String,
+    pub value: String,
+    pub modality: PropositionModality,
+    pub document: DocumentId,
+    pub path: String,
+    pub evidence: EvidenceId,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropositionConflictSide {
+    pub proposition_id: String,
+    pub path: String,
+    pub evidence: EvidenceId,
+    pub span: SourceSpan,
+    pub value: String,
+    pub modality: PropositionModality,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropositionConflict {
+    pub id: String,
+    pub kind: DocumentPropositionKind,
+    pub key: String,
+    pub left: PropositionConflictSide,
+    pub right: PropositionConflictSide,
+    pub confidence_boundary: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

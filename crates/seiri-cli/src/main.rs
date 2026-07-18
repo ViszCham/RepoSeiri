@@ -11,7 +11,10 @@ use seiri_report::CodexQueryKind;
 
 #[derive(Debug, Parser)]
 #[command(name = "seiri")]
-#[command(about = "RepoSeiri repository audit CLI")]
+#[command(about = "Bounded local repository audit and dry-run planning")]
+#[command(
+    long_about = "RepoSeiri inspects repository routes, documents, GitHub-local configuration, and Git-local structure from bounded local evidence. Standard audits do not write files, initiate network access, or perform GitHub operations."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -19,10 +22,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Print the v2 wire contract and semantic revisions.
     Contract {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
+    /// Build one canonical local analysis and render it.
     Audit {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -35,6 +40,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Produce an existing-target-only dry-run patch plan.
     Plan {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -47,6 +53,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Compare two portable audits without exposing source bodies.
     Diff {
         #[arg(long)]
         before: PathBuf,
@@ -65,6 +72,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Lint visible Markdown prose while excluding code and comments.
     LintWording {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -73,16 +81,19 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Aggregate a bounded public calibration dataset.
     Calibrate {
         #[arg(long)]
         input: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Print the built-in pattern registry.
     Patterns {
         #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
         format: OutputFormat,
     },
+    /// Project one canonical analysis through one of ten Codex queries.
     Codex {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -92,7 +103,13 @@ enum Command {
         format: OutputFormat,
         #[arg(long, value_enum, default_value_t = ScopeArg::Repository)]
         scope: ScopeArg,
-        #[arg(long, default_value = "summary", value_parser = parse_codex_query)]
+        #[arg(
+            long,
+            default_value = "summary",
+            value_name = "QUERY",
+            help = "summary|routes|evidence|documents|governance|patches|linter|actions|remote|pr-body",
+            value_parser = parse_codex_query
+        )]
         query: CodexQueryKind,
     },
 }
@@ -183,7 +200,8 @@ impl From<seiri_report::AuditError> for CliError {
             | seiri_report::AuditError::Coverage(_)
             | seiri_report::AuditError::RouteAssessment(_)
             | seiri_report::AuditError::DocumentConsistency(_)
-            | seiri_report::AuditError::Delta(_) => seiri_core::ErrorClass::InvalidInput,
+            | seiri_report::AuditError::Delta(_)
+            | seiri_report::AuditError::PatternExtension(_) => seiri_core::ErrorClass::InvalidInput,
             seiri_report::AuditError::EvidenceKernel(_)
             | seiri_report::AuditError::GitLocal(_)
             | seiri_report::AuditError::Json(_) => seiri_core::ErrorClass::Internal,

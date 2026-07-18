@@ -1,5 +1,6 @@
 mod adoption;
 mod error;
+mod evaluation;
 mod loader;
 mod model;
 
@@ -7,6 +8,9 @@ pub use adoption::{
     evaluate_adoption_gate, AdoptionBlocker, AdoptionGateDecision, PatternAdoptionReview,
 };
 pub use error::PatternPackLoadError;
+pub use evaluation::{
+    evaluate_executable_overlay, ExecutableOverlayEvaluation, PatternExtensionError,
+};
 pub use loader::load_executable_pattern_pack;
 pub use model::{
     DataPatternDefinition, EvidenceExpectation, ExecutableFixtureSpec, ExecutablePatternPack,

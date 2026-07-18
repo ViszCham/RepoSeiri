@@ -3,16 +3,111 @@
   "$id": "https://reposeiri.invalid/schemas/seiri.codex.v2.json",
   "title": "RepoSeiri Codex query v2",
   "schema_version": "seiri.codex.v2",
-  "owner": "seiri-codex::CodexQuery",
+  "owner": "seiri-codex::CodexQueryView",
   "compatibility": "v2-only",
   "mutation": "bounded_projection_only",
   "type": "object",
-  "required": ["schema_version", "repo_root", "query", "actions", "boundary"],
+  "required": ["schema_version", "repo_root", "profile", "query", "boundary"],
   "properties": {
     "schema_version": { "const": "seiri.codex.v2" },
     "repo_root": { "const": "." },
-    "query": { "type": "object" },
-    "actions": { "type": "array" },
+    "profile": { "type": ["string", "null"], "enum": [null, "common", "library", "cli", "infra", "product", "runtime", "docs", "tutorial", "ml", "research", "template"] },
+    "query": {
+      "type": "object",
+      "required": ["kind", "data"],
+      "properties": {
+        "kind": { "enum": ["summary", "routes", "evidence", "documents", "governance", "patches", "linter", "actions", "remote", "pr_body"] },
+        "data": {
+          "anyOf": [
+            { "$ref": "#/$defs/summary" },
+            { "type": "object", "additionalProperties": true },
+            { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "boundary": { "type": "string" }
-  }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "coverage_status": {
+      "oneOf": [
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "complete" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "reason"], "properties": { "kind": { "const": "partial" }, "reason": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "not_requested" } }, "additionalProperties": false }
+      ]
+    },
+    "document_summary": {
+      "type": "object",
+      "required": ["candidates", "selected", "skipped_document_budget", "skipped_byte_budget", "selected_source_bytes", "primary_candidates", "primary_selected", "primary_skipped_document_budget", "primary_skipped_byte_budget", "primary_selected_source_bytes"],
+      "properties": {
+        "candidates": { "type": "integer", "minimum": 0 },
+        "selected": { "type": "integer", "minimum": 0 },
+        "skipped_document_budget": { "type": "integer", "minimum": 0 },
+        "skipped_byte_budget": { "type": "integer", "minimum": 0 },
+        "selected_source_bytes": { "type": "integer", "minimum": 0 },
+        "primary_candidates": { "type": "integer", "minimum": 0 },
+        "primary_selected": { "type": "integer", "minimum": 0 },
+        "primary_skipped_document_budget": { "type": "integer", "minimum": 0 },
+        "primary_skipped_byte_budget": { "type": "integer", "minimum": 0 },
+        "primary_selected_source_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "coverage_summary": {
+      "type": "object",
+      "required": ["complete_scopes", "partial_scopes", "not_requested_scopes", "limit_exceeded_scopes", "markdown_documents", "conflict_coverage"],
+      "properties": {
+        "complete_scopes": { "type": "integer", "minimum": 0 },
+        "partial_scopes": { "type": "integer", "minimum": 0 },
+        "not_requested_scopes": { "type": "integer", "minimum": 0 },
+        "limit_exceeded_scopes": { "type": "integer", "minimum": 0 },
+        "markdown_documents": { "$ref": "#/$defs/coverage_status" },
+        "conflict_coverage": { "$ref": "#/$defs/coverage_status" }
+      },
+      "additionalProperties": false
+    },
+    "observation_summary": {
+      "type": "object",
+      "required": ["present", "absent", "unknown", "unacknowledged_unknown", "conflict", "limit_exceeded"],
+      "properties": {
+        "present": { "type": "integer", "minimum": 0 },
+        "absent": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "unacknowledged_unknown": { "type": "integer", "minimum": 0 },
+        "conflict": { "type": "integer", "minimum": 0 },
+        "limit_exceeded": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["source_session_digest", "entries_scanned", "document_events", "document_diagnostics", "evidence_facts", "route_assessments", "route_content_slots", "claims", "findings", "pattern_matches", "profile_fit_score_x100", "profile_branches", "top_profile", "top_profile_rank_score_x100", "missing_route_priorities", "patch_operations", "patch_holds", "documents", "coverage", "observations"],
+      "properties": {
+        "source_session_digest": { "$ref": "#/$defs/sha256" },
+        "entries_scanned": { "type": "integer", "minimum": 0 },
+        "document_events": { "type": "integer", "minimum": 0 },
+        "document_diagnostics": { "type": "integer", "minimum": 0 },
+        "evidence_facts": { "type": "integer", "minimum": 0 },
+        "route_assessments": { "type": "integer", "minimum": 0 },
+        "route_content_slots": { "type": "integer", "minimum": 0 },
+        "claims": { "type": "integer", "minimum": 0 },
+        "findings": { "type": "integer", "minimum": 0 },
+        "pattern_matches": { "type": "integer", "minimum": 0 },
+        "profile_fit_score_x100": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "profile_branches": { "type": "integer", "minimum": 0 },
+        "top_profile": { "type": ["string", "null"] },
+        "top_profile_rank_score_x100": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "missing_route_priorities": { "type": "integer", "minimum": 0 },
+        "patch_operations": { "type": "integer", "minimum": 0 },
+        "patch_holds": { "type": "integer", "minimum": 0 },
+        "documents": { "$ref": "#/$defs/document_summary" },
+        "coverage": { "$ref": "#/$defs/coverage_summary" },
+        "observations": { "$ref": "#/$defs/observation_summary" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
 }

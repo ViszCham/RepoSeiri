@@ -3,19 +3,185 @@
   "$id": "https://reposeiri.invalid/schemas/seiri.analysis.v2.json",
   "title": "RepoSeiri repository analysis v2",
   "schema_version": "seiri.analysis.v2",
-  "owner": "seiri-core::RepositoryAnalysis",
+  "owner": "seiri-report::AuditWire",
   "compatibility": "v2-only",
   "partial_coverage": "unknown_or_partial_never_implies_absence",
   "type": "object",
-  "required": ["schema_version", "tool", "repo_root", "coverage", "evidence_kernel", "route_assessments", "claims"],
+  "required": ["schema_version", "tool", "repo_root", "entry_count", "files", "important_files", "analysis_configuration", "document_index", "github_local_documents", "github_semantics", "readme_document", "evidence_kernel", "coverage", "route_content", "facets", "document_consistency", "route_targets", "remote_evidence", "repository_scope", "freshness", "pattern_matches", "pattern_extensions", "route_assessments", "missing_route_priority", "review_priority", "claims", "claim_projections", "baseline", "profile", "findings"],
   "properties": {
     "schema_version": { "const": "seiri.analysis.v2" },
-    "tool": { "type": "string" },
+    "tool": { "const": "RepoSeiri" },
     "repo_root": { "const": "." },
-    "coverage": { "type": "object" },
-    "evidence_kernel": { "type": "object" },
-    "route_assessments": { "type": "array" },
-    "claims": { "type": "array" },
-    "claim_projections": { "type": "array" }
-  }
+    "entry_count": { "type": "integer", "minimum": 0 },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
+    "important_files": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "analysis_configuration": { "$ref": "#/$defs/configuration" },
+    "document_index": { "type": "object", "additionalProperties": true },
+    "github_local_documents": { "type": "object", "additionalProperties": true },
+    "github_semantics": { "type": "object", "additionalProperties": true },
+    "readme_document": { "type": ["object", "null"], "additionalProperties": true },
+    "evidence_kernel": { "type": "object", "additionalProperties": true },
+    "coverage": { "type": "object", "additionalProperties": true },
+    "route_content": { "type": "object", "additionalProperties": true },
+    "facets": { "type": "object", "additionalProperties": true },
+    "document_consistency": { "$ref": "#/$defs/document_consistency" },
+    "route_targets": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "remote_evidence": { "type": "object", "additionalProperties": true },
+    "repository_scope": { "type": "object", "additionalProperties": true },
+    "freshness": { "type": "object", "additionalProperties": true },
+    "pattern_matches": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "pattern_extensions": { "$ref": "#/$defs/pattern_extensions" },
+    "route_assessments": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "missing_route_priority": { "type": "object", "additionalProperties": true },
+    "review_priority": { "type": "object", "additionalProperties": true },
+    "claims": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "claim_projections": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "baseline": { "type": ["object", "null"], "additionalProperties": true },
+    "profile": { "type": ["object", "null"], "additionalProperties": true },
+    "findings": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "file": {
+      "type": "object",
+      "required": ["path", "kind", "size_bytes"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|\\\\\\\\).+$" },
+        "kind": { "enum": ["file", "directory", "symlink"] },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "required": ["schema_version", "scope", "profile", "budgets", "pattern_registry_fingerprint", "visibility", "calibration_binding", "source_session_digest"],
+      "properties": {
+        "schema_version": { "const": "seiri.analysis.v2" },
+        "scope": { "enum": ["repository", "workspace", "subtree"] },
+        "profile": { "enum": ["common", "library", "cli", "infra", "product", "runtime", "docs", "tutorial", "ml", "research", "template"] },
+        "budgets": { "type": "object", "additionalProperties": true },
+        "pattern_registry_fingerprint": { "$ref": "#/$defs/sha256" },
+        "visibility": { "enum": ["standard", "public_synthetic_calibration", "local_private_calibration", "redacted_calibration"] },
+        "calibration_binding": { "type": ["string", "null"] },
+        "source_session_digest": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "source_span": {
+      "type": "object",
+      "required": ["line", "column", "byte_start", "byte_end"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "byte_start": { "type": "integer", "minimum": 0 },
+        "byte_end": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "proposition": {
+      "type": "object",
+      "required": ["id", "kind", "key", "value", "modality", "document", "path", "evidence", "span"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["version", "support", "security_intake", "release", "capability"] },
+        "key": { "type": "string" },
+        "value": { "type": "string" },
+        "modality": { "enum": ["affirmed", "negated"] },
+        "document": { "type": "integer", "minimum": 1 },
+        "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|\\\\\\\\).+$" },
+        "evidence": { "type": "string" },
+        "span": { "$ref": "#/$defs/source_span" }
+      },
+      "additionalProperties": false
+    },
+    "proposition_side": {
+      "type": "object",
+      "required": ["proposition_id", "path", "evidence", "span", "value", "modality"],
+      "properties": {
+        "proposition_id": { "type": "string" },
+        "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|\\\\\\\\).+$" },
+        "evidence": { "type": "string" },
+        "span": { "$ref": "#/$defs/source_span" },
+        "value": { "type": "string" },
+        "modality": { "enum": ["affirmed", "negated"] }
+      },
+      "additionalProperties": false
+    },
+    "proposition_conflict": {
+      "type": "object",
+      "required": ["id", "kind", "key", "left", "right", "confidence_boundary"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["version", "support", "security_intake", "release", "capability"] },
+        "key": { "type": "string" },
+        "left": { "$ref": "#/$defs/proposition_side" },
+        "right": { "$ref": "#/$defs/proposition_side" },
+        "confidence_boundary": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "document_consistency": {
+      "type": "object",
+      "required": ["obligations", "relations", "conflicts", "propositions", "proposition_conflicts", "conflict_coverage", "boundary"],
+      "properties": {
+        "obligations": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "relations": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "conflicts": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "propositions": { "type": "array", "items": { "$ref": "#/$defs/proposition" } },
+        "proposition_conflicts": { "type": "array", "items": { "$ref": "#/$defs/proposition_conflict" } },
+        "conflict_coverage": { "type": "object", "additionalProperties": true },
+        "boundary": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "pattern_extensions": {
+      "type": "object",
+      "required": ["status", "pack", "evaluations", "boundary"],
+      "properties": {
+        "status": { "enum": ["not_requested", "applied"] },
+        "pack": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["id", "version", "fingerprint"],
+              "properties": {
+                "id": { "type": "string" },
+                "version": { "type": "string" },
+                "fingerprint": { "$ref": "#/$defs/sha256" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "evaluations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pattern_id", "group", "route", "state", "evidence_ids", "boundaries"],
+            "properties": {
+              "pattern_id": { "type": "string" },
+              "group": {},
+              "route": {},
+              "state": {
+                "type": "object",
+                "required": ["state"],
+                "properties": {
+                  "state": { "enum": ["present", "absent", "unknown", "conflict", "disabled"] },
+                  "reason": {}
+                },
+                "additionalProperties": false
+              },
+              "evidence_ids": { "type": "array", "items": { "type": "string" } },
+              "boundaries": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "boundary": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
 }

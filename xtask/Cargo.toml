@@ -9,6 +9,10 @@ publish = false
 [dependencies]
 seiri-core = { path = "../crates/seiri-core" }
 seiri-digest = { path = "../crates/seiri-digest" }
+seiri-report = { path = "../crates/seiri-report" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -6,10 +6,10 @@
   "owner": "xtask::CompletionRecord",
   "compatibility": "v3-only",
   "type": "object",
-  "required": ["schema_version", "state", "tool_version", "source", "checks", "required_hosts", "skipped_checks", "boundary"],
+  "required": ["schema_version", "state", "tool_version", "source", "checks", "required_hosts", "calibration", "claims", "evidence_complete", "skipped_checks", "boundary"],
   "properties": {
     "schema_version": { "const": "seiri.completion.v3" },
-    "state": { "enum": ["ready_for_git", "incomplete"] },
+    "state": { "enum": ["ready_for_git", "implemented_with_blocked_evidence", "incomplete"] },
     "tool_version": { "type": "string" },
     "source": {
       "type": "object",
@@ -23,7 +23,25 @@
       "additionalProperties": false
     },
     "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
-    "required_hosts": { "type": "array" },
+    "required_hosts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/host" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "calibration": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "https://reposeiri.invalid/schemas/seiri.calibration-holdout.v1.json" }
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claim" },
+      "minItems": 5,
+      "maxItems": 5
+    },
+    "evidence_complete": { "type": "boolean" },
     "skipped_checks": { "type": "array", "items": { "type": "string" } },
     "boundary": { "type": "string" }
   },
@@ -31,13 +49,69 @@
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "check": {
       "type": "object",
-      "required": ["name", "status", "elapsed_ms", "command"],
+      "required": ["name", "status", "failure_class", "exit_code", "elapsed_ms", "command"],
       "properties": {
         "name": { "type": "string" },
-        "status": { "enum": ["passed", "failed", "could_not_start"] },
+        "status": { "enum": ["passed", "failed"] },
+        "failure_class": {
+          "type": ["string", "null"],
+          "enum": ["missing_executable", "could_not_start", "environment_blocked", "timed_out", "output_limit_exceeded", "non_zero_exit", "io", null]
+        },
         "exit_code": { "type": ["integer", "null"] },
         "elapsed_ms": { "type": "integer", "minimum": 0 },
         "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": ["kind", "status", "evidence", "boundary"],
+      "properties": {
+        "kind": {
+          "enum": ["implemented", "locally_verified", "host_verified", "calibrated", "manual_policy"]
+        },
+        "status": {
+          "enum": ["satisfied", "unsatisfied", "requires_human_decision"]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "boundary": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "host": {
+      "type": "object",
+      "required": ["target", "status", "source_digest", "cargo_lock_digest", "binary_digest", "command_set"],
+      "properties": {
+        "target": { "enum": ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"] },
+        "status": { "enum": ["passed", "missing", "invalid"] },
+        "source_digest": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "cargo_lock_digest": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "binary_digest": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "command_set": {
+          "type": "array",
+          "items": {
+            "enum": ["native_contract", "native_codex_summary", "schema_integrity", "launcher_codex_summary"]
+          },
+          "uniqueItems": true,
+          "maxItems": 4
+        }
       },
       "additionalProperties": false
     }

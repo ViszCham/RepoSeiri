@@ -3,12 +3,13 @@
 use seiri_core::{
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, CoverageIncompleteReason, CoverageScope,
     CoverageStatus, DeltaCompatibility, DeltaState, DeltaUnknownReason, Digest32, DocumentEvent,
-    EvidenceAtom, EvidenceFact, EvidenceFingerprint, EvidenceId, EvidenceProducer,
-    ImprovementCandidate, MarkdownEvidenceKind, Observation, PortableAuditSnapshot,
-    PortableConflictRecord, PortableContentSlotRecord, PortableCoverageRecord,
-    PortableDocumentRecord, PortableFacetRecord, PortableObligationRecord,
-    PortableObservationState, PortableRouteRecord, RegressionCandidate, RepositoryAnalysis,
-    RouteDelta, SourceDomain, AUDIT_DELTA_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
+    EvidenceAtom, EvidenceFact, EvidenceFingerprint, EvidenceId, EvidenceIdentityDigest,
+    EvidenceOccurrenceDigest, EvidenceProducer, EvidenceStateDigest, ImprovementCandidate,
+    MarkdownEvidenceKind, Observation, PortableAuditSnapshot, PortableConflictRecord,
+    PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
+    PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
+    RepositoryAnalysis, RouteDelta, SourceDomain, AUDIT_DELTA_SCHEMA_VERSION,
+    PORTABLE_AUDIT_SCHEMA_VERSION,
 };
 use seiri_digest::StableHasher;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,7 +25,7 @@ pub fn evidence_fingerprint(
 ) -> Result<EvidenceFingerprint, DeltaError> {
     let kernel = &analysis.evidence_kernel;
     let path = kernel.path_for_fact(fact).unwrap_or_default();
-    let mut identity = StableHasher::new(EVIDENCE_IDENTITY_FINGERPRINT_DOMAIN);
+    let mut identity = StableHasher::new(EVIDENCE_IDENTITY_FINGERPRINT_DOMAIN, 7);
     identity.str(1, path);
     identity.u8(2, source_domain_tag(fact.provenance.domain));
     identity.u8(3, producer_tag(fact.provenance.producer));
@@ -32,21 +33,21 @@ pub fn evidence_fingerprint(
     if let Some(target) = normalized_event_target(analysis, path, fact) {
         identity.str(9, &target);
     }
-    let identity = identity.finish();
+    let identity = EvidenceIdentityDigest::new(identity.finish());
 
-    let mut state = StableHasher::new(EVIDENCE_STATE_FINGERPRINT_DOMAIN);
-    state.digest(1, identity);
+    let mut state = StableHasher::new(EVIDENCE_STATE_FINGERPRINT_DOMAIN, 4);
+    state.digest(1, identity.get());
     state.u8(2, confidence_tag(fact.confidence));
     let classification =
         seiri_core::PathClassification::classify(path, Some(&analysis.repository_scope.graph));
-    state.u8(3, classification.region as u8);
-    state.u8(4, classification.usage as u8);
-    let state = state.finish();
+    state.str(3, repository_region_tag(classification.region));
+    state.str(4, evidence_usage_tag(classification.usage));
+    let state = EvidenceStateDigest::new(state.finish());
 
-    let mut occurrence = StableHasher::new(EVIDENCE_OCCURRENCE_FINGERPRINT_DOMAIN);
-    occurrence.digest(1, state);
+    let mut occurrence = StableHasher::new(EVIDENCE_OCCURRENCE_FINGERPRINT_DOMAIN, 6);
+    occurrence.digest(1, state.get());
     if let Some(base) = document_base_digest(analysis, path) {
-        occurrence.u64(2, base);
+        occurrence.digest(2, base);
     }
     if let Some(span) = fact.provenance.span {
         occurrence.u32(3, span.line.get());
@@ -57,7 +58,7 @@ pub fn evidence_fingerprint(
     Ok(EvidenceFingerprint {
         identity,
         state,
-        occurrence: occurrence.finish(),
+        occurrence: EvidenceOccurrenceDigest::new(occurrence.finish()),
     })
 }
 
@@ -130,6 +131,76 @@ fn confidence_tag(value: seiri_core::EvidenceConfidence) -> u8 {
     }
 }
 
+const fn repository_region_tag(value: seiri_core::RepositoryRegion) -> &'static str {
+    match value {
+        seiri_core::RepositoryRegion::Root => "root",
+        seiri_core::RepositoryRegion::WorkspaceMember => "workspace_member",
+        seiri_core::RepositoryRegion::Submodule => "submodule",
+        seiri_core::RepositoryRegion::Ignored => "ignored",
+    }
+}
+
+const fn evidence_usage_tag(value: seiri_core::EvidenceUsage) -> &'static str {
+    match value {
+        seiri_core::EvidenceUsage::Primary => "primary",
+        seiri_core::EvidenceUsage::Test => "test",
+        seiri_core::EvidenceUsage::Fixture => "fixture",
+        seiri_core::EvidenceUsage::Example => "example",
+        seiri_core::EvidenceUsage::Generated => "generated",
+        seiri_core::EvidenceUsage::Vendored => "vendored",
+    }
+}
+
+const fn important_file_kind_tag(value: seiri_core::ImportantFileKind) -> &'static str {
+    match value {
+        seiri_core::ImportantFileKind::Readme => "readme",
+        seiri_core::ImportantFileKind::License => "license",
+        seiri_core::ImportantFileKind::Contributing => "contributing",
+        seiri_core::ImportantFileKind::Security => "security",
+        seiri_core::ImportantFileKind::Support => "support",
+        seiri_core::ImportantFileKind::IssueTemplate => "issue_template",
+        seiri_core::ImportantFileKind::IssueForm => "issue_form",
+        seiri_core::ImportantFileKind::PullRequestTemplate => "pull_request_template",
+        seiri_core::ImportantFileKind::Changelog => "changelog",
+        seiri_core::ImportantFileKind::Codeowners => "codeowners",
+        seiri_core::ImportantFileKind::CargoToml => "cargo_toml",
+        seiri_core::ImportantFileKind::DocsDirectory => "docs_directory",
+        seiri_core::ImportantFileKind::Workflow => "workflow",
+        seiri_core::ImportantFileKind::DependencyBot => "dependency_bot",
+        seiri_core::ImportantFileKind::SecurityAutomation => "security_automation",
+        seiri_core::ImportantFileKind::Gitignore => "gitignore",
+        seiri_core::ImportantFileKind::Gitattributes => "gitattributes",
+        seiri_core::ImportantFileKind::EditorConfig => "editor_config",
+    }
+}
+
+const fn readme_presence_tag(value: seiri_core::ReadmePresence) -> &'static str {
+    match value {
+        seiri_core::ReadmePresence::Present => "present",
+        seiri_core::ReadmePresence::Absent => "absent",
+    }
+}
+
+const fn route_tag(value: seiri_core::RouteKind) -> &'static str {
+    match value {
+        seiri_core::RouteKind::Identity => "identity",
+        seiri_core::RouteKind::Docs => "docs",
+        seiri_core::RouteKind::Quickstart => "quickstart",
+        seiri_core::RouteKind::Support => "support",
+        seiri_core::RouteKind::Intake => "intake",
+        seiri_core::RouteKind::Contributing => "contributing",
+        seiri_core::RouteKind::Security => "security",
+        seiri_core::RouteKind::Release => "release",
+        seiri_core::RouteKind::Lifecycle => "lifecycle",
+        seiri_core::RouteKind::Governance => "governance",
+        seiri_core::RouteKind::License => "license",
+        seiri_core::RouteKind::Automation => "automation",
+        seiri_core::RouteKind::Ownership => "ownership",
+        seiri_core::RouteKind::Hygiene => "hygiene",
+        seiri_core::RouteKind::Unknown => "unknown",
+    }
+}
+
 fn hash_atom(hasher: &mut StableHasher, atom: EvidenceAtom) {
     match atom {
         EvidenceAtom::FilePresent => {
@@ -137,25 +208,26 @@ fn hash_atom(hasher: &mut StableHasher, atom: EvidenceAtom) {
         }
         EvidenceAtom::ImportantFile(kind) => {
             hasher.u8(4, 1);
-            hasher.u8(5, kind as u8);
+            hasher.str(5, important_file_kind_tag(kind));
         }
         EvidenceAtom::Readme(presence) => {
             hasher.u8(4, 2);
-            hasher.u8(5, presence as u8);
+            hasher.str(5, readme_presence_tag(presence));
         }
         EvidenceAtom::Markdown { event, route } => {
             hasher.u8(4, 3);
-            hasher.u8(
+            hasher.str(
                 5,
                 match event {
-                    MarkdownEvidenceKind::Heading => 0,
-                    MarkdownEvidenceKind::Link => 1,
-                    MarkdownEvidenceKind::Badge => 2,
-                    MarkdownEvidenceKind::RouteCandidate => 3,
+                    MarkdownEvidenceKind::Heading => "heading",
+                    MarkdownEvidenceKind::Link => "link",
+                    MarkdownEvidenceKind::Badge => "badge",
+                    MarkdownEvidenceKind::RouteCandidate => "route_candidate",
+                    MarkdownEvidenceKind::VisibleProse => "visible_prose",
                 },
             );
             if let Some(route) = route {
-                hasher.u8(6, route as u8);
+                hasher.str(6, route_tag(route));
             }
         }
     }
@@ -184,7 +256,9 @@ fn normalized_event_target(
         let target = match event {
             DocumentEvent::Link(link) => Some(link.target.as_str()),
             DocumentEvent::RouteCandidate(candidate) => candidate.target.as_deref(),
-            DocumentEvent::Heading(_) | DocumentEvent::Badge(_) => None,
+            DocumentEvent::VisibleProse(_)
+            | DocumentEvent::Heading(_)
+            | DocumentEvent::Badge(_) => None,
         }?;
         Some(normalize_target(target))
     })
@@ -199,7 +273,7 @@ fn normalize_target(target: &str) -> String {
         .join(" ")
 }
 
-fn document_base_digest(analysis: &RepositoryAnalysis, path: &str) -> Option<u64> {
+fn document_base_digest(analysis: &RepositoryAnalysis, path: &str) -> Option<Digest32> {
     analysis
         .document_index
         .entries()
@@ -207,7 +281,7 @@ fn document_base_digest(analysis: &RepositoryAnalysis, path: &str) -> Option<u64
         .find(|entry| entry.path == path)?
         .scan
         .as_ref()
-        .map(|scan| scan.base().digest().as_u64())
+        .map(|scan| scan.base().digest().digest())
 }
 
 pub fn portable_snapshot(
@@ -289,7 +363,7 @@ pub fn portable_snapshot(
         .records()
         .iter()
         .map(|record| {
-            let key = coverage_scope_key(record.scope);
+            let key = coverage_scope_key(snapshot, record.scope)?;
             let mut item = PortableCoverageRecord {
                 digest: Digest32::new([0; 32]),
                 key,
@@ -315,7 +389,7 @@ pub fn portable_snapshot(
                 digest: Digest32::new([0; 32]),
                 evidence,
             };
-            record.digest = digest_conflict_record(&record, conflict.relation as u8);
+            record.digest = digest_conflict_record(&record, conflict.relation);
             Ok(record)
         })
         .collect::<Result<Vec<_>, DeltaError>>()?;
@@ -339,7 +413,7 @@ pub fn portable_snapshot(
                 digest: Digest32::new([0; 32]),
                 evidence,
             };
-            record.digest = digest_obligation_record(&record, obligation.facet as u8);
+            record.digest = digest_obligation_record(&record, obligation.facet);
             Ok(record)
         })
         .collect::<Result<Vec<_>, DeltaError>>()?;
@@ -373,18 +447,17 @@ pub fn portable_snapshot(
         .map(|entry| {
             let item_coverage = entry.status.coverage_status();
             let mut record = PortableDocumentRecord {
-                document: entry.document_id,
                 path: entry.path.clone(),
                 coverage: item_coverage,
                 digest: Digest32::new([0; 32]),
             };
             record.digest = digest_document_record(
                 &record,
-                entry.role as u8,
+                entry.role,
                 entry.declared_bytes,
-                entry.status as u8,
-                entry.digest.map(|value| value.as_u64()),
-                entry.encoding.map(|value| value as u8),
+                entry.status,
+                entry.digest.map(seiri_core::PatchBaseDigest::digest),
+                entry.encoding,
             );
             Ok(record)
         })
@@ -404,6 +477,7 @@ pub fn portable_snapshot(
     let digest = AuditSnapshotDigest {
         schema: PORTABLE_AUDIT_SCHEMA_VERSION.to_string(),
         configuration,
+        source_session: snapshot.analysis_configuration.source_session_digest,
         evidence,
         routes: digest_record_set(
             b"seiri.portable-route-set.v2",
@@ -628,15 +702,15 @@ pub fn compare(before: &PortableAuditSnapshot, after: &PortableAuditSnapshot) ->
 }
 
 fn digest_route_record(record: &PortableRouteRecord) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-route.v2");
-    hash.u8(1, record.route as u8)
+    let mut hash = StableHasher::new(b"seiri.portable-route.v2", 14);
+    hash.str(1, route_tag(record.route))
         .bool(2, record.root_structured)
         .bool(3, record.inherited)
         .bool(4, record.readme_routed)
         .usize(5, record.repository_local_targets)
         .usize(6, record.shared_target_conflicts)
-        .u8(7, record.freshness as u8)
-        .u8(8, record.policy as u8)
+        .str(7, route_freshness_tag(record.freshness))
+        .str(8, route_policy_tag(record.policy))
         .bool(9, record.missing_pattern);
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
     hash_fingerprints(&mut hash, &record.evidence);
@@ -644,44 +718,50 @@ fn digest_route_record(record: &PortableRouteRecord) -> Digest32 {
 }
 
 fn digest_content_record(record: &PortableContentSlotRecord) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-content-slot.v2");
+    let mut hash = StableHasher::new(b"seiri.portable-content-slot.v2", 8);
     hash.u32(1, u32::from(record.slot.0))
         .str(2, &record.code)
-        .u8(3, record.route as u8);
+        .str(3, route_tag(record.route));
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
     hash_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
 fn digest_coverage_record(record: &PortableCoverageRecord) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-coverage.v2");
+    let mut hash = StableHasher::new(b"seiri.portable-coverage.v2", 2);
     hash.str(1, &record.key);
     hash_coverage(&mut hash, record.status, 2);
     hash.finish()
 }
 
-fn digest_conflict_record(record: &PortableConflictRecord, relation: u8) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-conflict.v2");
+fn digest_conflict_record(
+    record: &PortableConflictRecord,
+    relation: seiri_core::TargetRelation,
+) -> Digest32 {
+    let mut hash = StableHasher::new(b"seiri.portable-conflict.v2", 5);
     hash.str(1, &record.id)
-        .u8(2, record.route as u8)
-        .u8(3, relation);
+        .str(2, route_tag(record.route))
+        .str(3, target_relation_tag(relation));
     hash_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
-fn digest_obligation_record(record: &PortableObligationRecord, facet: u8) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-obligation.v2");
+fn digest_obligation_record(
+    record: &PortableObligationRecord,
+    facet: seiri_core::RepositoryFacet,
+) -> Digest32 {
+    let mut hash = StableHasher::new(b"seiri.portable-obligation.v2", 8);
     hash.str(1, &record.id)
-        .u8(2, record.route as u8)
-        .u8(3, facet);
+        .str(2, route_tag(record.route))
+        .str(3, facet.slug());
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
     hash_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
 fn digest_facet_record(record: &PortableFacetRecord) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-facet.v2");
-    hash.u8(1, record.facet as u8);
+    let mut hash = StableHasher::new(b"seiri.portable-facet.v2", 5);
+    hash.str(1, record.facet.slug());
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
     hash_fingerprints(&mut hash, &record.evidence);
     hash.finish()
@@ -689,56 +769,54 @@ fn digest_facet_record(record: &PortableFacetRecord) -> Digest32 {
 
 fn digest_document_record(
     record: &PortableDocumentRecord,
-    role: u8,
+    role: seiri_core::DocumentRole,
     declared_bytes: u64,
-    status: u8,
-    base_digest: Option<u64>,
-    encoding: Option<u8>,
+    status: seiri_core::DocumentScanStatus,
+    base_digest: Option<Digest32>,
+    encoding: Option<seiri_core::TextEncoding>,
 ) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.portable-document.v2");
+    let mut hash = StableHasher::new(b"seiri.portable-document.v3", 7);
     hash.str(1, &record.path)
-        .u8(2, role)
+        .str(2, document_role_tag(role))
         .u64(3, declared_bytes)
-        .u8(4, status);
-    if let Some(document) = record.document {
-        hash.u32(5, document.ordinal());
-    }
+        .str(4, document_status_tag(status));
     if let Some(base_digest) = base_digest {
-        hash.u64(6, base_digest);
+        hash.digest(5, base_digest);
     }
     if let Some(encoding) = encoding {
-        hash.u8(7, encoding);
+        hash.str(6, text_encoding_tag(encoding));
     }
-    hash_coverage(&mut hash, record.coverage, 8);
+    hash_coverage(&mut hash, record.coverage, 7);
     hash.finish()
 }
 
 fn digest_configuration(configuration: &seiri_core::AnalysisConfiguration) -> Digest32 {
-    let mut hash = StableHasher::new(b"seiri.analysis-configuration.v2");
+    let mut hash = StableHasher::new(b"seiri.analysis-configuration.v3", 22);
     hash.str(1, &configuration.schema_version)
-        .u8(2, configuration.scope as u8)
-        .u8(3, configuration.profile as u8)
+        .str(2, analysis_scope_tag(configuration.scope))
+        .str(3, profile_tag(configuration.profile))
         .usize(4, configuration.budgets.filesystem_max_depth)
         .usize(5, configuration.budgets.filesystem_max_entries)
-        .usize(6, configuration.budgets.filesystem_max_ignored_records);
+        .usize(6, configuration.budgets.filesystem_max_directory_entries)
+        .usize(7, configuration.budgets.filesystem_max_ignored_records);
     for ignored in &configuration.budgets.filesystem_additional_ignored_names {
-        hash.str(7, ignored);
+        hash.str(8, ignored);
     }
-    hash.usize(8, configuration.budgets.document_max_documents)
-        .usize(9, configuration.budgets.document_max_total_source_bytes)
-        .usize(10, configuration.budgets.document_max_source_bytes)
-        .usize(11, configuration.budgets.document_max_events)
-        .usize(12, configuration.budgets.document_max_diagnostics)
-        .u32(13, configuration.budgets.git_max_refs)
-        .u32(14, configuration.budgets.git_max_tags)
-        .u32(15, configuration.budgets.git_max_commit_headers)
-        .u32(16, configuration.budgets.scope.max_nodes)
-        .u64(17, configuration.budgets.scope.max_manifest_bytes)
-        .u32(18, configuration.budgets.scope.max_ignored_records)
-        .str(19, &configuration.pattern_registry_fingerprint)
-        .u8(20, configuration.visibility as u8);
+    hash.usize(9, configuration.budgets.document_max_documents)
+        .usize(10, configuration.budgets.document_max_total_source_bytes)
+        .usize(11, configuration.budgets.document_max_source_bytes)
+        .usize(12, configuration.budgets.document_max_events)
+        .usize(13, configuration.budgets.document_max_diagnostics)
+        .u32(14, configuration.budgets.git_max_refs)
+        .u32(15, configuration.budgets.git_max_tags)
+        .u32(16, configuration.budgets.git_max_commit_headers)
+        .u32(17, configuration.budgets.scope.max_nodes)
+        .u64(18, configuration.budgets.scope.max_manifest_bytes)
+        .u32(19, configuration.budgets.scope.max_ignored_records)
+        .str(20, &configuration.pattern_registry_fingerprint)
+        .str(21, visibility_tag(configuration.visibility));
     if let Some(binding) = &configuration.calibration_binding {
-        hash.str(21, binding);
+        hash.str(22, binding);
     }
     hash.finish()
 }
@@ -748,7 +826,7 @@ fn hash_observation_and_coverage(
     observation: PortableObservationState,
     coverage: CoverageStatus,
 ) {
-    hash.u8(30, observation as u8);
+    hash.str(30, observation_tag(observation));
     hash_coverage(hash, coverage, 31);
 }
 
@@ -758,7 +836,8 @@ fn hash_coverage(hash: &mut StableHasher, coverage: CoverageStatus, tag: u8) {
             hash.u8(tag, 0);
         }
         CoverageStatus::Partial(reason) => {
-            hash.u8(tag, 1).u8(tag.saturating_add(1), reason as u8);
+            hash.u8(tag, 1)
+                .str(tag.saturating_add(1), coverage_reason_tag(reason));
         }
         CoverageStatus::NotRequested => {
             hash.u8(tag, 2);
@@ -769,24 +848,142 @@ fn hash_coverage(hash: &mut StableHasher, coverage: CoverageStatus, tag: u8) {
 fn hash_fingerprints(hash: &mut StableHasher, evidence: &[EvidenceFingerprint]) {
     hash.usize(40, evidence.len());
     for item in evidence {
-        hash.digest(41, item.identity)
-            .digest(42, item.state)
-            .digest(43, item.occurrence);
+        hash.digest(41, item.identity.get())
+            .digest(42, item.state.get())
+            .digest(43, item.occurrence.get());
     }
 }
 
 fn digest_fingerprint_set(domain: &[u8], evidence: &[EvidenceFingerprint]) -> Digest32 {
-    let mut hash = StableHasher::new(domain);
+    let mut hash = StableHasher::new(domain, 4);
     hash_fingerprints(&mut hash, evidence);
     hash.finish()
 }
 
 fn digest_record_set(domain: &[u8], records: impl Iterator<Item = Digest32>) -> Digest32 {
-    let mut hash = StableHasher::new(domain);
+    let mut hash = StableHasher::new(domain, 1);
     for record in records {
         hash.digest(1, record);
     }
     hash.finish()
+}
+
+const fn route_freshness_tag(value: seiri_core::RouteFreshness) -> &'static str {
+    match value {
+        seiri_core::RouteFreshness::NotApplicable => "not_applicable",
+        seiri_core::RouteFreshness::Current => "current",
+        seiri_core::RouteFreshness::Stale => "stale",
+        seiri_core::RouteFreshness::Mixed => "mixed",
+    }
+}
+
+const fn route_policy_tag(value: seiri_core::RoutePolicyBoundary) -> &'static str {
+    match value {
+        seiri_core::RoutePolicyBoundary::Suggestible => "suggestible",
+        seiri_core::RoutePolicyBoundary::MaintainerDecisionRequired => {
+            "maintainer_decision_required"
+        }
+    }
+}
+
+const fn target_relation_tag(value: seiri_core::TargetRelation) -> &'static str {
+    match value {
+        seiri_core::TargetRelation::Equivalent => "equivalent",
+        seiri_core::TargetRelation::Refines => "refines",
+        seiri_core::TargetRelation::SharedHub => "shared_hub",
+        seiri_core::TargetRelation::Competes => "competes",
+        seiri_core::TargetRelation::Unknown => "unknown",
+    }
+}
+
+const fn document_role_tag(value: seiri_core::DocumentRole) -> &'static str {
+    match value {
+        seiri_core::DocumentRole::RootReadme => "root_readme",
+        seiri_core::DocumentRole::Documentation => "documentation",
+        seiri_core::DocumentRole::SecurityPolicy => "security_policy",
+        seiri_core::DocumentRole::SupportPolicy => "support_policy",
+        seiri_core::DocumentRole::ContributionGuide => "contribution_guide",
+        seiri_core::DocumentRole::ReleaseNotes => "release_notes",
+        seiri_core::DocumentRole::Governance => "governance",
+        seiri_core::DocumentRole::GithubConfiguration => "github_configuration",
+        seiri_core::DocumentRole::OtherMarkdown => "other_markdown",
+    }
+}
+
+const fn document_status_tag(value: seiri_core::DocumentScanStatus) -> &'static str {
+    match value {
+        seiri_core::DocumentScanStatus::Scanned => "scanned",
+        seiri_core::DocumentScanStatus::NotMarkdown => "not_markdown",
+        seiri_core::DocumentScanStatus::SkippedDocumentBudget => "skipped_document_budget",
+        seiri_core::DocumentScanStatus::SkippedByteBudget => "skipped_byte_budget",
+        seiri_core::DocumentScanStatus::InvalidUtf8 => "invalid_utf8",
+        seiri_core::DocumentScanStatus::ParseFailed => "parse_failed",
+        seiri_core::DocumentScanStatus::PermissionDenied => "permission_denied",
+    }
+}
+
+const fn text_encoding_tag(value: seiri_core::TextEncoding) -> &'static str {
+    match value {
+        seiri_core::TextEncoding::Utf8 => "utf8",
+        seiri_core::TextEncoding::Utf8Bom => "utf8_bom",
+        seiri_core::TextEncoding::Unknown => "unknown",
+    }
+}
+
+const fn analysis_scope_tag(value: seiri_core::AnalysisScope) -> &'static str {
+    match value {
+        seiri_core::AnalysisScope::Repository => "repository",
+        seiri_core::AnalysisScope::Workspace => "workspace",
+        seiri_core::AnalysisScope::Subtree => "subtree",
+    }
+}
+
+const fn profile_tag(value: seiri_core::ProfileKind) -> &'static str {
+    match value {
+        seiri_core::ProfileKind::Common => "common",
+        seiri_core::ProfileKind::Library => "library",
+        seiri_core::ProfileKind::Cli => "cli",
+        seiri_core::ProfileKind::Infra => "infra",
+        seiri_core::ProfileKind::Product => "product",
+        seiri_core::ProfileKind::Runtime => "runtime",
+        seiri_core::ProfileKind::Docs => "docs",
+        seiri_core::ProfileKind::Tutorial => "tutorial",
+        seiri_core::ProfileKind::Ml => "ml",
+        seiri_core::ProfileKind::Research => "research",
+        seiri_core::ProfileKind::Template => "template",
+    }
+}
+
+const fn visibility_tag(value: seiri_core::AnalysisVisibility) -> &'static str {
+    match value {
+        seiri_core::AnalysisVisibility::Standard => "standard",
+        seiri_core::AnalysisVisibility::PublicSyntheticCalibration => {
+            "public_synthetic_calibration"
+        }
+        seiri_core::AnalysisVisibility::LocalPrivateCalibration => "local_private_calibration",
+        seiri_core::AnalysisVisibility::RedactedCalibration => "redacted_calibration",
+    }
+}
+
+const fn observation_tag(value: PortableObservationState) -> &'static str {
+    match value {
+        PortableObservationState::Present => "present",
+        PortableObservationState::Absent => "absent",
+        PortableObservationState::Conflict => "conflict",
+        PortableObservationState::Unknown => "unknown",
+    }
+}
+
+const fn coverage_reason_tag(value: CoverageIncompleteReason) -> &'static str {
+    match value {
+        CoverageIncompleteReason::LimitExceeded => "limit_exceeded",
+        CoverageIncompleteReason::InvalidUtf8 => "invalid_utf8",
+        CoverageIncompleteReason::ParseFailed => "parse_failed",
+        CoverageIncompleteReason::UnsupportedSyntax => "unsupported_syntax",
+        CoverageIncompleteReason::PermissionDenied => "permission_denied",
+        CoverageIncompleteReason::RateLimited => "rate_limited",
+        CoverageIncompleteReason::Unavailable => "unavailable",
+    }
 }
 
 fn coverage(snapshot: &RepositoryAnalysis, scope: CoverageScope) -> CoverageStatus {
@@ -796,15 +993,29 @@ fn coverage(snapshot: &RepositoryAnalysis, scope: CoverageScope) -> CoverageStat
         .map_or(CoverageStatus::NotRequested, |record| record.status)
 }
 
-fn coverage_scope_key(scope: CoverageScope) -> String {
-    match scope {
+fn coverage_scope_key(
+    snapshot: &RepositoryAnalysis,
+    scope: CoverageScope,
+) -> Result<String, DeltaError> {
+    Ok(match scope {
         CoverageScope::RepositoryFiles => "repository_files".to_string(),
         CoverageScope::RootReadme => "root_readme".to_string(),
         CoverageScope::MarkdownDocuments => "markdown_documents".to_string(),
-        CoverageScope::DocumentRole(role) => format!("document_role:{role:?}"),
-        CoverageScope::Document(document) => format!("document:{}", document.ordinal()),
+        CoverageScope::DocumentRole(role) => {
+            format!("document_role:{}", document_role_tag(role))
+        }
+        CoverageScope::Document(document) => {
+            let path = snapshot
+                .document_index
+                .entries()
+                .iter()
+                .find(|entry| entry.document_id == Some(document))
+                .map(|entry| entry.path.as_str())
+                .ok_or(DeltaError::MissingEvidenceReference)?;
+            format!("document:{path}")
+        }
         CoverageScope::RemoteMetadata => "remote_metadata".to_string(),
-    }
+    })
 }
 
 fn combine_coverage(left: CoverageStatus, right: CoverageStatus) -> CoverageStatus {
