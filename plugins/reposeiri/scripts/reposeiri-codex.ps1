@@ -49,6 +49,32 @@ function Write-RepoSeiriError {
     exit $ExitCode
 }
 
+function Get-RepoSeiriSha256 {
+    param([Parameter(Mandatory = $true)][string] $LiteralPath)
+    $Stream = $null
+    $Hasher = $null
+    try {
+        $Stream = [System.IO.File]::Open(
+            $LiteralPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+        $Hasher = [System.Security.Cryptography.SHA256]::Create()
+        $Digest = $Hasher.ComputeHash($Stream)
+        return ([System.BitConverter]::ToString($Digest)).Replace("-", "").ToLowerInvariant()
+    } catch {
+        Write-RepoSeiriError "digest_read_failed" "RepoSeiri could not hash a bundle file" 5
+    } finally {
+        if ($null -ne $Hasher) {
+            $Hasher.Dispose()
+        }
+        if ($null -ne $Stream) {
+            $Stream.Dispose()
+        }
+    }
+}
+
 function Test-RevisionSet {
     param($Actual)
     if ($null -eq $Actual) {
@@ -129,7 +155,7 @@ if (Test-Path -LiteralPath $RuntimeManifestPath -PathType Leaf) {
         -not (Test-RevisionSet $RuntimeManifest.semantic_revisions)) {
         Write-RepoSeiriError "bundle_contract_mismatch" "RepoSeiri bundle metadata does not match the binary contract" 5
     }
-    $BinaryHash = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash.ToLowerInvariant()
+    $BinaryHash = Get-RepoSeiriSha256 -LiteralPath $Binary
     if ($BinaryHash -ne $RuntimeManifest.sha256) {
         Write-RepoSeiriError "binary_digest_mismatch" "RepoSeiri bundle binary digest does not match its manifest" 5
     }
@@ -147,7 +173,7 @@ if (Test-Path -LiteralPath $RuntimeManifestPath -PathType Leaf) {
         if (-not (Test-Path -LiteralPath $SchemaPath -PathType Leaf)) {
             Write-RepoSeiriError "schema_missing" "RepoSeiri bundle schema file is missing" 5
         }
-        $SchemaHash = (Get-FileHash -LiteralPath $SchemaPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $SchemaHash = Get-RepoSeiriSha256 -LiteralPath $SchemaPath
         if ($SchemaHash -ne $Schema.Value) {
             Write-RepoSeiriError "schema_digest_mismatch" "RepoSeiri bundle schema digest does not match its manifest" 5
         }

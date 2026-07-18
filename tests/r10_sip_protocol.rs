@@ -141,3 +141,17 @@ fn design_indexes_route_to_the_current_r10_contract() {
         );
     }
 }
+
+#[test]
+fn windows_launcher_hashing_uses_the_runtime_crypto_api() {
+    let body = fs::read_to_string(root().join("plugins/reposeiri/scripts/reposeiri-codex.ps1"))
+        .expect("read Windows launcher");
+    assert!(!body.contains("Get-FileHash"));
+    for required in [
+        "[System.IO.File]::Open",
+        "[System.Security.Cryptography.SHA256]::Create",
+        "[System.BitConverter]::ToString",
+    ] {
+        assert!(body.contains(required), "missing {required}");
+    }
+}
