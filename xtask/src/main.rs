@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 mod bundle;
+mod calibration;
 mod completion;
+mod supervisor;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -23,6 +25,7 @@ fn run(args: Vec<OsString>) -> Result<ExitCode, String> {
     };
     match command {
         "completion" => completion::run(&args[1..]),
+        "calibration-holdout" => calibration::run(&args[1..]),
         "bundle" => bundle::run(&args[1..]),
         _ => Err(usage()),
     }
@@ -40,5 +43,5 @@ fn repository_root() -> Result<PathBuf, String> {
 }
 
 fn usage() -> String {
-    "usage: cargo run -p xtask -- completion --format json [--host-evidence <directory>] | bundle --target <triple> --binary <path> --output <new-directory>".to_string()
+    "usage: cargo run -p xtask -- completion --format json [--host-evidence <directory>] | calibration-holdout --format json | bundle --target <triple> --binary <path> --output <new-directory>".to_string()
 }

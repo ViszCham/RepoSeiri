@@ -50,6 +50,7 @@ fn plugin_surface_has_no_workspace_or_cargo_runtime_fallback() {
 fn completion_ci_and_fuzz_surfaces_cover_required_hosts_and_boundaries() {
     let ci = read(".github/workflows/ci.yml");
     assert!(ci.contains("cargo run --locked --quiet -p xtask -- completion --format json"));
+    assert!(ci.contains("cargo run --locked --quiet -p xtask -- calibration-holdout --format json"));
     assert!(ci.contains("cargo audit"));
     assert!(ci.contains("- dependency-audit"));
     assert!(ci.contains("x86_64-unknown-linux-gnu"));
@@ -67,12 +68,62 @@ fn completion_ci_and_fuzz_surfaces_cover_required_hosts_and_boundaries() {
         "patch_span",
         "calibration_jsonl",
         "gitfile",
+        "executable_pack",
+        "schema_decoder",
+        "audit_delta",
     ] {
         assert!(root()
             .join("fuzz/fuzz_targets")
             .join(format!("{target}.rs"))
             .is_file());
     }
+    assert!(ci.contains("fuzz-smoke:"));
+    assert!(ci.contains("nightly-2026-07-01"));
+    assert!(ci.contains("cargo-fuzz --locked --version"));
+
+    assert!(!ci.contains("ubuntu-latest"));
+    assert!(!ci.contains("windows-latest"));
+    assert!(!ci.contains("toolchain install stable"));
+    for line in ci
+        .lines()
+        .filter(|line| line.trim_start().starts_with("uses:"))
+    {
+        let revision = line
+            .split('@')
+            .nth(1)
+            .and_then(|value| value.split_whitespace().next())
+            .expect("action revision");
+        assert_eq!(revision.len(), 40, "action is not commit-pinned: {line}");
+        assert!(
+            revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "action revision is not hexadecimal: {line}"
+        );
+    }
+
+    let bundle = read("xtask/src/bundle.rs");
+    for binding in [
+        "source_digest",
+        "cargo_lock_digest",
+        "binary_digest",
+        "command_set",
+        "schema_sha256",
+    ] {
+        assert!(bundle.contains(binding), "bundle receipt omitted {binding}");
+    }
+    let completion = read("xtask/src/completion.rs");
+    for claim in [
+        "Implemented",
+        "LocallyVerified",
+        "HostVerified",
+        "Calibrated",
+        "ManualPolicy",
+    ] {
+        assert!(
+            completion.contains(claim),
+            "completion matrix omitted {claim}"
+        );
+    }
+    assert!(completion.contains("ImplementedWithBlockedEvidence"));
 }
 
 #[test]

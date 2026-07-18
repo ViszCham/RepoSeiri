@@ -67,7 +67,7 @@ fn launcher_rejects_a_missing_configured_binary() {
 
 #[cfg(windows)]
 #[test]
-fn launcher_propagates_native_exit_status() {
+fn launcher_rejects_an_incomplete_contract() {
     let unrelated = tempfile::tempdir().expect("temp repository");
     let fake = unrelated.path().join("seiri.cmd");
     fs::write(
@@ -79,12 +79,13 @@ fn launcher_propagates_native_exit_status() {
         .current_dir(unrelated.path())
         .output()
         .expect("native failure");
-    assert_eq!(output.status.code(), Some(17));
+    assert_eq!(output.status.code(), Some(5));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("schema_mismatch"));
 }
 
 #[cfg(not(windows))]
 #[test]
-fn launcher_propagates_native_exit_status() {
+fn launcher_rejects_an_incomplete_contract() {
     use std::os::unix::fs::PermissionsExt;
     let unrelated = tempfile::tempdir().expect("temp repository");
     let fake = unrelated.path().join("seiri");
@@ -98,5 +99,6 @@ fn launcher_propagates_native_exit_status() {
         .current_dir(unrelated.path())
         .output()
         .expect("native failure");
-    assert_eq!(output.status.code(), Some(17));
+    assert_eq!(output.status.code(), Some(5));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("schema_mismatch"));
 }

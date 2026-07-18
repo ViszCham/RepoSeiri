@@ -13,6 +13,7 @@ serde_json = "1"
 tempfile = "3"
 seiri-calibration = { path = "../crates/seiri-calibration" }
 seiri-core = { path = "../crates/seiri-core" }
+seiri-delta = { path = "../crates/seiri-delta" }
 seiri-git-local = { path = "../crates/seiri-git-local" }
 seiri-markdown = { path = "../crates/seiri-markdown" }
 seiri-patterns = { path = "../crates/seiri-patterns" }
@@ -57,5 +58,23 @@ doc = false
 [[bin]]
 name = "gitfile"
 path = "fuzz_targets/gitfile.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "executable_pack"
+path = "fuzz_targets/executable_pack.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "schema_decoder"
+path = "fuzz_targets/schema_decoder.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "audit_delta"
+path = "fuzz_targets/audit_delta.rs"
 test = false
 doc = false

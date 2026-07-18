@@ -1,4 +1,5 @@
-use crate::{bundle, repository_root};
+use crate::{bundle, calibration, repository_root, supervisor};
+use seiri_report::{EmpiricalCalibrationStatus, HoldoutCalibrationReport};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
@@ -6,8 +7,35 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::marker::PhantomData;
 use std::path::Path;
-use std::process::{Command, ExitCode};
-use std::time::Instant;
+use std::process::ExitCode;
+use std::time::Duration;
+
+const CHECK_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+const GIT_OUTPUT_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+const REQUIRED_IMPLEMENTATION_PATHS: &[&str] = &[
+    "crates/seiri-core/src/contracts.rs",
+    "crates/seiri-core/src/document_index.rs",
+    "crates/seiri-core/src/document_scan.rs",
+    "crates/seiri-core/src/evidence_kernel.rs",
+    "crates/seiri-core/src/pattern_extension.rs",
+    "crates/seiri-fs/src/walker.rs",
+    "crates/seiri-markdown/src/classifier.rs",
+    "crates/seiri-markdown/src/source.rs",
+    "crates/seiri-patterns/src/executable/evaluation.rs",
+    "crates/seiri-report/src/holdout.rs",
+    "crates/seiri-report/src/propositions.rs",
+    "xtask/src/bundle.rs",
+    "xtask/src/calibration.rs",
+    "xtask/src/completion.rs",
+    "xtask/src/supervisor.rs",
+    "schemas/seiri.completion.v3.json",
+    "schemas/seiri.calibration-corpus.v1.json",
+    "schemas/seiri.calibration-holdout.v1.json",
+    "fixtures/calibration-holdout-corpus.v1.json",
+    "tests/calibration_holdout.rs",
+    "tests/product_surface.rs",
+    "tests/r10_sip_protocol.rs",
+];
 
 const CHECKS: &[CheckSpec] = &[
     CheckSpec::cargo("format", &["fmt", "--all", "--", "--check"]),
@@ -47,6 +75,81 @@ const CHECKS: &[CheckSpec] = &[
     CheckSpec::cargo(
         "hostile_corpus",
         &["test", "--test", "hostile_input_corpus", "--locked"],
+    ),
+    CheckSpec::cargo(
+        "fuzz_targets_compile",
+        &[
+            "check",
+            "--manifest-path",
+            "fuzz/Cargo.toml",
+            "--bins",
+            "--locked",
+        ],
+    ),
+    CheckSpec::cargo_toolchain(
+        "fuzz_markdown_smoke",
+        "+nightly-2026-07-01",
+        &[
+            "--locked",
+            "fuzz",
+            "run",
+            "markdown",
+            "--",
+            "-runs=64",
+            "-max_len=65536",
+        ],
+    ),
+    CheckSpec::cargo_toolchain(
+        "fuzz_bounded_reader_smoke",
+        "+nightly-2026-07-01",
+        &[
+            "--locked",
+            "fuzz",
+            "run",
+            "calibration_jsonl",
+            "--",
+            "-runs=64",
+            "-max_len=65536",
+        ],
+    ),
+    CheckSpec::cargo_toolchain(
+        "fuzz_pack_compiler_smoke",
+        "+nightly-2026-07-01",
+        &[
+            "--locked",
+            "fuzz",
+            "run",
+            "executable_pack",
+            "--",
+            "-runs=64",
+            "-max_len=65536",
+        ],
+    ),
+    CheckSpec::cargo_toolchain(
+        "fuzz_schema_decoder_smoke",
+        "+nightly-2026-07-01",
+        &[
+            "--locked",
+            "fuzz",
+            "run",
+            "schema_decoder",
+            "--",
+            "-runs=64",
+            "-max_len=65536",
+        ],
+    ),
+    CheckSpec::cargo_toolchain(
+        "fuzz_delta_smoke",
+        "+nightly-2026-07-01",
+        &[
+            "--locked",
+            "fuzz",
+            "run",
+            "audit_delta",
+            "--",
+            "-runs=64",
+            "-max_len=65536",
+        ],
     ),
     CheckSpec::cargo(
         "plugin_smoke",
@@ -112,6 +215,7 @@ struct CheckSpec {
     program: &'static str,
     toolchain: Option<&'static str>,
     args: &'static [&'static str],
+    timeout_secs: u64,
 }
 
 impl CheckSpec {
@@ -121,6 +225,7 @@ impl CheckSpec {
             program: "cargo",
             toolchain: None,
             args,
+            timeout_secs: 15 * 60,
         }
     }
 
@@ -134,6 +239,7 @@ impl CheckSpec {
             program: "cargo",
             toolchain: Some(toolchain),
             args,
+            timeout_secs: 15 * 60,
         }
     }
 
@@ -147,6 +253,7 @@ impl CheckSpec {
             program,
             toolchain: None,
             args,
+            timeout_secs: 60,
         }
     }
 }
@@ -159,6 +266,9 @@ struct CompletionRecord {
     source: SourceBinding,
     checks: Vec<CheckRecord>,
     required_hosts: Vec<bundle::HostEvidenceRecord>,
+    calibration: Option<HoldoutCalibrationReport>,
+    claims: Vec<CompletionClaimRecord>,
+    evidence_complete: bool,
     skipped_checks: Vec<String>,
     boundary: &'static str,
 }
@@ -167,6 +277,7 @@ struct CompletionRecord {
 #[serde(rename_all = "snake_case")]
 enum CompletionState {
     ReadyForGit,
+    ImplementedWithBlockedEvidence,
     Incomplete,
 }
 
@@ -174,9 +285,36 @@ enum CompletionState {
 struct CheckRecord {
     name: &'static str,
     status: CheckStatus,
+    failure_class: Option<supervisor::ProcessFailureKind>,
     exit_code: Option<i32>,
     elapsed_ms: u128,
     command: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CompletionClaimRecord {
+    kind: CompletionClaimKind,
+    status: CompletionClaimStatus,
+    evidence: Vec<String>,
+    boundary: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CompletionClaimKind {
+    Implemented,
+    LocallyVerified,
+    HostVerified,
+    Calibrated,
+    ManualPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CompletionClaimStatus {
+    Satisfied,
+    Unsatisfied,
+    RequiresHumanDecision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -225,12 +363,11 @@ impl CompletionRun<Bound> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum CheckStatus {
     Passed,
     Failed,
-    CouldNotStart,
 }
 
 pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
@@ -239,28 +376,37 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let run = CompletionRun::<Unbound>::new(repository_root()?).bind()?;
     let root = &run.root;
-    let mut checks = CHECKS
-        .iter()
-        .map(|spec| run_check(root, *spec))
-        .collect::<Vec<_>>();
-    let required_hosts = bundle::validate_required_hosts(
-        optional_option(args, "--host-evidence").map(Path::new),
-        run.source(),
-    );
-    checks.push(CheckRecord {
-        name: "required_host_matrix",
-        status: if required_hosts
+    let (implemented, implementation_check) = implementation_surface(root);
+    let mut checks = vec![implementation_check];
+    checks.extend(
+        CHECKS
             .iter()
-            .all(|host| host.status == bundle::HostEvidenceStatus::Passed)
-        {
+            .map(|spec| run_check(root, *spec))
+            .collect::<Vec<_>>(),
+    );
+    let calibration_started = std::time::Instant::now();
+    let calibration = calibration::evaluate(root).ok();
+    checks.push(CheckRecord {
+        name: "holdout_report",
+        status: if calibration.is_some() {
             CheckStatus::Passed
         } else {
             CheckStatus::Failed
         },
+        failure_class: None,
         exit_code: None,
-        elapsed_ms: 0,
-        command: vec!["host-evidence".to_string()],
+        elapsed_ms: calibration_started.elapsed().as_millis(),
+        command: vec![
+            "xtask".to_string(),
+            "calibration-holdout".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ],
     });
+    let required_hosts = bundle::validate_required_hosts(
+        optional_option(args, "--host-evidence").map(Path::new),
+        run.source(),
+    );
     checks.push(CheckRecord {
         name: "source_unchanged",
         status: if run.unchanged()? {
@@ -268,18 +414,30 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         } else {
             CheckStatus::Failed
         },
+        failure_class: None,
         exit_code: None,
         elapsed_ms: 0,
         command: vec!["source-binding-pre-post".to_string()],
     });
-    let state = if checks
+    let locally_verified = checks
         .iter()
-        .all(|check| matches!(check.status, CheckStatus::Passed))
-    {
-        CompletionState::ReadyForGit
-    } else {
-        CompletionState::Incomplete
-    };
+        .all(|check| check.status == CheckStatus::Passed);
+    let host_verified = required_hosts
+        .iter()
+        .all(|host| host.status == bundle::HostEvidenceStatus::Passed);
+    let calibrated = calibration
+        .as_ref()
+        .is_some_and(|report| report.status == EmpiricalCalibrationStatus::Calibrated);
+    let evidence_complete =
+        derive_evidence_complete(implemented, locally_verified, host_verified, calibrated);
+    let state = derive_state(implemented, &checks);
+    let claims = completion_claims(
+        implemented,
+        locally_verified,
+        host_verified,
+        calibrated,
+        REQUIRED_IMPLEMENTATION_PATHS.len(),
+    );
     let record = CompletionRecord {
         schema_version: seiri_core::COMPLETION_SCHEMA_VERSION,
         state,
@@ -287,6 +445,9 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         source: run.source().clone(),
         checks,
         required_hosts,
+        calibration,
+        claims,
+        evidence_complete,
         skipped_checks: Vec::new(),
         boundary: "completion reports one verified worktree state; it does not authorize commit, push, merge, release, plugin installation, restart, or visibility changes",
     };
@@ -294,48 +455,206 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         "{}",
         serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?
     );
-    Ok(if state == CompletionState::ReadyForGit {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+    Ok(match state {
+        CompletionState::ReadyForGit => ExitCode::SUCCESS,
+        CompletionState::ImplementedWithBlockedEvidence | CompletionState::Incomplete => {
+            ExitCode::FAILURE
+        }
     })
 }
 
-fn run_check(root: &Path, spec: CheckSpec) -> CheckRecord {
-    let started = Instant::now();
-    let mut command = Command::new(spec.program);
-    if let Some(toolchain) = spec.toolchain {
-        command.arg(toolchain);
-    }
-    match command.args(spec.args).current_dir(root).output() {
-        Ok(output) => CheckRecord {
-            name: spec.name,
-            status: if output.status.success()
-                && validate_captured_output(spec.name, &output.stdout)
-            {
+fn implementation_surface(root: &Path) -> (bool, CheckRecord) {
+    let present = REQUIRED_IMPLEMENTATION_PATHS
+        .iter()
+        .filter(|relative| root.join(relative).is_file())
+        .count();
+    let implemented = present == REQUIRED_IMPLEMENTATION_PATHS.len();
+    (
+        implemented,
+        CheckRecord {
+            name: "implementation_surface",
+            status: if implemented {
                 CheckStatus::Passed
             } else {
                 CheckStatus::Failed
             },
-            exit_code: output.status.code(),
-            elapsed_ms: started.elapsed().as_millis(),
-            command: rendered_command(spec),
-        },
-        Err(_) => CheckRecord {
-            name: spec.name,
-            status: CheckStatus::CouldNotStart,
+            failure_class: None,
             exit_code: None,
-            elapsed_ms: started.elapsed().as_millis(),
-            command: rendered_command(spec),
+            elapsed_ms: 0,
+            command: vec![format!(
+                "required-implementation-surface:{present}/{}",
+                REQUIRED_IMPLEMENTATION_PATHS.len()
+            )],
+        },
+    )
+}
+
+fn derive_state(implemented: bool, checks: &[CheckRecord]) -> CompletionState {
+    if !implemented {
+        return CompletionState::Incomplete;
+    }
+    if checks
+        .iter()
+        .all(|check| check.status == CheckStatus::Passed)
+    {
+        return CompletionState::ReadyForGit;
+    }
+    if checks
+        .iter()
+        .filter(|check| check.status == CheckStatus::Failed)
+        .all(|check| check.failure_class.is_some_and(is_environment_blocked_kind))
+    {
+        CompletionState::ImplementedWithBlockedEvidence
+    } else {
+        CompletionState::Incomplete
+    }
+}
+
+const fn is_environment_blocked_kind(kind: supervisor::ProcessFailureKind) -> bool {
+    matches!(
+        kind,
+        supervisor::ProcessFailureKind::MissingExecutable
+            | supervisor::ProcessFailureKind::CouldNotStart
+            | supervisor::ProcessFailureKind::EnvironmentBlocked
+    )
+}
+
+const fn derive_evidence_complete(
+    implemented: bool,
+    locally_verified: bool,
+    host_verified: bool,
+    calibrated: bool,
+) -> bool {
+    implemented && locally_verified && host_verified && calibrated
+}
+
+fn completion_claims(
+    implemented: bool,
+    locally_verified: bool,
+    host_verified: bool,
+    calibrated: bool,
+    required_paths: usize,
+) -> Vec<CompletionClaimRecord> {
+    vec![
+        CompletionClaimRecord {
+            kind: CompletionClaimKind::Implemented,
+            status: binary_claim_status(implemented),
+            evidence: vec![format!(
+                "C0-C8 required implementation surfaces: {required_paths}"
+            )],
+            boundary: "File presence is implementation-surface evidence; verification is reported separately.",
+        },
+        CompletionClaimRecord {
+            kind: CompletionClaimKind::LocallyVerified,
+            status: binary_claim_status(locally_verified),
+            evidence: vec!["required local checks bound to this source".to_string()],
+            boundary: "A blocked or failed local check is never promoted to pass.",
+        },
+        CompletionClaimRecord {
+            kind: CompletionClaimKind::HostVerified,
+            status: binary_claim_status(host_verified),
+            evidence: vec![
+                "source-bound Windows and Linux bundle receipts are both required".to_string(),
+            ],
+            boundary: "Host receipts verify the bounded command set, not general platform correctness.",
+        },
+        CompletionClaimRecord {
+            kind: CompletionClaimKind::Calibrated,
+            status: binary_claim_status(calibrated),
+            evidence: vec![
+                "each task requires an independent holdout sample at or above the declared minimum"
+                    .to_string(),
+            ],
+            boundary: "Low-N synthetic fixture results remain insufficient_sample and are not general performance evidence.",
+        },
+        CompletionClaimRecord {
+            kind: CompletionClaimKind::ManualPolicy,
+            status: CompletionClaimStatus::RequiresHumanDecision,
+            evidence: vec![
+                "commit, push, merge, release, publication, visibility, installation, and restart"
+                    .to_string(),
+            ],
+            boundary: "Completion records do not grant operational authority.",
+        },
+    ]
+}
+
+const fn binary_claim_status(satisfied: bool) -> CompletionClaimStatus {
+    if satisfied {
+        CompletionClaimStatus::Satisfied
+    } else {
+        CompletionClaimStatus::Unsatisfied
+    }
+}
+
+fn run_check(root: &Path, spec: CheckSpec) -> CheckRecord {
+    let mut args = Vec::<OsString>::new();
+    if let Some(toolchain) = spec.toolchain {
+        args.push(toolchain.into());
+    }
+    args.extend(spec.args.iter().map(OsString::from));
+    let process = supervisor::ProcessSpec::new(spec.program)
+        .args(&args)
+        .current_dir(root)
+        .timeout(Duration::from_secs(spec.timeout_secs))
+        .output_limits(CHECK_OUTPUT_LIMIT_BYTES, CHECK_OUTPUT_LIMIT_BYTES);
+    match supervisor::run(&process) {
+        Ok(output) => CheckRecord {
+            name: spec.name,
+            status: if validate_captured_output(spec.name, &output.stdout) {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            },
+            failure_class: None,
+            exit_code: output.status.code(),
+            elapsed_ms: output.elapsed.as_millis(),
+            command: process.rendered_command(),
+        },
+        Err(failure) => CheckRecord {
+            name: spec.name,
+            status: CheckStatus::Failed,
+            failure_class: Some(classify_check_failure(spec, &failure)),
+            exit_code: failure.exit_code,
+            elapsed_ms: failure.elapsed.as_millis(),
+            command: process.rendered_command(),
         },
     }
 }
 
-fn rendered_command(spec: CheckSpec) -> Vec<String> {
-    std::iter::once(spec.program.to_string())
-        .chain(spec.toolchain.map(str::to_string))
-        .chain(spec.args.iter().map(|argument| (*argument).to_string()))
-        .collect()
+fn classify_check_failure(
+    spec: CheckSpec,
+    failure: &supervisor::ProcessFailure,
+) -> supervisor::ProcessFailureKind {
+    if failure.kind != supervisor::ProcessFailureKind::NonZeroExit {
+        return failure.kind;
+    }
+    let mut message = String::from_utf8_lossy(&failure.stdout).to_lowercase();
+    message.push_str(&String::from_utf8_lossy(&failure.stderr).to_lowercase());
+    let application_control = [
+        "os error 4551",
+        "application control",
+        "app control",
+        "blocked by group policy",
+        "アプリケーション制御",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker));
+    let missing_toolchain = spec.toolchain.is_some()
+        && message.contains("toolchain")
+        && (message.contains("is not installed")
+            || message.contains("not installed")
+            || message.contains("not found"));
+    let missing_cargo_fuzz = spec.name.starts_with("fuzz_")
+        && (message.contains("no such command: `fuzz`")
+            || message.contains("no such command: fuzz")
+            || (message.contains("cargo-fuzz")
+                && (message.contains("not installed") || message.contains("not found"))));
+    if application_control || missing_toolchain || missing_cargo_fuzz {
+        supervisor::ProcessFailureKind::EnvironmentBlocked
+    } else {
+        failure.kind
+    }
 }
 
 pub(crate) fn bind_source(root: &Path) -> Result<SourceBinding, String> {
@@ -461,15 +780,19 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn command_bytes(root: &Path, program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new(program)
+    let process = supervisor::ProcessSpec::new(program)
         .args(args)
         .current_dir(root)
-        .output()
-        .map_err(|error| format!("failed to start {program}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("{program} source-binding command failed"));
-    }
-    Ok(output.stdout)
+        .timeout(Duration::from_secs(30))
+        .output_limits(GIT_OUTPUT_LIMIT_BYTES, CHECK_OUTPUT_LIMIT_BYTES);
+    supervisor::run(&process)
+        .map(|output| output.stdout)
+        .map_err(|failure| {
+            format!(
+                "{program} source-binding command failed: {:?}",
+                failure.kind
+            )
+        })
 }
 
 fn digest_field(hasher: &mut Sha256, bytes: &[u8]) {
@@ -495,6 +818,13 @@ fn validate_captured_output(name: &str, stdout: &[u8]) -> bool {
             value["schema_version"] == seiri_core::CODEX_SCHEMA_VERSION
                 && value["query"]["kind"] == "summary"
                 && value["query"]["data"]["findings"] == 0
+                && value["query"]["data"]["documents"]["primary_skipped_document_budget"] == 0
+                && value["query"]["data"]["documents"]["primary_skipped_byte_budget"] == 0
+                && value["query"]["data"]["coverage"]["partial_scopes"] == 0
+                && value["query"]["data"]["coverage"]["markdown_documents"]["kind"] == "complete"
+                && value["query"]["data"]["coverage"]["conflict_coverage"]["kind"] == "complete"
+                && value["query"]["data"]["observations"]["unacknowledged_unknown"] == 0
+                && value["query"]["data"]["observations"]["conflict"] == 0
         }
         "self_audit_linter" => {
             value["schema_version"] == seiri_core::CODEX_SCHEMA_VERSION
@@ -518,6 +848,20 @@ fn optional_option<'a>(args: &'a [OsString], name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
+    fn synthetic_check(
+        status: CheckStatus,
+        failure_class: Option<supervisor::ProcessFailureKind>,
+    ) -> CheckRecord {
+        CheckRecord {
+            name: "synthetic",
+            status,
+            failure_class,
+            exit_code: None,
+            elapsed_ms: 0,
+            command: vec!["synthetic".to_string()],
+        }
+    }
+
     #[test]
     fn completion_registry_is_unique_and_nonempty() {
         let mut names = CHECKS.iter().map(|check| check.name).collect::<Vec<_>>();
@@ -537,6 +881,35 @@ mod tests {
         assert!(!validate_captured_output("self_audit_summary", b"{}"));
         assert!(!validate_captured_output("self_audit_linter", b"not-json"));
         assert!(validate_captured_output("workspace_tests", b"not-json"));
+        let incomplete = serde_json::json!({
+            "schema_version": seiri_core::CODEX_SCHEMA_VERSION,
+            "query": {
+                "kind": "summary",
+                "data": {
+                    "findings": 0,
+                    "documents": {
+                        "primary_skipped_document_budget": 0,
+                        "primary_skipped_byte_budget": 0
+                    },
+                    "coverage": {
+                        "partial_scopes": 0,
+                        "markdown_documents": { "kind": "complete" },
+                        "conflict_coverage": { "kind": "complete" }
+                    },
+                    "observations": {
+                        "unknown": 1,
+                        "unacknowledged_unknown": 1,
+                        "conflict": 0
+                    }
+                }
+            }
+        });
+        assert!(!validate_captured_output(
+            "self_audit_summary",
+            serde_json::to_string(&incomplete)
+                .expect("summary fixture")
+                .as_bytes()
+        ));
     }
 
     #[test]
@@ -548,5 +921,79 @@ mod tests {
         assert!(first.source_digest.starts_with("sha256:"));
         assert_eq!(first.source_digest.len(), 71);
         assert!(first.cargo_lock_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn completion_state_separates_local_pass_blocked_environment_and_failure() {
+        let passed = synthetic_check(CheckStatus::Passed, None);
+        assert_eq!(derive_state(true, &[passed]), CompletionState::ReadyForGit);
+
+        let blocked = synthetic_check(
+            CheckStatus::Failed,
+            Some(supervisor::ProcessFailureKind::EnvironmentBlocked),
+        );
+        assert_eq!(
+            derive_state(true, &[blocked]),
+            CompletionState::ImplementedWithBlockedEvidence
+        );
+
+        let failed = synthetic_check(
+            CheckStatus::Failed,
+            Some(supervisor::ProcessFailureKind::NonZeroExit),
+        );
+        assert_eq!(derive_state(true, &[failed]), CompletionState::Incomplete);
+        assert_eq!(
+            derive_state(false, &[synthetic_check(CheckStatus::Passed, None)]),
+            CompletionState::Incomplete
+        );
+    }
+
+    #[test]
+    fn evidence_complete_requires_local_host_and_calibration_evidence() {
+        assert!(!derive_evidence_complete(true, true, false, true));
+        assert!(!derive_evidence_complete(true, true, true, false));
+        assert!(derive_evidence_complete(true, true, true, true));
+        let claims = completion_claims(true, true, false, false, 22);
+        assert_eq!(claims.len(), 5);
+        assert_eq!(
+            claims
+                .iter()
+                .find(|claim| claim.kind == CompletionClaimKind::ManualPolicy)
+                .expect("manual policy claim")
+                .status,
+            CompletionClaimStatus::RequiresHumanDecision
+        );
+    }
+
+    #[test]
+    fn environment_markers_are_narrowly_reclassified() {
+        let spec = CheckSpec::cargo_toolchain(
+            "fuzz_schema_decoder_smoke",
+            "+nightly-2026-07-01",
+            &["--locked", "fuzz"],
+        );
+        let missing = supervisor::ProcessFailure {
+            kind: supervisor::ProcessFailureKind::NonZeroExit,
+            exit_code: Some(1),
+            stdout: Vec::new(),
+            stderr: b"toolchain 'nightly-2026-07-01' is not installed".to_vec(),
+            elapsed: Duration::ZERO,
+        };
+        assert_eq!(
+            classify_check_failure(spec, &missing),
+            supervisor::ProcessFailureKind::EnvironmentBlocked
+        );
+
+        let crash = supervisor::ProcessFailure {
+            kind: supervisor::ProcessFailureKind::NonZeroExit,
+            exit_code: Some(1),
+            stdout: Vec::new(),
+            stderr: b"fuzz target found a reproducible assertion failure".to_vec(),
+            elapsed: Duration::ZERO,
+        };
+        assert_eq!(
+            classify_check_failure(spec, &crash),
+            supervisor::ProcessFailureKind::NonZeroExit
+        );
     }
 }

@@ -19,22 +19,25 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUST_TOOLCHAIN: 1.96.0
+  FUZZ_TOOLCHAIN: nightly-2026-07-01
+  CARGO_FUZZ_VERSION: 0.13.2
 
 jobs:
   rust:
     name: Rust workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
 
       - name: Select Rust toolchain
-        run: rustup default stable
+        run: rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -68,9 +71,12 @@ jobs:
       - name: Build Codex linter context
         run: cargo run --locked --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown | tee target/reposeiri-self-audit/codex-linter.md
 
+      - name: Build public synthetic holdout report
+        run: cargo run --locked --quiet -p xtask -- calibration-holdout --format json | tee target/reposeiri-self-audit/calibration-holdout.json
+
       - name: Upload RepoSeiri self-audit artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: reposeiri-self-audit
           path: target/reposeiri-self-audit/*
@@ -78,18 +84,18 @@ jobs:
 
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
 
       - name: Select Rust toolchain
-        run: rustup default stable
+        run: rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked --version 0.22.2
@@ -103,10 +109,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             binary: target/release/seiri
-          - os: windows-latest
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: target/release/seiri.exe
     runs-on: ${{ matrix.os }}
@@ -114,13 +120,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
 
       - name: Select Rust toolchain
-        run: rustup default stable
+        run: rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Build standalone binary
         run: cargo build --locked --release -p seiri-cli
@@ -137,7 +143,7 @@ jobs:
           mkdir -p target/unrelated-repository
           printf '# Unrelated\n' > target/unrelated-repository/README.md
           cd target/unrelated-repository
-          sh ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.sh --path . --query summary --format json
+          sh ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.sh --path . --scope subtree --query summary --format json
 
       - name: Smoke bundled launcher on Windows
         if: runner.os == 'Windows'
@@ -146,37 +152,68 @@ jobs:
           New-Item -ItemType Directory -Force target/unrelated-repository | Out-Null
           Set-Content target/unrelated-repository/README.md '# Unrelated'
           Push-Location target/unrelated-repository
-          & ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.ps1 -Path . -Query summary -Format json
+          & ../reposeiri-bundle-${{ matrix.target }}/reposeiri/scripts/reposeiri-codex.ps1 -Path . -Scope subtree -Query summary -Format json
           Pop-Location
 
       - name: Upload plugin bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: reposeiri-plugin-${{ matrix.target }}
           path: target/reposeiri-bundle-${{ matrix.target }}/reposeiri
           if-no-files-found: error
+
+  fuzz-smoke:
+    name: Bounded fuzz smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install pinned nightly
+        run: rustup toolchain install ${{ env.FUZZ_TOOLCHAIN }} --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version ${{ env.CARGO_FUZZ_VERSION }}
+
+      - name: Compile fuzz targets
+        run: cargo +${{ env.FUZZ_TOOLCHAIN }} check --manifest-path fuzz/Cargo.toml --bins --locked
+
+      - name: Run bounded fuzz smoke
+        run: |
+          cargo +${{ env.FUZZ_TOOLCHAIN }} --locked fuzz run markdown -- -runs=64 -max_len=65536
+          cargo +${{ env.FUZZ_TOOLCHAIN }} --locked fuzz run calibration_jsonl -- -runs=64 -max_len=65536
+          cargo +${{ env.FUZZ_TOOLCHAIN }} --locked fuzz run executable_pack -- -runs=64 -max_len=65536
+          cargo +${{ env.FUZZ_TOOLCHAIN }} --locked fuzz run schema_decoder -- -runs=64 -max_len=65536
+          cargo +${{ env.FUZZ_TOOLCHAIN }} --locked fuzz run audit_delta -- -runs=64 -max_len=65536
 
   completion:
     name: Completion gate
     needs:
       - rust
       - dependency-audit
+      - fuzz-smoke
       - plugin-bundle
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchains
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
           rustup toolchain install 1.88.0 --profile minimal
-          rustup default stable
+          rustup toolchain install ${{ env.FUZZ_TOOLCHAIN }} --profile minimal
+          rustup default ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version ${{ env.CARGO_FUZZ_VERSION }}
 
       - name: Download host evidence
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: reposeiri-plugin-*
           path: target/host-evidence
@@ -186,7 +223,7 @@ jobs:
 
       - name: Upload completion record
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: reposeiri-completion
           path: target/completion.json
