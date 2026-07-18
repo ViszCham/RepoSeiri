@@ -313,8 +313,10 @@ fn process_failure(failure: supervisor::ProcessFailure) -> String {
         structured_error_code(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
     let shell_error_id =
         powershell_error_id(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
+    let shell_command =
+        powershell_command_class(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
     format!(
-        "bundle smoke process failed: {:?}; error_code={error_code}; shell_error_id={shell_error_id}; captured stdout={} stderr={} bytes",
+        "bundle smoke process failed: {:?}; error_code={error_code}; shell_error_id={shell_error_id}; shell_command={shell_command}; captured stdout={} stderr={} bytes",
         failure.kind,
         failure.stdout.len(),
         failure.stderr.len()
@@ -337,6 +339,18 @@ fn powershell_error_id(stderr: &[u8]) -> Option<String> {
         .1
         .trim();
     bounded_diagnostic_token(line, 160)
+}
+
+fn powershell_command_class(stderr: &[u8]) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let command = stderr.lines().next()?.split_once(" : ")?.0.trim();
+    if command
+        .bytes()
+        .any(|byte| matches!(byte, b'\\' | b'/' | b':'))
+    {
+        return Some("path_command".to_string());
+    }
+    bounded_diagnostic_token(command, 64)
 }
 
 fn bounded_diagnostic_token(value: &str, max_len: usize) -> Option<String> {
@@ -621,6 +635,20 @@ mod tests {
         );
         assert!(
             powershell_error_id(b"FullyQualifiedErrorId : C:\\Users\\name\\private\r\n").is_none()
+        );
+        assert_eq!(
+            powershell_command_class(
+                b"Get-FileHash : The term 'Get-FileHash' is not recognized\r\n"
+            )
+            .as_deref(),
+            Some("Get-FileHash")
+        );
+        assert_eq!(
+            powershell_command_class(
+                b"C:\\Users\\name\\private\\seiri.exe : The term was not recognized\r\n"
+            )
+            .as_deref(),
+            Some("path_command")
         );
     }
 
