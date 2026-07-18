@@ -1,34 +1,32 @@
+use seiri_digest::{Digest32, StableHasher};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 
 const UTF8_BOM: &[u8; 3] = b"\xef\xbb\xbf";
-const FNV1A64_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV1A64_PRIME: u64 = 0x100000001b3;
+const PATCH_BASE_DIGEST_DOMAIN: &[u8] = b"seiri.patch-base.content.v2";
+const LEGACY_PATCH_BASE_DIGEST_DOMAIN: &[u8] = b"seiri.patch-base.legacy-fnv1a64.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PatchBaseDigest(u64);
+pub struct PatchBaseDigest(Digest32);
 
 impl PatchBaseDigest {
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut value = FNV1A64_OFFSET;
-        for byte in bytes {
-            value ^= u64::from(*byte);
-            value = value.wrapping_mul(FNV1A64_PRIME);
-        }
-        Self(value)
+        let mut hasher = StableHasher::new(PATCH_BASE_DIGEST_DOMAIN, 1);
+        hasher.field(1, bytes);
+        Self(hasher.finish())
     }
 
     #[must_use]
-    pub const fn as_u64(self) -> u64 {
+    pub const fn digest(self) -> Digest32 {
         self.0
     }
 }
 
 impl Display for PatchBaseDigest {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "fnv1a64:{:016x}", self.0)
+        Display::fmt(&self.0, formatter)
     }
 }
 
@@ -47,22 +45,24 @@ impl<'de> Deserialize<'de> for PatchBaseDigest {
         D: Deserializer<'de>,
     {
         let wire = String::deserialize(deserializer)?;
-        let hex = wire
+        if wire.starts_with("sha256:") {
+            let digest = wire.parse::<Digest32>().map_err(D::Error::custom)?;
+            return Ok(Self(digest));
+        }
+        let legacy = wire
             .strip_prefix("fnv1a64:")
             .filter(|hex| hex.len() == 16)
+            .filter(|hex| {
+                hex.bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
             .ok_or_else(|| {
-                D::Error::custom("patch base digest must use fnv1a64 plus 16 lowercase hex digits")
+                D::Error::custom("patch base digest must use sha256 plus 64 lowercase hex digits")
             })?;
-        if !hex
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(D::Error::custom(
-                "patch base digest contains invalid hex digits",
-            ));
-        }
-        let value = u64::from_str_radix(hex, 16).map_err(D::Error::custom)?;
-        Ok(Self(value))
+        let legacy = u64::from_str_radix(legacy, 16).map_err(D::Error::custom)?;
+        let mut hasher = StableHasher::new(LEGACY_PATCH_BASE_DIGEST_DOMAIN, 1);
+        hasher.u64(1, legacy);
+        Ok(Self(hasher.finish()))
     }
 }
 

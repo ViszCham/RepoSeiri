@@ -196,6 +196,43 @@ fn semantic_dead_zones_do_not_emit_headings_links_or_routes() {
 }
 
 #[test]
+fn route_classifier_uses_boundaries_bilingual_aliases_and_multi_labels() {
+    assert_eq!(
+        seiri_markdown::classify_route("CI", None),
+        RouteKind::Automation
+    );
+    assert_eq!(
+        seiri_markdown::classify_route("specific behavior", None),
+        RouteKind::Unknown
+    );
+    assert_eq!(
+        seiri_markdown::classify_route("セキュリティ", None),
+        RouteKind::Security
+    );
+    assert_eq!(
+        seiri_markdown::classify_route("サポート対象バージョン", None),
+        RouteKind::Lifecycle
+    );
+    assert_eq!(
+        seiri_markdown::classify_route("Guides:", None),
+        RouteKind::Docs
+    );
+
+    let routes = seiri_markdown::classify_routes("Security / Support", None);
+    assert!(routes.contains(&RouteKind::Security));
+    assert!(routes.contains(&RouteKind::Support));
+
+    let summary = seiri_markdown::parse_readme("README.md", "# セキュリティ / Support\n");
+    let heading_routes = summary
+        .route_candidates
+        .iter()
+        .map(|candidate| candidate.route)
+        .collect::<BTreeSet<_>>();
+    assert!(heading_routes.contains(&RouteKind::Security));
+    assert!(heading_routes.contains(&RouteKind::Support));
+}
+
+#[test]
 fn visible_reference_and_html_anchor_remain_semantic() {
     let source = "# Routes\n[Documentation][docs]\n<a href=\"SECURITY.md\">Security</a>\n\n[docs]: docs/index.md\n";
     let summary = seiri_markdown::parse_readme("README.md", source);

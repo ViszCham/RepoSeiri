@@ -96,6 +96,26 @@ fn walker_limits_return_typed_partial_records() {
         .records()
         .iter()
         .all(|record| record.path != "nested/two.txt"));
+
+    let directory_partial = seiri_fs::walk_repository_with_options(
+        repo.path(),
+        &ScanOptions {
+            max_directory_entries: 2,
+            ..ScanOptions::default()
+        },
+    )
+    .expect("directory limit returns a partial walk");
+    assert!(matches!(
+        directory_partial.summary().completion,
+        WalkCompletion::Truncated(ref truncation)
+            if matches!(truncation.kind, WalkLimitKind::DirectoryEntries)
+                && truncation.path == "."
+                && truncation.limit == 2
+    ));
+    assert!(
+        directory_partial.records().is_empty(),
+        "partial contents of an oversized directory must not become evidence"
+    );
 }
 
 #[test]
@@ -184,6 +204,32 @@ fn document_limits_and_invalid_utf8_are_typed_failures() {
         utf8_error,
         MarkdownError::InvalidUtf8 { valid_up_to: 0, .. }
     ));
+
+    let bounded_repo = TempRepo::new("bounded-document-session");
+    bounded_repo.write(
+        "README.md",
+        "# This source is larger than the configured cap\n",
+    );
+    let fs_scan = seiri_fs::scan_repository(bounded_repo.path()).expect("scan bounded repo");
+    let session = seiri_markdown::scan_document_source_session_with_options_and_scope(
+        bounded_repo.path(),
+        &fs_scan.files,
+        true,
+        &seiri_markdown::DocumentIndexOptions {
+            document: DocumentScanOptions {
+                max_source_bytes: 8,
+                ..DocumentScanOptions::default()
+            },
+            ..seiri_markdown::DocumentIndexOptions::default()
+        },
+        None,
+    )
+    .expect("oversized source produces a typed index state");
+    assert!(session.sources().is_empty());
+    assert_eq!(
+        session.index().entries()[0].status,
+        seiri_core::DocumentScanStatus::SkippedByteBudget
+    );
 }
 
 #[test]
@@ -229,7 +275,12 @@ fn audit_uses_document_events_as_canonical_evidence_input() {
 
     assert_eq!(
         document.events().len(),
-        summary.headings.len()
+        document
+            .events()
+            .iter()
+            .filter(|event| matches!(event, seiri_core::DocumentEvent::VisibleProse(_)))
+            .count()
+            + summary.headings.len()
             + summary.links.len()
             + summary.badges.len()
             + summary.route_candidates.len()
@@ -270,6 +321,12 @@ fn event_matches_fact(event: &DocumentEvent, atom: EvidenceAtom) -> bool {
     matches!(
         (event, atom),
         (
+            DocumentEvent::VisibleProse(_),
+            EvidenceAtom::Markdown {
+                event: MarkdownEvidenceKind::VisibleProse,
+                ..
+            }
+        ) | (
             DocumentEvent::Heading(_),
             EvidenceAtom::Markdown {
                 event: MarkdownEvidenceKind::Heading,

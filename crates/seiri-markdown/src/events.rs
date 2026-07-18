@@ -1,12 +1,12 @@
 use crate::{
-    classify_route, context::mask_hidden_contexts, looks_like_badge, DocumentScanOptions,
-    MarkdownError,
+    classify_route, classify_routes, context::mask_hidden_contexts, looks_like_badge,
+    DocumentScanOptions, MarkdownError,
 };
 use pulldown_cmark::{Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use seiri_core::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan, MarkdownBadge,
-    MarkdownHeading, MarkdownLink, MarkdownLinkKind, RouteCandidate, RouteKind, RouteSource,
-    SourceSpan, TextDocumentBase,
+    MarkdownHeading, MarkdownLink, MarkdownLinkKind, MarkdownProse, RouteCandidate, RouteKind,
+    RouteSource, SourceSpan, TextDocumentBase,
 };
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -73,6 +73,7 @@ fn semantic_events(
     let mut output = Vec::new();
     let mut heading = None::<OpenHeading>;
     let mut links = Vec::<OpenLink>::new();
+    let mut image_depth = 0usize;
 
     for (event, range) in parser {
         match event {
@@ -93,14 +94,13 @@ fn semantic_events(
                         span: Some(lines.span(open.start..end)),
                     };
                     if !value.text.is_empty() {
-                        let route = classify_route(&value.text, None);
                         push_event(
                             path,
                             options,
                             &mut output,
                             DocumentEvent::Heading(value.clone()),
                         )?;
-                        if route != RouteKind::Unknown {
+                        for route in classify_routes(&value.text, None) {
                             push_event(
                                 path,
                                 options,
@@ -108,7 +108,7 @@ fn semantic_events(
                                 DocumentEvent::RouteCandidate(RouteCandidate {
                                     route,
                                     source: RouteSource::Heading,
-                                    text: value.text,
+                                    text: value.text.clone(),
                                     target: None,
                                     line: value.line,
                                     span: value.span,
@@ -132,12 +132,15 @@ fn semantic_events(
                 link_type,
                 dest_url,
                 ..
-            }) => links.push(OpenLink::new(
-                range.start,
-                dest_url.into_string(),
-                markdown_link_kind(link_type, true),
-                true,
-            )),
+            }) => {
+                image_depth = image_depth.saturating_add(1);
+                links.push(OpenLink::new(
+                    range.start,
+                    dest_url.into_string(),
+                    markdown_link_kind(link_type, true),
+                    true,
+                ));
+            }
             Event::End(TagEnd::Link) => {
                 if let Some(open) = take_open_link(&mut links, false) {
                     emit_open_link(path, options, &mut output, open, range.end, lines)?;
@@ -147,6 +150,7 @@ fn semantic_events(
                 if let Some(open) = take_open_link(&mut links, true) {
                     emit_open_link(path, options, &mut output, open, range.end, lines)?;
                 }
+                image_depth = image_depth.saturating_sub(1);
             }
             Event::Text(value) => {
                 if let Some(open) = heading.as_mut() {
@@ -154,6 +158,19 @@ fn semantic_events(
                 }
                 for open in &mut links {
                     open.text.push_str(&value);
+                }
+                let prose = normalized_visible_text(&value);
+                if image_depth == 0 && !prose.is_empty() {
+                    push_event(
+                        path,
+                        options,
+                        &mut output,
+                        DocumentEvent::VisibleProse(MarkdownProse {
+                            text: prose,
+                            line: lines.line_for(range.start),
+                            span: lines.span(range),
+                        }),
+                    )?;
                 }
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -293,23 +310,22 @@ fn emit_link_route(
     events: &mut Vec<DocumentEvent>,
     link: &MarkdownLink,
 ) -> Result<(), MarkdownError> {
-    let route = classify_route(&link.text, Some(&link.target));
-    if route == RouteKind::Unknown {
-        return Ok(());
+    for route in classify_routes(&link.text, Some(&link.target)) {
+        push_event(
+            path,
+            options,
+            events,
+            DocumentEvent::RouteCandidate(RouteCandidate {
+                route,
+                source: RouteSource::Link,
+                text: link.text.clone(),
+                target: Some(link.target.clone()),
+                line: link.line,
+                span: link.span,
+            }),
+        )?;
     }
-    push_event(
-        path,
-        options,
-        events,
-        DocumentEvent::RouteCandidate(RouteCandidate {
-            route,
-            source: RouteSource::Link,
-            text: link.text.clone(),
-            target: Some(link.target.clone()),
-            line: link.line,
-            span: link.span,
-        }),
-    )
+    Ok(())
 }
 
 fn push_event(

@@ -186,6 +186,11 @@ pub struct DocumentSelectionSummary {
     pub skipped_document_budget: usize,
     pub skipped_byte_budget: usize,
     pub selected_source_bytes: u64,
+    pub primary_candidates: usize,
+    pub primary_selected: usize,
+    pub primary_skipped_document_budget: usize,
+    pub primary_skipped_byte_budget: usize,
+    pub primary_selected_source_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +256,43 @@ impl DocumentIndex {
                 .count(),
             selected_source_bytes: entries
                 .iter()
+                .filter(|entry| {
+                    !matches!(
+                        entry.status,
+                        DocumentScanStatus::SkippedDocumentBudget
+                            | DocumentScanStatus::SkippedByteBudget
+                    )
+                })
+                .map(|entry| entry.declared_bytes)
+                .sum(),
+            primary_candidates: entries
+                .iter()
+                .filter(|entry| entry.classification.is_primary_repository_content())
+                .count(),
+            primary_selected: entries
+                .iter()
+                .filter(|entry| entry.classification.is_primary_repository_content())
+                .filter(|entry| {
+                    !matches!(
+                        entry.status,
+                        DocumentScanStatus::SkippedDocumentBudget
+                            | DocumentScanStatus::SkippedByteBudget
+                    )
+                })
+                .count(),
+            primary_skipped_document_budget: entries
+                .iter()
+                .filter(|entry| entry.classification.is_primary_repository_content())
+                .filter(|entry| entry.status == DocumentScanStatus::SkippedDocumentBudget)
+                .count(),
+            primary_skipped_byte_budget: entries
+                .iter()
+                .filter(|entry| entry.classification.is_primary_repository_content())
+                .filter(|entry| entry.status == DocumentScanStatus::SkippedByteBudget)
+                .count(),
+            primary_selected_source_bytes: entries
+                .iter()
+                .filter(|entry| entry.classification.is_primary_repository_content())
                 .filter(|entry| {
                     !matches!(
                         entry.status,

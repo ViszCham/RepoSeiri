@@ -112,6 +112,38 @@ fn scope_class_separates_supporting_documents_from_repository_content() {
 }
 
 #[test]
+fn skipped_fixture_policy_does_not_reduce_primary_role_coverage() {
+    let repo = TempRepo::new("fixture-role-coverage");
+    repo.write("README.md", "# Tool\n");
+    repo.write("SECURITY.md", "# Security\n");
+    repo.write("fixtures/large/SECURITY.md", &"x".repeat(4096));
+
+    let fs_scan = seiri_fs::scan_repository(repo.path()).expect("filesystem scan");
+    let index = seiri_markdown::scan_document_index_with_options(
+        repo.path(),
+        &fs_scan.files,
+        true,
+        &DocumentIndexOptions {
+            max_total_source_bytes: 64,
+            ..DocumentIndexOptions::default()
+        },
+    )
+    .expect("document index");
+
+    let fixture = index
+        .entries()
+        .iter()
+        .find(|entry| entry.path == "fixtures/large/SECURITY.md")
+        .expect("fixture security document");
+    assert_eq!(fixture.status, DocumentScanStatus::SkippedByteBudget);
+    assert_eq!(
+        index.coverage_for_role(DocumentRole::SecurityPolicy),
+        Some(CoverageStatus::Complete)
+    );
+    assert_eq!(index.selection().primary_skipped_byte_budget, 0);
+}
+
+#[test]
 fn document_parse_failure_is_indexed_as_unknown_coverage() {
     let repo = TempRepo::new("invalid-markdown");
     repo.write("README.md", "# Purpose\n");

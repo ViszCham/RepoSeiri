@@ -20,6 +20,7 @@ mod obligation_graph;
 mod observation;
 mod patch_proposal;
 mod path_classification;
+mod pattern_extension;
 mod profile_semantics;
 mod remote_evidence;
 mod repository_scope;
@@ -47,8 +48,9 @@ pub use codex_view::{
     CodexRuntimeResolver, CODEX_SCHEMA_VERSION,
 };
 pub use contracts::{
-    ContractManifest, ErrorClass, ErrorEnvelope, SemanticRevisions, COMPLETION_SCHEMA_VERSION,
-    CONTRACT_SCHEMA_VERSION, ERROR_SCHEMA_VERSION,
+    ContractManifest, ContractValidationError, ErrorClass, ErrorEnvelope, SemanticRevisionEntry,
+    SemanticRevisionKey, SemanticRevisions, COMPLETION_SCHEMA_VERSION, CONTRACT_SCHEMA_VERSION,
+    ERROR_SCHEMA_VERSION,
 };
 pub use document_index::{
     DocumentIndex, DocumentIndexError, DocumentRole, DocumentRoleCoverage, DocumentRoleMask,
@@ -56,7 +58,7 @@ pub use document_index::{
 };
 pub use document_scan::{
     DocumentDiagnostic, DocumentDiagnosticKind, DocumentEvent, DocumentScan,
-    DocumentScanInvariantError,
+    DocumentScanInvariantError, MarkdownProse,
 };
 pub use evidence_kernel::{
     stable_evidence_id, ByteOffset, DocumentId, DocumentRecord, EvidenceAtom, EvidenceDraft,
@@ -81,7 +83,8 @@ pub use github_local::{
 };
 pub use obligation_graph::{
     ConditionalObligation, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
-    DocumentConsistencyReport, DocumentTargetRelation,
+    DocumentConsistencyReport, DocumentProposition, DocumentPropositionKind,
+    DocumentTargetRelation, PropositionConflict, PropositionConflictSide, PropositionModality,
 };
 pub use observation::{
     CoverageId, CoverageIncompleteReason, CoverageIndex, CoverageIndexError, CoverageRecord,
@@ -95,6 +98,10 @@ pub use patch_proposal::{
     UnresolvedPolicySlot, PATCH_ANCHOR_CONTEXT_BYTES, PATCH_PROPOSAL_SCHEMA_VERSION,
 };
 pub use path_classification::{EvidenceUsage, PathClassification, RepositoryRegion};
+pub use pattern_extension::{
+    PatternExtensionEvaluation, PatternExtensionReport, PatternExtensionState,
+    PatternExtensionStatus, PatternPackProvenance,
+};
 pub use profile_semantics::{
     CalibrationPriorState, ProfileBranchSemantics, ProfileFit, ProfilePurposeAffinity,
     ProfileRankScore,
@@ -159,6 +166,7 @@ pub struct RepositoryAnalysis {
     pub repository_scope: RepositoryScopeReport,
     pub freshness: FreshnessReport,
     pub pattern_matches: Vec<PatternMatch>,
+    pub pattern_extensions: PatternExtensionReport,
     pub route_assessments: Vec<RouteAssessment>,
     pub missing_route_priority: MissingRoutePriorityReport,
     pub review_priority: ReviewPriorityReport,
@@ -195,6 +203,7 @@ impl RepositoryAnalysis {
             repository_scope: RepositoryScopeReport::default(),
             freshness: FreshnessReport::default(),
             pattern_matches: Vec::new(),
+            pattern_extensions: PatternExtensionReport::default(),
             route_assessments: Vec::new(),
             missing_route_priority: MissingRoutePriorityReport::empty(),
             review_priority: ReviewPriorityReport::default(),
@@ -735,6 +744,7 @@ pub enum CalibrationEvidenceKind {
     MarkdownLink,
     MarkdownBadge,
     RouteCandidate,
+    VisibleProse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1502,11 +1512,13 @@ pub struct PatternStats {
     pub repositories: usize,
     pub observations: u64,
     pub frequency_x1000: u16,
+    pub sample_size: usize,
+    pub support_interval: LocalSupportInterval,
     pub source_ids: Vec<String>,
     pub profile_correlations: Vec<ProfilePatternCorrelation>,
     pub co_occurrences: Vec<PatternCoOccurrence>,
-    pub confidence: CalibrationConfidence,
-    pub confidence_note: String,
+    pub local_support_tier: LocalSupportTier,
+    pub support_note: String,
     pub review_status: CalibrationReviewStatus,
 }
 
@@ -1542,10 +1554,12 @@ pub struct RouteRequirement {
     pub supporting_repositories: usize,
     pub observations: u64,
     pub frequency_x1000: u16,
+    pub sample_size: usize,
+    pub support_interval: LocalSupportInterval,
     pub suggested_requirement: BaselineRequirement,
     pub priority: ProfilePriority,
     pub source_ids: Vec<String>,
-    pub confidence: CalibrationConfidence,
+    pub local_support_tier: LocalSupportTier,
     pub review_status: CalibrationReviewStatus,
     pub rationale: String,
 }
@@ -1562,8 +1576,10 @@ pub struct WeightSuggestion {
     pub priority: ProfilePriority,
     pub support_repositories: usize,
     pub frequency_x1000: u16,
+    pub sample_size: usize,
+    pub support_interval: LocalSupportInterval,
     pub source_ids: Vec<String>,
-    pub confidence: CalibrationConfidence,
+    pub local_support_tier: LocalSupportTier,
     pub review_status: CalibrationReviewStatus,
     pub rationale: String,
 }
@@ -2080,10 +2096,27 @@ pub fn route_state_does_not_indicate(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CalibrationConfidence {
-    Low,
-    Medium,
-    High,
+pub enum LocalSupportTier {
+    #[serde(alias = "low")]
+    Limited,
+    #[serde(alias = "medium")]
+    Moderate,
+    #[serde(alias = "high")]
+    Strong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationIntervalMethod {
+    #[serde(rename = "wilson_95")]
+    Wilson95,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSupportInterval {
+    pub method: CalibrationIntervalMethod,
+    pub lower_x1000: u16,
+    pub upper_x1000: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2146,10 +2179,11 @@ fn default_observation_count() -> u32 {
 pub use audit_delta::{
     AddExistingRouteLink, AnalysisBudgetConfiguration, AnalysisConfiguration, AnalysisVisibility,
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
-    DeltaUnknownReason, EvidenceFingerprint, ExistingTargetId, ImprovementCandidate,
-    PatchDecisionBasis, PatchHold, PatchHoldReason, PatchPlan, PortableAuditSnapshot,
-    PortableConflictRecord, PortableContentSlotRecord, PortableCoverageRecord,
-    PortableDocumentRecord, PortableFacetRecord, PortableObligationRecord,
-    PortableObservationState, PortableRouteRecord, RegressionCandidate, RouteDelta,
-    AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION, PORTABLE_AUDIT_SCHEMA_VERSION,
+    DeltaUnknownReason, EvidenceFingerprint, EvidenceIdentityDigest, EvidenceOccurrenceDigest,
+    EvidenceStateDigest, ExistingTargetId, ImprovementCandidate, PatchDecisionBasis, PatchHold,
+    PatchHoldReason, PatchPlan, PortableAuditSnapshot, PortableConflictRecord,
+    PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
+    PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
+    RouteDelta, SourceSessionDigest, AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION,
+    PORTABLE_AUDIT_SCHEMA_VERSION,
 };
