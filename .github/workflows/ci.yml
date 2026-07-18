@@ -219,7 +219,9 @@ jobs:
           path: target/host-evidence
 
       - name: Run completion gate
-        run: cargo run --locked --quiet -p xtask -- completion --format json --host-evidence target/host-evidence | tee target/completion.json
+        run: |
+          cargo run --locked --quiet -p xtask -- completion --format json --host-evidence target/host-evidence > target/completion.json
+          cat target/completion.json
 
       - name: Upload completion record
         if: always()

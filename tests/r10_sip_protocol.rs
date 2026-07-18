@@ -155,3 +155,16 @@ fn windows_launcher_hashing_uses_the_runtime_crypto_api() {
         assert!(body.contains(required), "missing {required}");
     }
 }
+
+#[test]
+fn completion_ci_preserves_exit_status_and_ignores_fuzz_runtime_state() {
+    let workflow =
+        fs::read_to_string(root().join(".github/workflows/ci.yml")).expect("read CI workflow");
+    assert!(workflow.contains("--host-evidence target/host-evidence > target/completion.json"));
+    assert!(!workflow.contains("--host-evidence target/host-evidence | tee"));
+
+    let ignore = fs::read_to_string(root().join(".gitignore")).expect("read gitignore");
+    for generated in ["/fuzz/artifacts/", "/fuzz/corpus/"] {
+        assert!(ignore.lines().any(|line| line == generated));
+    }
+}
