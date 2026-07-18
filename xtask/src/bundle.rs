@@ -309,12 +309,30 @@ fn reject_unexpected_stderr(stderr: &[u8]) -> Result<(), String> {
 }
 
 fn process_failure(failure: supervisor::ProcessFailure) -> String {
+    let error_code =
+        structured_error_code(&failure.stderr).unwrap_or_else(|| "unclassified".to_string());
     format!(
-        "bundle smoke process failed: {:?}; captured stdout={} stderr={} bytes",
+        "bundle smoke process failed: {:?}; error_code={error_code}; captured stdout={} stderr={} bytes",
         failure.kind,
         failure.stdout.len(),
         failure.stderr.len()
     )
+}
+
+fn structured_error_code(stderr: &[u8]) -> Option<String> {
+    const MARKER: &str = "\"code\":\"";
+    const MAX_CODE_LEN: usize = 64;
+    let stderr = std::str::from_utf8(stderr).ok()?;
+    let value = stderr.split_once(MARKER)?.1.split_once('"')?.0;
+    if value.is_empty()
+        || value.len() > MAX_CODE_LEN
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn validate_plugin_surface(plugin_root: &Path) -> Result<(), String> {
@@ -564,6 +582,20 @@ mod tests {
         let args = vec![OsString::from("--target"), OsString::from("x")];
         assert_eq!(option(&args, "--target").expect("target"), "x");
         assert!(option(&args, "--binary").is_err());
+    }
+
+    #[test]
+    fn launcher_failure_diagnostics_expose_only_bounded_error_codes() {
+        let stderr = br#"Write-RepoSeiriError : {"schema_version":"seiri.error.v1","class":"contract","code":"schema_mismatch","message":"host path omitted"}"#;
+        assert_eq!(
+            structured_error_code(stderr).as_deref(),
+            Some("schema_mismatch")
+        );
+        assert!(structured_error_code(
+            br#"{"code":"C:\Users\name\private","message":"not portable"}"#
+        )
+        .is_none());
+        assert!(structured_error_code(br#"C:\Users\name\private"#).is_none());
     }
 
     #[test]
