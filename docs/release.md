@@ -27,14 +27,18 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
+cargo check --manifest-path fuzz/Cargo.toml --bins --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --locked --quiet -p xtask -- calibration-holdout --format json
 cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
-ローカルにWindows/Linux双方のbundle evidenceがない場合、completion stateは`incomplete`です。CIの最終jobは両bundle artifactを取得し、`--host-evidence target/host-evidence`で再評価します。
+fuzz smokeはCIに固定した`nightly-2026-07-01`と`cargo-fuzz 0.13.2`でMarkdown、bounded reader、executable pack、schema decoder、deltaを各64 run実行します。ローカルにこのtoolchainまたはcargo-fuzzがなければcompletionは`environment_blocked`を保持し、他のrequired local checkがpassでもstateを`implemented_with_blocked_evidence`にします。
+
+`ready_for_git`は同じsourceに対するrequired local checkだけの状態です。Windows/Linux双方のsource-bound bundle receiptがなければ`host_verified`はunsatisfiedのままで、CIの最終jobが`--host-evidence target/host-evidence`で再評価します。tracked synthetic holdoutは各task 4 caseで最低20 caseを満たさないため、現在の`calibrated` claimはunsatisfiedであり、`evidence_complete`へ昇格しません。
 
 CI の結果、Dependabot の未処理更新、security issue、manual policy decision が残る場合は、release を止めるか release notes に明示します。
 
@@ -49,7 +53,8 @@ CI の結果、Dependabot の未処理更新、security issue、manual policy de
 
 - release branch、tag、GitHub Release は maintainer が明示的に作ります。
 - release note は `CHANGELOG.md` の該当節を元にします。
-- Windows/Linux plugin bundleはCIのbundle matrixが生成し、`runtime-manifest.json`へtarget、version、binary path、SHA-256を記録します。
+- Windows/Linux plugin bundleはCIのbundle matrixが生成し、`reposeiri.runtime-manifest.v3`へtarget、tool version、repository-relative binary path、binary SHA-256、同梱schema SHA-256、source digest、Cargo.lock digest、contract、semantic revision、実行command setを記録します。
+- host receiptは実行したcommand setと同じsource bindingを持つ場合だけcompletion evidenceとして受理します。host absolute pathはpublic receiptへ記録しません。
 - tag、GitHub Release、package publicationは自動実行しません。
 
 ### Compatibility boundary
@@ -99,14 +104,18 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.88.0 check --workspace --all-targets --locked
 cargo audit
+cargo check --manifest-path fuzz/Cargo.toml --bins --locked
 cargo run --quiet -p seiri-cli -- audit --path . --profile library --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
+cargo run --locked --quiet -p xtask -- calibration-holdout --format json
 cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
 
-When local Windows and Linux bundle evidence is not available, completion remains `incomplete`. The final CI job downloads both bundle artifacts and reevaluates with `--host-evidence target/host-evidence`.
+Fuzz smoke uses the CI-pinned `nightly-2026-07-01` and `cargo-fuzz 0.13.2` to run 64 cases each for Markdown, the bounded reader, executable packs, schema decoding, and delta. If the local toolchain or cargo-fuzz is missing, completion records `environment_blocked` and uses `implemented_with_blocked_evidence` even when the other required local checks pass.
+
+`ready_for_git` describes only required local checks bound to the same source. Without both source-bound Windows and Linux bundle receipts, `host_verified` remains unsatisfied; the final CI job reevaluates with `--host-evidence target/host-evidence`. The tracked synthetic holdout currently has four cases per task, below the minimum of 20, so `calibrated` remains unsatisfied and `evidence_complete` is not granted.
 
 If CI results, unresolved Dependabot updates, security issues, or manual policy decisions remain, stop the release or disclose the boundary in the release notes.
 
@@ -121,7 +130,8 @@ If CI results, unresolved Dependabot updates, security issues, or manual policy 
 
 - Maintainers explicitly create release branches, tags, and GitHub Releases.
 - Release notes are based on the matching section of `CHANGELOG.md`.
-- The CI bundle matrix generates Windows/Linux plugin bundles and records the target, version, binary path, and SHA-256 in `runtime-manifest.json`.
+- The CI bundle matrix generates Windows/Linux plugin bundles and records the target, tool version, repository-relative binary path, binary SHA-256, bundled-schema SHA-256 values, source digest, Cargo.lock digest, contract, semantic revisions, and executed command set in `reposeiri.runtime-manifest.v3`.
+- A host receipt is accepted as completion evidence only when it binds its executed command set to the same source. Public receipts do not record host absolute paths.
 - Tags, GitHub Releases, and package publication are not run automatically.
 
 ### Compatibility boundary

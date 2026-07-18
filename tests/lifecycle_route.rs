@@ -29,6 +29,14 @@ fn lifecycle_classification_keeps_support_and_release_boundaries() {
         seiri_markdown::classify_route("Release notes", None),
         RouteKind::Release
     );
+    assert_eq!(
+        seiri_markdown::classify_routes("Supported versions", None),
+        vec![RouteKind::Lifecycle]
+    );
+    assert_eq!(
+        seiri_markdown::classify_routes("Release supported versions", None),
+        vec![RouteKind::Lifecycle, RouteKind::Release]
+    );
 }
 
 #[test]

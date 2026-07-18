@@ -5,17 +5,20 @@ description: Generate RepoSeiri repository audit summaries, bounded Codex querie
 
 # RepoSeiri Codex Adapter
 
-Use this skill for repository organization reviews backed by the RepoSeiri Rust implementation.
+Use this skill for repository-organization reviews backed by RepoSeiri v1.0.0 and its Rust implementation. The adapter exposes ten `seiri.codex.v2` projections from one bounded source session; it does not reproduce semantic decisions in prompt text.
 
 ## Rules
 
 - Run the Rust core through the bundle launcher. On Windows use `scripts/reposeiri-codex.ps1`; on Linux use `scripts/reposeiri-codex.sh`. Do not reproduce audit, pattern, profile, calibration, delta, planner, or claim decisions in the skill.
 - Use the single `seiri.codex.v2` query surface. Do not add schema selectors, view selectors, legacy aliases, or fallback behavior.
 - Treat `contract.semantic_revisions` as the owner of meaning changes inside the retained v2 wire names. Do not infer semantics from a schema name alone.
+- Require the query, audit, linter, and patch decision basis to retain the same source-session digest. Treat a mismatch or stale binding as a typed failure, not as comparable evidence.
 - The launcher resolves `REPOSEIRI_BIN`, then the bundle-local binary, then `PATH`. A missing binary, invalid contract, schema mismatch, or native command failure must remain a non-zero failure.
 - Select the narrowest query that answers the request.
 - Treat actions and patch operations as review data. Do not execute commands, write files, create branches, commit, push, call GitHub, or merge unless the user explicitly authorizes those separate operations.
 - Standard audit is local and does not initiate remote access. `remote` reports the current typed terminal state.
+- Markdown wording and route evidence comes from visible-prose events. Code fences, indented code, inline code, HTML comments, and raw code do not become prose evidence.
+- Executable pattern packs and private calibration overlays are explicit Rust API inputs. The standard launcher does not discover or adopt them.
 - Do not invent policy, license text, security commitments, ownership, support promises, or files that do not already exist.
 - Do not claim guarantees of popularity, trust, security, quality, legal fitness, or publication readiness.
 - Prefer observed repository evidence over the phrase "verified facts". `Verified` is a typed route state, not a general correctness claim.
@@ -46,7 +49,7 @@ Available profiles are:
 common, library, cli, infra, product, runtime, docs, tutorial, ml, research, template
 ```
 
-Use `--scope repository` by default. Use `--scope workspace` or `--scope subtree` only when the user requests that boundary or the target layout requires it. Different scopes are not silently comparable in audit delta.
+Use `--scope repository` by default. Use `--scope workspace` or `--scope subtree` only when the user requests that boundary or the target layout requires it. Different scopes and source-session digests are not silently comparable in audit delta.
 
 ## Query Selection
 

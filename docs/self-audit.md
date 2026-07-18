@@ -19,6 +19,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
+cargo run --locked --quiet -p xtask -- calibration-holdout --format json
 cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
@@ -36,10 +37,11 @@ CI は次を実行します。
 | `seiri codex --query summary` | `codex-summary.md` artifact | canonical summary と boundary を見る。 |
 | `seiri codex --query evidence` | `codex-evidence.json` artifact | typed evidence と coverage を見る。 |
 | `seiri codex --query linter` | `codex-linter.md` artifact | evidence-scoped wording findings を見る。 |
-| `xtask completion` | `completion.json` artifact | blocking checkにskipがなく、同一worktreeが`ready_for_git`か`incomplete`かを見る。 |
+| `xtask calibration-holdout` | `calibration-holdout.json` artifact | task別holdout metrics、Wilson interval、低N境界を見る。 |
+| `xtask completion` | `completion.json` artifact | blocking checkにskipがなく、同一worktreeが`ready_for_git`、`implemented_with_blocked_evidence`、`incomplete`のどれかを見る。 |
 | Windows / Linux bundle matrix | plugin bundle artifact | standalone binary、runtime manifest、SHA-256、launcher smokeを見る。 |
 
-ローカルloopは利用可能なhostだけを検証します。両required host manifestがない状態をpassへ昇格せず、CI completion jobが二つのhost evidenceを統合します。
+`ready_for_git`はrequired local checksだけを表します。両required host manifestがない状態では`host_verified`と`evidence_complete`をpassへ昇格せず、CI completion jobが二つのhost evidenceを統合します。低N synthetic holdoutは`insufficient_sample`のままです。
 
 ### Review loop
 
@@ -69,6 +71,7 @@ cargo run --quiet -p seiri-cli -- plan --path . --profile library --format markd
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query summary --format markdown
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query evidence --format json
 cargo run --quiet -p seiri-cli -- codex --path . --profile library --query linter --format markdown
+cargo run --locked --quiet -p xtask -- calibration-holdout --format json
 cargo run --locked --quiet -p xtask -- completion --format json
 git diff --check
 ```
@@ -86,10 +89,11 @@ CI runs the following.
 | `seiri codex --query summary` | `codex-summary.md` artifact | Review the canonical summary and boundary. |
 | `seiri codex --query evidence` | `codex-evidence.json` artifact | Review typed evidence and coverage. |
 | `seiri codex --query linter` | `codex-linter.md` artifact | Review evidence-scoped wording findings. |
-| `xtask completion` | `completion.json` artifact | Confirm that no blocking check was skipped and the same worktree is `ready_for_git` or `incomplete`. |
+| `xtask calibration-holdout` | `calibration-holdout.json` artifact | Review per-task holdout metrics, Wilson intervals, and the low-N boundary. |
+| `xtask completion` | `completion.json` artifact | Confirm that no blocking check was skipped and the same worktree is `ready_for_git`, `implemented_with_blocked_evidence`, or `incomplete`. |
 | Windows / Linux bundle matrix | plugin bundle artifact | Review the standalone binary, runtime manifest, SHA-256, and launcher smoke. |
 
-The local loop verifies only available hosts. It does not promote missing required-host manifests to pass; the CI completion job integrates both host-evidence artifacts.
+`ready_for_git` covers required local checks only. Missing required-host manifests do not satisfy `host_verified` or `evidence_complete`; the CI completion job integrates both host-evidence artifacts. The low-N synthetic holdout remains `insufficient_sample`.
 
 ### Review loop
 
