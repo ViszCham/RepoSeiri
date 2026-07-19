@@ -1,7 +1,7 @@
 use seiri_core::{
-    AnalysisScope, BilingualStructuralPair, CoverageIncompleteReason, CoverageStatus,
-    DeltaCompatibility, DeltaState, DeltaUnknownReason, PatchHoldReason, ProfileKind, RouteKind,
-    SourceSpan,
+    AnalysisScope, CoverageIncompleteReason, CoverageStatus, DeltaCompatibility, DeltaState,
+    DeltaUnknownReason, PatchEditContent, PatchHoldReason, PatchProposalKind, ProfileKind,
+    RouteKind,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,6 +105,71 @@ fn complete_route_removal_is_a_regression_but_partial_to_absent_is_unknown() {
 }
 
 #[test]
+fn route_delta_ignores_occurrence_only_line_shifts() {
+    let before_root = fixture(
+        "route-occurrence-before",
+        "# Demo\n\n[Documentation](docs/)\n",
+        true,
+    );
+    let after_root = fixture(
+        "route-occurrence-after",
+        "# Demo\n\nUnrelated introduction.\n\n[Documentation](docs/)\n",
+        true,
+    );
+    let before =
+        seiri_report::audit_repository_with_profile(&before_root, ProfileKind::Common).unwrap();
+    let after =
+        seiri_report::audit_repository_with_profile(&after_root, ProfileKind::Common).unwrap();
+    let before = seiri_delta::portable_snapshot(&before).unwrap();
+    let after = seiri_delta::portable_snapshot(&after).unwrap();
+
+    let before_docs = before
+        .routes
+        .iter()
+        .find(|item| item.route == RouteKind::Docs)
+        .unwrap();
+    let after_docs = after
+        .routes
+        .iter()
+        .find(|item| item.route == RouteKind::Docs)
+        .unwrap();
+    assert_eq!(
+        before_docs
+            .evidence
+            .iter()
+            .map(|item| (item.identity, item.state))
+            .collect::<Vec<_>>(),
+        after_docs
+            .evidence
+            .iter()
+            .map(|item| (item.identity, item.state))
+            .collect::<Vec<_>>()
+    );
+    assert_ne!(
+        before_docs
+            .evidence
+            .iter()
+            .map(|item| item.occurrence)
+            .collect::<Vec<_>>(),
+        after_docs
+            .evidence
+            .iter()
+            .map(|item| item.occurrence)
+            .collect::<Vec<_>>()
+    );
+
+    let delta = seiri_delta::compare(&before, &after);
+    let docs = delta
+        .routes
+        .iter()
+        .find(|item| item.route == RouteKind::Docs)
+        .unwrap();
+    assert_eq!(docs.state, DeltaState::Unchanged);
+    cleanup(before_root);
+    cleanup(after_root);
+}
+
+#[test]
 fn redacted_private_overlay_identity_changes_configuration_only() {
     let root = fixture("private-overlay", "# Demo\n", false);
     let snapshot = seiri_report::audit_repository_with_profile(&root, ProfileKind::Common).unwrap();
@@ -142,9 +207,21 @@ fn patch_plan_only_links_existing_targets_and_binding_rejects_stale_bytes() {
     );
     assert_eq!(
         operation.decision_basis.planner_semantic_revision,
-        "seiri.patch-planner.v4"
+        "seiri.patch-planner.v5"
     );
     assert!(!plan.writes_files);
+    assert_eq!(
+        plan.proposal_count(PatchProposalKind::EditExisting),
+        plan.operations.len()
+    );
+    assert!(plan.held.iter().any(|hold| {
+        hold.route == RouteKind::Support
+            && hold.proposal_kind() == PatchProposalKind::CreateSkeleton
+    }));
+    assert!(plan.held.iter().any(|hold| {
+        hold.route == RouteKind::Security
+            && hold.proposal_kind() == PatchProposalKind::ManualDecision
+    }));
     let stale = b"# Demo changed\n";
     assert_ne!(
         operation
@@ -158,21 +235,9 @@ fn patch_plan_only_links_existing_targets_and_binding_rejects_stale_bytes() {
 }
 
 #[test]
-fn patch_plan_holds_both_language_insertions_when_one_anchor_is_invalid() {
-    let root = fixture("paired", "# Japanese\n\n# English\n", true);
-    let mut snapshot =
-        seiri_report::audit_repository_with_profile(&root, ProfileKind::Common).unwrap();
-    snapshot
-        .route_content
-        .structural_pairs
-        .push(BilingualStructuralPair {
-            document_path: "README.md".to_string(),
-            left_heading: SourceSpan::new(1, 1, 0, 10),
-            right_heading: SourceSpan::new(3, 1, 12, 10_000),
-            normalized_targets: Vec::new(),
-            evidence_ids: Vec::new(),
-            candidate_only: true,
-        });
+fn patch_plan_holds_ambiguous_mixed_language_readme() {
+    let root = fixture("paired-ambiguous", "# 日本語 and English\n\nMixed.\n", true);
+    let snapshot = seiri_report::audit_repository_with_profile(&root, ProfileKind::Common).unwrap();
     let plan = seiri_planner::plan_patches(&snapshot);
     assert!(!plan
         .operations
@@ -181,6 +246,40 @@ fn patch_plan_holds_both_language_insertions_when_one_anchor_is_invalid() {
     assert!(plan.held.iter().any(|item| {
         item.route == RouteKind::Docs && item.reason == PatchHoldReason::PairedLanguageIncomplete
     }));
+    cleanup(root);
+}
+
+#[test]
+fn patch_plan_emits_localized_edits_for_japanese_first_english_second_readme() {
+    let root = fixture(
+        "paired-sections",
+        "# Demo\n\n## 日本語\n\n説明。\n\n### 詳細\n\n本文。\n\n## English\n\nDescription.\n\n### Details\n\nBody.\n",
+        true,
+    );
+    let snapshot = seiri_report::audit_repository_with_profile(&root, ProfileKind::Common).unwrap();
+    let plan = seiri_planner::plan_patches(&snapshot);
+    let docs = plan
+        .operations
+        .iter()
+        .find(|item| item.route == RouteKind::Docs)
+        .expect("paired docs operation");
+    assert!(docs.paired_language);
+    assert_eq!(docs.proposal.edits.len(), 2);
+    let replacements = docs
+        .proposal
+        .edits
+        .iter()
+        .filter_map(|edit| match &edit.content {
+            PatchEditContent::Literal(value) => Some(value.as_str()),
+            PatchEditContent::UnresolvedSlot(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(replacements
+        .iter()
+        .any(|value| value.contains("ドキュメント")));
+    assert!(replacements
+        .iter()
+        .any(|value| value.contains("Documentation")));
     cleanup(root);
 }
 

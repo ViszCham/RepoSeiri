@@ -182,23 +182,7 @@ const fn readme_presence_tag(value: seiri_core::ReadmePresence) -> &'static str 
 }
 
 const fn route_tag(value: seiri_core::RouteKind) -> &'static str {
-    match value {
-        seiri_core::RouteKind::Identity => "identity",
-        seiri_core::RouteKind::Docs => "docs",
-        seiri_core::RouteKind::Quickstart => "quickstart",
-        seiri_core::RouteKind::Support => "support",
-        seiri_core::RouteKind::Intake => "intake",
-        seiri_core::RouteKind::Contributing => "contributing",
-        seiri_core::RouteKind::Security => "security",
-        seiri_core::RouteKind::Release => "release",
-        seiri_core::RouteKind::Lifecycle => "lifecycle",
-        seiri_core::RouteKind::Governance => "governance",
-        seiri_core::RouteKind::License => "license",
-        seiri_core::RouteKind::Automation => "automation",
-        seiri_core::RouteKind::Ownership => "ownership",
-        seiri_core::RouteKind::Hygiene => "hygiene",
-        seiri_core::RouteKind::Unknown => "unknown",
-    }
+    value.slug()
 }
 
 fn hash_atom(hasher: &mut StableHasher, atom: EvidenceAtom) {
@@ -713,7 +697,7 @@ fn digest_route_record(record: &PortableRouteRecord) -> Digest32 {
         .str(8, route_policy_tag(record.policy))
         .bool(9, record.missing_pattern);
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
-    hash_fingerprints(&mut hash, &record.evidence);
+    hash_semantic_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
@@ -723,7 +707,7 @@ fn digest_content_record(record: &PortableContentSlotRecord) -> Digest32 {
         .str(2, &record.code)
         .str(3, route_tag(record.route));
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
-    hash_fingerprints(&mut hash, &record.evidence);
+    hash_semantic_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
@@ -742,7 +726,7 @@ fn digest_conflict_record(
     hash.str(1, &record.id)
         .str(2, route_tag(record.route))
         .str(3, target_relation_tag(relation));
-    hash_fingerprints(&mut hash, &record.evidence);
+    hash_semantic_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
@@ -755,7 +739,7 @@ fn digest_obligation_record(
         .str(2, route_tag(record.route))
         .str(3, facet.slug());
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
-    hash_fingerprints(&mut hash, &record.evidence);
+    hash_semantic_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
@@ -763,7 +747,7 @@ fn digest_facet_record(record: &PortableFacetRecord) -> Digest32 {
     let mut hash = StableHasher::new(b"seiri.portable-facet.v2", 5);
     hash.str(1, record.facet.slug());
     hash_observation_and_coverage(&mut hash, record.observation, record.coverage);
-    hash_fingerprints(&mut hash, &record.evidence);
+    hash_semantic_fingerprints(&mut hash, &record.evidence);
     hash.finish()
 }
 
@@ -854,6 +838,14 @@ fn hash_fingerprints(hash: &mut StableHasher, evidence: &[EvidenceFingerprint]) 
     }
 }
 
+fn hash_semantic_fingerprints(hash: &mut StableHasher, evidence: &[EvidenceFingerprint]) {
+    hash.usize(40, evidence.len());
+    for item in evidence {
+        hash.digest(41, item.identity.get())
+            .digest(42, item.state.get());
+    }
+}
+
 fn digest_fingerprint_set(domain: &[u8], evidence: &[EvidenceFingerprint]) -> Digest32 {
     let mut hash = StableHasher::new(domain, 4);
     hash_fingerprints(&mut hash, evidence);
@@ -939,19 +931,7 @@ const fn analysis_scope_tag(value: seiri_core::AnalysisScope) -> &'static str {
 }
 
 const fn profile_tag(value: seiri_core::ProfileKind) -> &'static str {
-    match value {
-        seiri_core::ProfileKind::Common => "common",
-        seiri_core::ProfileKind::Library => "library",
-        seiri_core::ProfileKind::Cli => "cli",
-        seiri_core::ProfileKind::Infra => "infra",
-        seiri_core::ProfileKind::Product => "product",
-        seiri_core::ProfileKind::Runtime => "runtime",
-        seiri_core::ProfileKind::Docs => "docs",
-        seiri_core::ProfileKind::Tutorial => "tutorial",
-        seiri_core::ProfileKind::Ml => "ml",
-        seiri_core::ProfileKind::Research => "research",
-        seiri_core::ProfileKind::Template => "template",
-    }
+    value.slug()
 }
 
 const fn visibility_tag(value: seiri_core::AnalysisVisibility) -> &'static str {

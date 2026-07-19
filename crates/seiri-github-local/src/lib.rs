@@ -3,8 +3,8 @@
 use seiri_core::{
     DocumentIndex, DocumentRole, DocumentScanStatus, GithubDiagnostic, GithubDiagnosticKind,
     GithubDocumentIr, GithubDocumentKind, GithubLocalDocument, GithubLocalDocumentError,
-    GithubLocalDocuments, GithubLocalDocumentsError, GithubParseStatus, SourceSpan,
-    StructuredBudgetKind,
+    GithubLocalDocuments, GithubLocalDocumentsError, GithubParseStatus, IndexedDocument,
+    SourceSpan, SourceStore, StructuredBudgetKind,
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -77,6 +77,51 @@ pub fn parse_repository_github_documents_with_options(
     options: &StructuredParseOptions,
 ) -> Result<GithubLocalDocuments, GithubLocalParserError> {
     let repo_root = repo_root.as_ref();
+    parse_documents(document_index, |entry, kind| {
+        parse_entry(repo_root, entry.path.as_str(), entry.status, kind, options)
+    })
+}
+
+pub fn parse_repository_github_documents_from_source_store(
+    document_index: &DocumentIndex,
+    sources: &SourceStore,
+) -> Result<GithubLocalDocuments, GithubLocalParserError> {
+    parse_repository_github_documents_from_source_store_with_options(
+        document_index,
+        sources,
+        &StructuredParseOptions::default(),
+    )
+}
+
+pub fn parse_repository_github_documents_from_source_store_with_options(
+    document_index: &DocumentIndex,
+    sources: &SourceStore,
+    options: &StructuredParseOptions,
+) -> Result<GithubLocalDocuments, GithubLocalParserError> {
+    parse_documents(document_index, |entry, kind| {
+        let Some(source) = sources.get(&entry.path) else {
+            return ParseOutcome::failed(
+                status_from_document_status(entry.status),
+                GithubDiagnostic {
+                    kind: diagnostic_from_document_status(entry.status),
+                    span: empty_span(),
+                },
+            );
+        };
+        parse_source_entry(
+            source.bytes(),
+            entry.path.as_str(),
+            entry.status,
+            kind,
+            options,
+        )
+    })
+}
+
+fn parse_documents(
+    document_index: &DocumentIndex,
+    mut parse: impl FnMut(&IndexedDocument, GithubDocumentKind) -> ParseOutcome,
+) -> Result<GithubLocalDocuments, GithubLocalParserError> {
     let mut documents = Vec::new();
     for entry in document_index
         .entries()
@@ -92,7 +137,7 @@ pub fn parse_repository_github_documents_with_options(
                 .ok_or_else(|| GithubLocalParserError::MissingDocumentId {
                     path: entry.path.clone(),
                 })?;
-        let outcome = parse_entry(repo_root, entry.path.as_str(), entry.status, kind, options);
+        let outcome = parse(entry, kind);
         documents.push(
             GithubLocalDocument::try_new(
                 document_id,
@@ -224,7 +269,35 @@ fn parse_entry(
             },
         );
     }
-    let text = match std::str::from_utf8(&bytes) {
+    parse_source_entry(&bytes, path, document_status, kind, options)
+}
+
+fn parse_source_entry(
+    bytes: &[u8],
+    path: &str,
+    document_status: DocumentScanStatus,
+    kind: GithubDocumentKind,
+    options: &StructuredParseOptions,
+) -> ParseOutcome {
+    if document_status != DocumentScanStatus::NotMarkdown {
+        return ParseOutcome::failed(
+            status_from_document_status(document_status),
+            GithubDiagnostic {
+                kind: diagnostic_from_document_status(document_status),
+                span: empty_span(),
+            },
+        );
+    }
+    if bytes.len() > options.max_source_bytes {
+        return ParseOutcome::failed(
+            GithubParseStatus::BudgetExceeded(StructuredBudgetKind::SourceBytes),
+            GithubDiagnostic {
+                kind: GithubDiagnosticKind::BudgetExceeded(StructuredBudgetKind::SourceBytes),
+                span: empty_span(),
+            },
+        );
+    }
+    let text = match std::str::from_utf8(bytes) {
         Ok(text) => text,
         Err(error) => {
             return ParseOutcome::failed(

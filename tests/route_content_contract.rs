@@ -186,6 +186,39 @@ fn invalid_utf8_and_event_budget_become_unknown_not_absent() {
     fs::remove_dir_all(limited_root).expect("limited cleanup");
 }
 
+#[test]
+fn license_readme_route_requires_a_bounded_root_readme_marker() {
+    let root = temporary_repository("license-marker-boundary");
+    fs::create_dir_all(root.join("docs")).expect("docs");
+    fs::write(
+        root.join("README.md"),
+        "# Demo\n\nThis software is licensed under project terms.\n\n```markdown\n## License\n```\n\n<!-- License -->\n",
+    )
+    .expect("README");
+    fs::write(root.join("docs/guide.md"), "# License\n").expect("guide");
+    fs::write(root.join("LICENSE"), "test fixture license").expect("license");
+
+    let snapshot = seiri_report::audit_repository(&root).expect("audit");
+    let route = snapshot
+        .route_content
+        .assessments
+        .iter()
+        .find(|item| item.code == "license.readme_route")
+        .expect("license README route slot");
+    assert!(matches!(route.observation, Observation::Absent { .. }));
+    let local_file = snapshot
+        .route_content
+        .assessments
+        .iter()
+        .find(|item| item.code == "license.local_file")
+        .expect("license file slot");
+    assert!(matches!(
+        local_file.observation,
+        Observation::Present { .. }
+    ));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
 fn temporary_repository(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

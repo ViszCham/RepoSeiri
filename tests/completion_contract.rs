@@ -29,7 +29,24 @@ fn public_contract_is_v2_only() {
     );
     assert_eq!(
         manifest.semantic_revisions.patch_planner,
-        "seiri.patch-planner.v4"
+        "seiri.patch-planner.v5"
+    );
+    assert_eq!(
+        manifest.semantic_revisions.delta,
+        "seiri.audit-delta-semantics.v4"
+    );
+    assert_eq!(
+        manifest.semantic_revisions.completion,
+        "seiri.completion-semantics.v5"
+    );
+    assert_eq!(manifest.schema_version, "seiri.contract.v4");
+    assert_eq!(
+        manifest.semantic_revisions.semantic_index,
+        "seiri.semantic-index.v1"
+    );
+    assert_eq!(
+        manifest.semantic_revisions.language_topology,
+        "seiri.language-topology.v1"
     );
     assert_eq!(
         manifest.semantic_revisions.entries().len(),

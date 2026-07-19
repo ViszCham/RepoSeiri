@@ -11,12 +11,23 @@ pub(crate) fn build_route_content(
     kernel: &EvidenceKernel,
     coverage: &CoverageIndex,
     documents: &DocumentIndex,
+    semantic_index: &seiri_core::SemanticIndex,
     facets: &FacetReport,
     consistency: &DocumentConsistencyReport,
 ) -> RouteContentReport {
     let assessments = route_content_contract()
         .iter()
-        .map(|spec| assess_slot(spec, kernel, coverage, documents, facets, consistency))
+        .map(|spec| {
+            assess_slot(
+                spec,
+                kernel,
+                coverage,
+                documents,
+                semantic_index,
+                facets,
+                consistency,
+            )
+        })
         .collect();
     RouteContentReport {
         assessments,
@@ -30,12 +41,13 @@ fn assess_slot(
     kernel: &EvidenceKernel,
     coverage: &CoverageIndex,
     documents: &DocumentIndex,
+    semantic_index: &seiri_core::SemanticIndex,
     facets: &FacetReport,
     consistency: &DocumentConsistencyReport,
 ) -> ContentSlotAssessment {
     let enabled = slot_enabled(spec, facets);
     let evidence = if enabled {
-        matching_evidence(spec, kernel, documents)
+        matching_evidence(spec, kernel, documents, semantic_index)
     } else {
         Vec::new()
     };
@@ -135,6 +147,7 @@ fn matching_evidence(
     spec: &ContentSlotSpec,
     kernel: &EvidenceKernel,
     documents: &DocumentIndex,
+    semantic_index: &seiri_core::SemanticIndex,
 ) -> Vec<EvidenceId> {
     let mut evidence = kernel
         .facts()
@@ -147,21 +160,19 @@ fn matching_evidence(
         })
         .collect::<Vec<_>>();
 
-    for entry in documents.scanned_documents() {
+    for event in semantic_index.matching_events(spec.markers, spec.document_roles) {
+        let Some(entry) = documents.get(event.document_path()) else {
+            continue;
+        };
         if !slot_allows_document(spec, entry) {
             continue;
         }
-        let Some(scan) = entry.scan.as_ref() else {
-            continue;
-        };
-        for event in scan.events() {
-            let Some((kind, span, searchable)) = searchable_event(event) else {
-                continue;
-            };
-            if contains_any_normalized(&searchable, spec.markers) {
-                evidence.extend(evidence_for_event(kernel, &entry.path, kind, span));
-            }
-        }
+        evidence.extend(evidence_for_event(
+            kernel,
+            &entry.path,
+            event.kind(),
+            event.span(),
+        ));
     }
     evidence.sort_unstable();
     evidence.dedup();
@@ -183,44 +194,6 @@ fn slot_allows_document(spec: &ContentSlotSpec, entry: &seiri_core::IndexedDocum
             false
         }
     }
-}
-
-fn searchable_event(event: &DocumentEvent) -> Option<(MarkdownEvidenceKind, SourceSpan, String)> {
-    match event {
-        DocumentEvent::VisibleProse(value) => Some((
-            MarkdownEvidenceKind::VisibleProse,
-            value.span,
-            value.text.clone(),
-        )),
-        DocumentEvent::Heading(value) => Some((
-            MarkdownEvidenceKind::Heading,
-            value.span?,
-            value.text.clone(),
-        )),
-        DocumentEvent::Link(value) => Some((
-            MarkdownEvidenceKind::Link,
-            value.span?,
-            format!("{} {}", value.text, value.target),
-        )),
-        DocumentEvent::Badge(value) => Some((
-            MarkdownEvidenceKind::Badge,
-            value.span?,
-            format!("{} {}", value.alt, value.target),
-        )),
-        DocumentEvent::RouteCandidate(value) => Some((
-            MarkdownEvidenceKind::RouteCandidate,
-            value.span?,
-            value.target.as_ref().map_or_else(
-                || value.text.clone(),
-                |target| format!("{} {target}", value.text),
-            ),
-        )),
-    }
-}
-
-fn contains_any_normalized(value: &str, markers: &[&str]) -> bool {
-    let lower = value.to_ascii_lowercase();
-    markers.iter().any(|marker| lower.contains(marker))
 }
 
 #[derive(Debug)]

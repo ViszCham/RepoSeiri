@@ -1633,7 +1633,6 @@ version = "1.0.0"
 dependencies = [
  "seiri-core",
  "seiri-delta",
- "seiri-fs",
 ]
 
 [[package]]

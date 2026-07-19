@@ -162,7 +162,7 @@ struct RawMatch {
 
 pub(crate) fn lint_source_session(
     analysis: &RepositoryAnalysis,
-    source_documents: &[seiri_markdown::SourceDocument],
+    source_documents: &[seiri_core::SourceDocument],
 ) -> Result<WordingLintReport, AuditError> {
     let repo_root = ".".to_string();
     let mut targets = Vec::new();
@@ -182,10 +182,13 @@ pub(crate) fn lint_source_session(
         else {
             continue;
         };
+        let Some(text) = document.text() else {
+            continue;
+        };
         targets.extend(visible_prose_targets(
             WordingLintSourceKind::RepositoryFile,
             document.path(),
-            document.text(),
+            text,
             scan,
         ));
     }

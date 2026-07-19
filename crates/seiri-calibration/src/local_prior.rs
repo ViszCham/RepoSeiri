@@ -316,37 +316,9 @@ fn private_calibration_digest(
 }
 
 const fn route_tag(value: seiri_core::RouteKind) -> &'static str {
-    match value {
-        seiri_core::RouteKind::Identity => "identity",
-        seiri_core::RouteKind::Docs => "docs",
-        seiri_core::RouteKind::Quickstart => "quickstart",
-        seiri_core::RouteKind::Support => "support",
-        seiri_core::RouteKind::Intake => "intake",
-        seiri_core::RouteKind::Contributing => "contributing",
-        seiri_core::RouteKind::Security => "security",
-        seiri_core::RouteKind::Release => "release",
-        seiri_core::RouteKind::Lifecycle => "lifecycle",
-        seiri_core::RouteKind::Governance => "governance",
-        seiri_core::RouteKind::License => "license",
-        seiri_core::RouteKind::Automation => "automation",
-        seiri_core::RouteKind::Ownership => "ownership",
-        seiri_core::RouteKind::Hygiene => "hygiene",
-        seiri_core::RouteKind::Unknown => "unknown",
-    }
+    value.slug()
 }
 
 const fn profile_tag(value: seiri_core::ProfileKind) -> &'static str {
-    match value {
-        seiri_core::ProfileKind::Common => "common",
-        seiri_core::ProfileKind::Library => "library",
-        seiri_core::ProfileKind::Cli => "cli",
-        seiri_core::ProfileKind::Infra => "infra",
-        seiri_core::ProfileKind::Product => "product",
-        seiri_core::ProfileKind::Runtime => "runtime",
-        seiri_core::ProfileKind::Docs => "docs",
-        seiri_core::ProfileKind::Tutorial => "tutorial",
-        seiri_core::ProfileKind::Ml => "ml",
-        seiri_core::ProfileKind::Research => "research",
-        seiri_core::ProfileKind::Template => "template",
-    }
+    value.slug()
 }

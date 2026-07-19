@@ -1,41 +1,27 @@
 use crate::{events, DocumentScanOptions, MarkdownError};
-use seiri_core::{DocumentIndex, DocumentScan, DocumentScanStatus};
+use seiri_core::{
+    DocumentIndex, DocumentScan, DocumentScanStatus, SourceDocument, SourceStore, SourceStoreError,
+};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceDocument {
-    path: String,
-    text: Arc<str>,
-}
-
-impl SourceDocument {
-    #[must_use]
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    pub(crate) fn new(path: String, text: Arc<str>) -> Self {
-        Self { path, text }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSourceSession {
     index: DocumentIndex,
-    sources: Vec<SourceDocument>,
+    sources: SourceStore,
 }
 
 impl DocumentSourceSession {
-    pub(crate) fn new(index: DocumentIndex, sources: Vec<SourceDocument>) -> Self {
-        Self { index, sources }
+    pub(crate) fn new(
+        index: DocumentIndex,
+        sources: Vec<SourceDocument>,
+    ) -> Result<Self, SourceStoreError> {
+        Ok(Self {
+            index,
+            sources: SourceStore::try_new(sources)?,
+        })
     }
 
     #[must_use]
@@ -45,7 +31,7 @@ impl DocumentSourceSession {
 
     #[must_use]
     pub fn sources(&self) -> &[SourceDocument] {
-        &self.sources
+        self.sources.documents()
     }
 
     #[must_use]
@@ -54,7 +40,7 @@ impl DocumentSourceSession {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (DocumentIndex, Vec<SourceDocument>) {
+    pub fn into_parts(self) -> (DocumentIndex, SourceStore) {
         (self.index, self.sources)
     }
 }

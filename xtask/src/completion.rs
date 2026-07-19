@@ -403,10 +403,9 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
             "json".to_string(),
         ],
     });
-    let required_hosts = bundle::validate_required_hosts(
-        optional_option(args, "--host-evidence").map(Path::new),
-        run.source(),
-    );
+    let host_evidence = requested_option(args, "--host-evidence")?;
+    let required_hosts =
+        bundle::validate_required_hosts(host_evidence.map(Path::new), run.source());
     checks.push(CheckRecord {
         name: "source_unchanged",
         status: if run.unchanged()? {
@@ -430,7 +429,7 @@ pub fn run(args: &[OsString]) -> Result<ExitCode, String> {
         .is_some_and(|report| report.status == EmpiricalCalibrationStatus::Calibrated);
     let evidence_complete =
         derive_evidence_complete(implemented, locally_verified, host_verified, calibrated);
-    let state = derive_state(implemented, &checks);
+    let state = derive_state(implemented, &checks, host_evidence.map(|_| host_verified));
     let claims = completion_claims(
         implemented,
         locally_verified,
@@ -489,7 +488,11 @@ fn implementation_surface(root: &Path) -> (bool, CheckRecord) {
     )
 }
 
-fn derive_state(implemented: bool, checks: &[CheckRecord]) -> CompletionState {
+fn derive_state(
+    implemented: bool,
+    checks: &[CheckRecord],
+    required_host_verified: Option<bool>,
+) -> CompletionState {
     if !implemented {
         return CompletionState::Incomplete;
     }
@@ -497,7 +500,11 @@ fn derive_state(implemented: bool, checks: &[CheckRecord]) -> CompletionState {
         .iter()
         .all(|check| check.status == CheckStatus::Passed)
     {
-        return CompletionState::ReadyForGit;
+        return if required_host_verified == Some(false) {
+            CompletionState::ImplementedWithBlockedEvidence
+        } else {
+            CompletionState::ReadyForGit
+        };
     }
     if checks
         .iter()
@@ -844,6 +851,14 @@ fn optional_option<'a>(args: &'a [OsString], name: &str) -> Option<&'a str> {
     args.get(index + 1)?.to_str()
 }
 
+fn requested_option<'a>(args: &'a [OsString], name: &str) -> Result<Option<&'a str>, String> {
+    if args.iter().any(|value| value == name) {
+        option(args, name).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -925,15 +940,33 @@ mod tests {
 
     #[test]
     fn completion_state_separates_local_pass_blocked_environment_and_failure() {
-        let passed = synthetic_check(CheckStatus::Passed, None);
-        assert_eq!(derive_state(true, &[passed]), CompletionState::ReadyForGit);
+        assert_eq!(
+            derive_state(true, &[synthetic_check(CheckStatus::Passed, None)], None),
+            CompletionState::ReadyForGit
+        );
+        assert_eq!(
+            derive_state(
+                true,
+                &[synthetic_check(CheckStatus::Passed, None)],
+                Some(true)
+            ),
+            CompletionState::ReadyForGit
+        );
+        assert_eq!(
+            derive_state(
+                true,
+                &[synthetic_check(CheckStatus::Passed, None)],
+                Some(false)
+            ),
+            CompletionState::ImplementedWithBlockedEvidence
+        );
 
         let blocked = synthetic_check(
             CheckStatus::Failed,
             Some(supervisor::ProcessFailureKind::EnvironmentBlocked),
         );
         assert_eq!(
-            derive_state(true, &[blocked]),
+            derive_state(true, &[blocked], None),
             CompletionState::ImplementedWithBlockedEvidence
         );
 
@@ -941,11 +974,36 @@ mod tests {
             CheckStatus::Failed,
             Some(supervisor::ProcessFailureKind::NonZeroExit),
         );
-        assert_eq!(derive_state(true, &[failed]), CompletionState::Incomplete);
         assert_eq!(
-            derive_state(false, &[synthetic_check(CheckStatus::Passed, None)]),
+            derive_state(true, &[failed], Some(false)),
             CompletionState::Incomplete
         );
+        assert_eq!(
+            derive_state(
+                false,
+                &[synthetic_check(CheckStatus::Passed, None)],
+                Some(true)
+            ),
+            CompletionState::Incomplete
+        );
+    }
+
+    #[test]
+    fn explicitly_requested_host_evidence_requires_a_value() {
+        let missing = [OsString::from("--host-evidence")];
+        assert_eq!(
+            requested_option(&missing, "--host-evidence"),
+            Err("missing value for --host-evidence".to_string())
+        );
+        let present = [
+            OsString::from("--host-evidence"),
+            OsString::from("target/host-evidence"),
+        ];
+        assert_eq!(
+            requested_option(&present, "--host-evidence"),
+            Ok(Some("target/host-evidence"))
+        );
+        assert_eq!(requested_option(&[], "--host-evidence"), Ok(None));
     }
 
     #[test]

@@ -75,6 +75,57 @@ pub struct ReviewPriority {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewAuthority {
+    SafePreview,
+    GuardedPreview,
+    MaintainerDecision,
+}
+
+impl ReviewPriority {
+    #[must_use]
+    pub const fn authority(&self) -> ReviewAuthority {
+        match self.gate {
+            GateKind::Safe => ReviewAuthority::SafePreview,
+            GateKind::Guarded => ReviewAuthority::GuardedPreview,
+            GateKind::Manual => ReviewAuthority::MaintainerDecision,
+        }
+    }
+
+    #[must_use]
+    pub const fn recommendation(&self) -> &'static str {
+        match self.gap {
+            ReviewGap::Route { .. } => {
+                "Review whether an observed repository-local target should be exposed from the README."
+            }
+            ReviewGap::Content { .. } | ReviewGap::ContentSlot { .. } => {
+                "Review the missing content separately from route presence."
+            }
+            ReviewGap::Consistency { .. } => {
+                "Resolve conflicting repository-local document evidence before patch planning."
+            }
+            ReviewGap::ObservationUnknown { .. } => {
+                "Expand or repair bounded coverage before interpreting absence."
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn boundary(&self) -> &'static str {
+        match self.authority() {
+            ReviewAuthority::SafePreview => {
+                "A dry-run preview may be generated; no write authority is granted."
+            }
+            ReviewAuthority::GuardedPreview => {
+                "A bounded preview requires explicit review before any external action."
+            }
+            ReviewAuthority::MaintainerDecision => {
+                "Policy or ownership content must be supplied or approved by a maintainer."
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewPrioritySummary {
     pub total: usize,

@@ -371,6 +371,13 @@ pub enum PatchHoldReason {
     UnsupportedEncoding,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchProposalKind {
+    EditExisting,
+    CreateSkeleton,
+    ManualDecision,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ExistingTargetId(pub u32);
@@ -398,6 +405,23 @@ pub struct PatchHold {
     pub decision_basis: PatchDecisionBasis,
 }
 
+impl PatchHold {
+    #[must_use]
+    pub const fn proposal_kind(&self) -> PatchProposalKind {
+        match self.reason {
+            PatchHoldReason::NoExistingTarget
+                if matches!(
+                    self.route.spec().policy,
+                    crate::RoutePolicyBoundary::Suggestible
+                ) =>
+            {
+                PatchProposalKind::CreateSkeleton
+            }
+            _ => PatchProposalKind::ManualDecision,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchPlan {
     pub schema_version: String,
@@ -415,6 +439,20 @@ impl Default for PatchPlan {
             held: Vec::new(),
             writes_files: false,
             boundary: "Patch planning emits dry-run links to existing repository-local targets only. It does not write files, generate policy bodies, execute Git or GitHub operations, or establish authenticity, safety, or correctness.".to_string(),
+        }
+    }
+}
+
+impl PatchPlan {
+    #[must_use]
+    pub fn proposal_count(&self, kind: PatchProposalKind) -> usize {
+        match kind {
+            PatchProposalKind::EditExisting => self.operations.len(),
+            PatchProposalKind::CreateSkeleton | PatchProposalKind::ManualDecision => self
+                .held
+                .iter()
+                .filter(|hold| hold.proposal_kind() == kind)
+                .count(),
         }
     }
 }

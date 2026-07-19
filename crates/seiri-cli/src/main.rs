@@ -189,26 +189,11 @@ struct CliError {
 
 impl From<seiri_report::AuditError> for CliError {
     fn from(error: seiri_report::AuditError) -> Self {
-        let class = match &error {
-            seiri_report::AuditError::Fs(_)
-            | seiri_report::AuditError::Markdown(_)
-            | seiri_report::AuditError::LocalPrior(_)
-            | seiri_report::AuditError::Io { .. } => seiri_core::ErrorClass::Io,
-            seiri_report::AuditError::Calibration(_)
-            | seiri_report::AuditError::DocumentIndex(_)
-            | seiri_report::AuditError::GithubLocal(_)
-            | seiri_report::AuditError::Coverage(_)
-            | seiri_report::AuditError::RouteAssessment(_)
-            | seiri_report::AuditError::DocumentConsistency(_)
-            | seiri_report::AuditError::Delta(_)
-            | seiri_report::AuditError::PatternExtension(_) => seiri_core::ErrorClass::InvalidInput,
-            seiri_report::AuditError::EvidenceKernel(_)
-            | seiri_report::AuditError::GitLocal(_)
-            | seiri_report::AuditError::Json(_) => seiri_core::ErrorClass::Internal,
-        };
+        let class = error.error_class();
+        let code = error.error_code();
         Self {
             class,
-            code: "audit_failed",
+            code,
             message: error.to_string(),
         }
     }

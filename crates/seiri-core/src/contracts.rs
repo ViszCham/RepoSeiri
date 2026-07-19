@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const ERROR_SCHEMA_VERSION: &str = "seiri.error.v1";
 pub const COMPLETION_SCHEMA_VERSION: &str = "seiri.completion.v3";
-pub const CONTRACT_SCHEMA_VERSION: &str = "seiri.contract.v3";
+pub const CONTRACT_SCHEMA_VERSION: &str = "seiri.contract.v4";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,15 +11,20 @@ pub enum SemanticRevisionKey {
     SourceSession,
     StableDigest,
     MarkdownParser,
+    SemanticIndex,
+    LanguageTopology,
     PathClassification,
     DocumentSelection,
     Coverage,
     ContentSlots,
     RouteTarget,
+    RouteAssessment,
     GithubSemantics,
     DocumentConsistency,
     Profiles,
+    RuleRegistry,
     ClaimProjection,
+    ReviewProjection,
     Calibration,
     Delta,
     PatchPlanner,
@@ -27,20 +32,25 @@ pub enum SemanticRevisionKey {
 }
 
 impl SemanticRevisionKey {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 22] = [
         Self::RepositoryIdentity,
         Self::SourceSession,
         Self::StableDigest,
         Self::MarkdownParser,
+        Self::SemanticIndex,
+        Self::LanguageTopology,
         Self::PathClassification,
         Self::DocumentSelection,
         Self::Coverage,
         Self::ContentSlots,
         Self::RouteTarget,
+        Self::RouteAssessment,
         Self::GithubSemantics,
         Self::DocumentConsistency,
         Self::Profiles,
+        Self::RuleRegistry,
         Self::ClaimProjection,
+        Self::ReviewProjection,
         Self::Calibration,
         Self::Delta,
         Self::PatchPlanner,
@@ -61,15 +71,20 @@ pub struct SemanticRevisions {
     pub source_session: String,
     pub stable_digest: String,
     pub markdown_parser: String,
+    pub semantic_index: String,
+    pub language_topology: String,
     pub path_classification: String,
     pub document_selection: String,
     pub coverage: String,
     pub content_slots: String,
     pub route_target: String,
+    pub route_assessment: String,
     pub github_semantics: String,
     pub document_consistency: String,
     pub profiles: String,
+    pub rule_registry: String,
     pub claim_projection: String,
+    pub review_projection: String,
     pub calibration: String,
     pub delta: String,
     pub patch_planner: String,
@@ -80,29 +95,34 @@ impl Default for SemanticRevisions {
     fn default() -> Self {
         Self {
             repository_identity: "seiri.repository-identity.v3".to_string(),
-            source_session: "seiri.source-session.v1".to_string(),
-            stable_digest: "seiri.stable-digest.v2".to_string(),
+            source_session: "seiri.source-session.v2".to_string(),
+            stable_digest: "seiri.stable-digest.v3".to_string(),
             markdown_parser: "seiri.markdown-parser.v3".to_string(),
+            semantic_index: "seiri.semantic-index.v1".to_string(),
+            language_topology: "seiri.language-topology.v1".to_string(),
             path_classification: "seiri.path-classification.v2".to_string(),
             document_selection: "seiri.document-selection.v2".to_string(),
             coverage: "seiri.coverage.v2".to_string(),
-            content_slots: "seiri.content-slots.v2".to_string(),
+            content_slots: "seiri.content-slots.v3".to_string(),
             route_target: "seiri.route-target.v3".to_string(),
+            route_assessment: "seiri.route-assessment.v3".to_string(),
             github_semantics: "seiri.github-semantics.v2".to_string(),
             document_consistency: "seiri.document-consistency.v2".to_string(),
             profiles: "seiri.profiles.v2".to_string(),
+            rule_registry: "seiri.rule-registry.v1".to_string(),
             claim_projection: crate::CLAIM_SEMANTIC_REVISION.to_string(),
+            review_projection: "seiri.review-projection.v1".to_string(),
             calibration: "seiri.calibration-semantics.v4".to_string(),
-            delta: "seiri.audit-delta-semantics.v3".to_string(),
-            patch_planner: "seiri.patch-planner.v4".to_string(),
-            completion: "seiri.completion-semantics.v4".to_string(),
+            delta: "seiri.audit-delta-semantics.v4".to_string(),
+            patch_planner: "seiri.patch-planner.v5".to_string(),
+            completion: "seiri.completion-semantics.v5".to_string(),
         }
     }
 }
 
 impl SemanticRevisions {
     #[must_use]
-    pub fn entries(&self) -> [SemanticRevisionEntry<'_>; 17] {
+    pub fn entries(&self) -> [SemanticRevisionEntry<'_>; 22] {
         [
             SemanticRevisionEntry {
                 key: SemanticRevisionKey::RepositoryIdentity,
@@ -119,6 +139,14 @@ impl SemanticRevisions {
             SemanticRevisionEntry {
                 key: SemanticRevisionKey::MarkdownParser,
                 revision: &self.markdown_parser,
+            },
+            SemanticRevisionEntry {
+                key: SemanticRevisionKey::SemanticIndex,
+                revision: &self.semantic_index,
+            },
+            SemanticRevisionEntry {
+                key: SemanticRevisionKey::LanguageTopology,
+                revision: &self.language_topology,
             },
             SemanticRevisionEntry {
                 key: SemanticRevisionKey::PathClassification,
@@ -141,6 +169,10 @@ impl SemanticRevisions {
                 revision: &self.route_target,
             },
             SemanticRevisionEntry {
+                key: SemanticRevisionKey::RouteAssessment,
+                revision: &self.route_assessment,
+            },
+            SemanticRevisionEntry {
                 key: SemanticRevisionKey::GithubSemantics,
                 revision: &self.github_semantics,
             },
@@ -153,8 +185,16 @@ impl SemanticRevisions {
                 revision: &self.profiles,
             },
             SemanticRevisionEntry {
+                key: SemanticRevisionKey::RuleRegistry,
+                revision: &self.rule_registry,
+            },
+            SemanticRevisionEntry {
                 key: SemanticRevisionKey::ClaimProjection,
                 revision: &self.claim_projection,
+            },
+            SemanticRevisionEntry {
+                key: SemanticRevisionKey::ReviewProjection,
+                revision: &self.review_projection,
             },
             SemanticRevisionEntry {
                 key: SemanticRevisionKey::Calibration,
