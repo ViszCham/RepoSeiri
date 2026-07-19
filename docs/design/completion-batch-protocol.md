@@ -161,7 +161,7 @@ git diff --check
 ```
 
 completion harnessがCF7以前に存在しない間は、Roadmap v6のcheckを個別実行し、ledger上ではcompletion harnessを`pending`のままにします。
-required host evidenceを統合するCIでは`--host-evidence target/host-evidence`を追加します。Windows/Linuxの一方でも欠ける場合、completion harnessは`incomplete`を返します。
+required host evidenceを統合するCIでは`--host-evidence target/host-evidence`を追加します。Windows/Linuxの一方でも欠ける場合、completion harnessは`implemented_with_blocked_evidence`とnon-zero exitを返します。
 
 追加blocking check:
 
@@ -177,7 +177,7 @@ required host evidenceを統合するCIでは`--host-evidence target/host-eviden
 
 final reportは次の順で表示します。
 
-1. final state: `ready_for_git`または`incomplete`
+1. final state: `ready_for_git`、`implemented_with_blocked_evidence`、`incomplete`のいずれか
 2. base HEADとcurrent worktree identity
 3. block/slice completion table
 4. public schema、CLI、plugin変更
@@ -376,7 +376,7 @@ git diff --check
 ```
 
 Before the CF7 completion harness exists, run the Roadmap v6 checks separately and keep the completion-harness item `pending` in the ledger.
-CI adds `--host-evidence target/host-evidence` when integrating required-host evidence. The completion harness returns `incomplete` when either Windows or Linux evidence is missing.
+CI adds `--host-evidence target/host-evidence` when integrating required-host evidence. The completion harness returns `implemented_with_blocked_evidence` and a non-zero exit when either Windows or Linux evidence is missing.
 
 Additional blocking checks:
 
@@ -392,7 +392,7 @@ Additional blocking checks:
 
 Render the final report in this order:
 
-1. Final state: `ready_for_git` or `incomplete`
+1. Final state: `ready_for_git`, `implemented_with_blocked_evidence`, or `incomplete`
 2. Base HEAD and current worktree identity
 3. Block/slice completion table
 4. Public schema, CLI, and plugin changes

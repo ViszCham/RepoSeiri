@@ -21,6 +21,9 @@
 | 11 | [Roadmap v10: Closure And Product Integrity](roadmap-v10-closure-and-product-integrity.md) | coverage、bounded source、stable identity、extension、product、calibrationの現行改善契約 |
 | 12 | [R10-SIP-v1](r10-sip-v1-protocol.md) | C0-C8を非対話で順次実装する現行実行契約 |
 | 13 | [R10-SIP-v1 Template](r10-sip-v1-template.json) | unit依存、repair budget、authority、completionの機械可読正本 |
+| 14 | [Roadmap v11: Semantic Compression](roadmap-v11-semantic-compression.md) | semantic owner、single source、language topology、product closureの現行契約 |
+| 15 | [R11-SCCP-v1](r11-sccp-v1-protocol.md) | K0-K12を非対話で順次実装する現行実行契約 |
+| 16 | [R11-SCCP-v1 Template](r11-sccp-v1-template.json) | block依存、semantic delta、privacy、authorityの機械可読正本 |
 
 ### Authority
 
@@ -28,7 +31,7 @@
 - Roadmap v6は1.0.0 completion baselineの実装記録です。
 - evidence-backed claimの強さ、claim-local boundary、underclaim lossはRoadmap v7を参照します。
 - Roadmap v8、RTIP-v1、Roadmap v9、R9-SIP-v1は直前までの実装契約と履歴です。
-- 現行の改善責務、completion条件、一括実装方法はRoadmap v10とR10-SIP-v1を参照します。
+- 現行の改善責務、completion条件、一括実装方法はRoadmap v11とR11-SCCP-v1を参照します。
 - RCBP-v1はRoadmap v6の実行方法を所有し、製品semantics、Git権限、release判断を上書きしません。
 - Trust Graph と Baseline And Profiles は前提と分析モデルを所有しますが、現行 symbol や command を上書きしません。
 - Git history と changelog は変更履歴であり、現在の実装指示ではありません。
@@ -58,6 +61,13 @@
 - [R10-SIP-v1 Template](r10-sip-v1-template.json) はunit依存、有限repair、blocked evidence、authority、completion predicateの機械可読正本です。
 - Roadmap v9とR9-SIP-v1はsemantic identity/completion v3の実装記録です。Roadmap v10とR10-SIP-v1が重複する現行改善判断を上書きします。
 
+### Roadmap v11
+
+- [Roadmap v11: Semantic Compression](roadmap-v11-semantic-compression.md) は、semantic owner、single source session、language topology、review/planner整合、product closureの現行契約です。
+- [R11-SCCP-v1](r11-sccp-v1-protocol.md) と [Template](r11-sccp-v1-template.json) がK0-K12の依存、repair、privacy、authorityを所有します。
+- [Current Rust Architecture](current-rust-architecture.md) はR11実装後のcrate境界、data flow、低レイヤ不変条件を記録します。
+- Roadmap v10とR10-SIP-v1は直前のcompletion実装記録です。Roadmap v11が重複する現行判断を上書きします。
+
 ---
 
 ## English
@@ -70,6 +80,13 @@ This subindex separates RepoSeiri design documentation into long-term premises, 
 - [R10-SIP-v1](r10-sip-v1-protocol.md) is the current execution contract that decomposes C0-C8 into internal slices and proceeds to the final report without pausing interactively for ordinary failures.
 - [R10-SIP-v1 Template](r10-sip-v1-template.json) is the machine-readable authority for unit dependencies, bounded repairs, blocked evidence, authorities, and completion predicates.
 - Roadmap v9 and R9-SIP-v1 remain the implementation record for semantic identity and completion v3. Roadmap v10 and R10-SIP-v1 override overlapping current improvement decisions.
+
+### Roadmap v11
+
+- [Roadmap v11: Semantic Compression](roadmap-v11-semantic-compression.md) is the current contract for semantic ownership, a single source session, language topology, review/planner consistency, and product closure.
+- [R11-SCCP-v1](r11-sccp-v1-protocol.md) and its [template](r11-sccp-v1-template.json) own K0-K12 dependencies, repair, privacy, and authority.
+- [Current Rust Architecture](current-rust-architecture.md) records the crate boundaries, data flow, and low-level invariants after R11 implementation.
+- Roadmap v10 and R10-SIP-v1 remain the preceding completion implementation record. Roadmap v11 overrides overlapping current decisions.
 
 ### Roadmap v9
 
@@ -95,6 +112,9 @@ This subindex separates RepoSeiri design documentation into long-term premises, 
 | 11 | [Roadmap v10: Closure And Product Integrity](roadmap-v10-closure-and-product-integrity.md) | Current improvement contract for coverage, bounded sources, stable identity, extensions, the product, and calibration |
 | 12 | [R10-SIP-v1](r10-sip-v1-protocol.md) | Current noninteractive sequential implementation contract for C0-C8 |
 | 13 | [R10-SIP-v1 Template](r10-sip-v1-template.json) | Machine-readable unit, repair-budget, authority, and completion authority |
+| 14 | [Roadmap v11: Semantic Compression](roadmap-v11-semantic-compression.md) | Current semantic-owner, single-source, language-topology, and product-closure contract |
+| 15 | [R11-SCCP-v1](r11-sccp-v1-protocol.md) | Current noninteractive sequential implementation contract for K0-K12 |
+| 16 | [R11-SCCP-v1 Template](r11-sccp-v1-template.json) | Machine-readable block dependency, semantic-delta, privacy, and authority contract |
 
 ### Authority
 
@@ -102,7 +122,7 @@ This subindex separates RepoSeiri design documentation into long-term premises, 
 - Roadmap v6 is the implementation record for the 1.0.0 completion baseline.
 - Use Roadmap v7 for evidence-backed claim strength, claim-local boundaries, and underclaim loss.
 - Roadmap v8, RTIP-v1, Roadmap v9, and R9-SIP-v1 are the preceding implementation contracts and records.
-- Use Roadmap v10 and R10-SIP-v1 for current improvement responsibilities, completion conditions, and batch execution.
+- Use Roadmap v11 and R11-SCCP-v1 for current improvement responsibilities, completion conditions, and batch execution.
 - RCBP-v1 owns execution of Roadmap v6; it does not override product semantics, Git authority, or release decisions.
 - Trust Graph and Baseline And Profiles own premises and the analysis model, but do not override current symbols or commands.
 - Git history and the changelog record changes; they are not current implementation instructions.

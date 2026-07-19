@@ -2,7 +2,7 @@
 
 ## 日本語
 
-RepoSeiriの現行source contractは`1.0.0`です。対応するCLI、schema、plugin bundleの変更は[Changelog](../CHANGELOG.md)、[Migration v3](migration-v3.md)、[Release Process](release.md)に記録します。
+RepoSeiriの現行tool/package versionは`1.0.0`で、machine-readable source contractは`seiri.contract.v4`です。v2 wire内の意味は22個の`contract.semantic_revisions`が所有します。対応するCLI、schema、plugin bundleの変更は[Changelog](../CHANGELOG.md)、[Migration v4](migration-v4.md)、[Release Process](release.md)に記録します。
 
 この文書は観測できる現行状態と人間の判断境界を示します。将来の保守期間、support SLA、次回release日、非推奨日、archive日を約束しません。
 
@@ -17,7 +17,7 @@ RepoSeiriの現行source contractは`1.0.0`です。対応するCLI、schema、p
 
 ## English
 
-RepoSeiri's current source contract is `1.0.0`. Changes to the corresponding CLI, schemas, and plugin bundle are recorded in the [Changelog](../CHANGELOG.md), [Migration v3](migration-v3.md), and [Release Process](release.md).
+RepoSeiri's current tool/package version is `1.0.0`, while its machine-readable source contract is `seiri.contract.v4`. The 22 `contract.semantic_revisions` own meaning inside the v2 wires. Changes to the corresponding CLI, schemas, and plugin bundle are recorded in the [Changelog](../CHANGELOG.md), [Migration v4](migration-v4.md), and [Release Process](release.md).
 
 This document states observable current status and the human decision boundary. It does not promise a future maintenance duration, support SLA, next release date, deprecation date, or archival date.
 

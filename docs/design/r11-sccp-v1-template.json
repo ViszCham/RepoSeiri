@@ -1,0 +1,71 @@
+{
+  "schema_version": "reposeiri.r11-sccp.v1",
+  "protocol": "R11-SCCP-v1",
+  "roadmap": "docs/design/roadmap-v11-semantic-compression.md",
+  "protocol_document": "docs/design/r11-sccp-v1-protocol.md",
+  "units": [
+    { "id": "K0", "name": "baseline_obligation_ledger", "depends_on": [] },
+    { "id": "K1", "name": "bounded_source_session", "depends_on": ["K0"] },
+    { "id": "K2", "name": "semantic_index", "depends_on": ["K1"] },
+    { "id": "K3", "name": "route_axes", "depends_on": ["K2"] },
+    { "id": "K4", "name": "language_topology", "depends_on": ["K3"] },
+    { "id": "K5", "name": "canonical_registry", "depends_on": ["K4"] },
+    { "id": "K6", "name": "canonical_analysis_core", "depends_on": ["K5"] },
+    { "id": "K7", "name": "unified_review_model", "depends_on": ["K6"] },
+    { "id": "K8", "name": "source_bound_planner", "depends_on": ["K7"] },
+    { "id": "K9", "name": "wire_schema_error_migration", "depends_on": ["K8"] },
+    { "id": "K10", "name": "product_surface_compression", "depends_on": ["K9"] },
+    { "id": "K11", "name": "api_crate_docs_topology", "depends_on": ["K10"] },
+    { "id": "K12", "name": "regression_completion_bundle", "depends_on": ["K11"] }
+  ],
+  "authority_defaults": {
+    "analysis": true,
+    "mutation": true,
+    "verification": true,
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "release": false,
+    "publication": false,
+    "visibility": false,
+    "plugin_install": false,
+    "restart": false
+  },
+  "execution": {
+    "mode": "continuous_noninteractive",
+    "max_in_progress_units": 1,
+    "stop_on_first_failure": false,
+    "blocking_checks_may_be_skipped": false,
+    "blocked_checks_may_be_promoted": false,
+    "preserve_user_changes": true,
+    "hard_blocker_repeat_limit": 3,
+    "group_gates_after": ["K2", "K7", "K10", "K12"]
+  },
+  "semantic_delta_allowlist": [
+    "ambiguous_bilingual_patch_safe_to_held",
+    "document_role_outside_marker_match_removed",
+    "route_axis_projection_revision",
+    "bounded_markdown_summary_compression"
+  ],
+  "privacy": {
+    "store_source_bodies": false,
+    "store_diff_bodies": false,
+    "store_private_analysis_identity": false,
+    "store_private_analysis_body": false,
+    "store_private_calibration_values": false,
+    "store_private_digest": false,
+    "store_host_absolute_paths": false,
+    "store_credentials": false
+  },
+  "completion": {
+    "requires_dependency_order": true,
+    "requires_semantic_diff_allowlist": true,
+    "requires_single_source_session": true,
+    "requires_language_topology_gate": true,
+    "requires_private_boundary_regression": true,
+    "requires_local_verification": true,
+    "host_verified_is_separate": true,
+    "calibrated_is_separate": true,
+    "manual_policy_is_separate": true
+  }
+}
