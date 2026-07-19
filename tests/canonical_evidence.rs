@@ -1,6 +1,7 @@
 use seiri_core::{
-    EvidenceAtom, EvidenceConfidence, EvidenceDraft, EvidenceKernel, EvidenceKernelError,
-    EvidenceProducer, MarkdownEvidenceKind, ProfileKind, ReadmePresence, SourceDomain, SourceSpan,
+    ClaimStrength, ContentClaim, EvidenceAtom, EvidenceConfidence, EvidenceDraft, EvidenceKernel,
+    EvidenceKernelError, EvidenceProducer, MarkdownEvidenceKind, MeaningAtom, ProfileKind,
+    ReadmePresence, RouteKind, RouteState, SourceDomain, SourceSpan,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -132,6 +133,44 @@ fn evidence_state_change_preserves_identity_only() {
     assert_eq!(before.identity, after.identity);
     assert_ne!(before.state, after.state);
     assert_ne!(before.occurrence, after.occurrence);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn source_session_digest_is_independent_of_host_absolute_root() {
+    let first_root = repository("source-root-first");
+    let second_root = repository("source-root-second");
+    let first = seiri_report::audit_repository(&first_root).expect("first analysis");
+    let second = seiri_report::audit_repository(&second_root).expect("second analysis");
+
+    assert_ne!(first.analysis_root(), second.analysis_root());
+    assert_eq!(
+        first.analysis_configuration.source_session_digest,
+        second.analysis_configuration.source_session_digest
+    );
+    fs::remove_dir_all(first_root).expect("cleanup first");
+    fs::remove_dir_all(second_root).expect("cleanup second");
+}
+
+#[test]
+fn derived_view_integrity_rejects_unknown_evidence_references() {
+    let root = repository("derived-integrity");
+    let mut analysis = seiri_report::audit_repository(&root).expect("analysis");
+    let unknown = seiri_core::EvidenceId::from_ordinal(999_999).expect("unknown evidence");
+    analysis.claims.push(ContentClaim::new(
+        analysis.claims.len() + 1,
+        RouteKind::Docs,
+        RouteState::Routed,
+        ClaimStrength::Observed,
+        vec![unknown],
+        vec![MeaningAtom::RouteObserved],
+    ));
+
+    let error = analysis
+        .validate_derived_views()
+        .expect_err("unknown evidence must fail");
+    assert_eq!(error.owner, "content claim");
+    assert_eq!(error.evidence_id, unknown);
     fs::remove_dir_all(root).expect("cleanup");
 }
 

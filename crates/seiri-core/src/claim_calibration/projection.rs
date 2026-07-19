@@ -360,23 +360,7 @@ const fn evidence_posture(strength: ClaimStrength) -> ClaimEvidencePosture {
 }
 
 const fn route_slug(route: RouteKind) -> &'static str {
-    match route {
-        RouteKind::Identity => "identity",
-        RouteKind::Docs => "docs",
-        RouteKind::Quickstart => "quickstart",
-        RouteKind::Support => "support",
-        RouteKind::Intake => "intake",
-        RouteKind::Contributing => "contributing",
-        RouteKind::Security => "security",
-        RouteKind::Release => "release",
-        RouteKind::Lifecycle => "lifecycle",
-        RouteKind::Governance => "governance",
-        RouteKind::License => "license",
-        RouteKind::Automation => "automation",
-        RouteKind::Ownership => "ownership",
-        RouteKind::Hygiene => "hygiene",
-        RouteKind::Unknown => "unknown",
-    }
+    route.slug()
 }
 
 const fn state_slug(state: RouteState) -> &'static str {

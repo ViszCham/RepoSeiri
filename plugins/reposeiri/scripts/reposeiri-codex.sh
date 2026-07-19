@@ -2,7 +2,7 @@
 set -eu
 
 expected_schema='seiri.codex.v2'
-expected_contract_schema='seiri.contract.v3'
+expected_contract_schema='seiri.contract.v4'
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 plugin_root=$(dirname -- "$script_dir")
 
@@ -53,22 +53,27 @@ require_contract_value portable_audit_schema seiri.portable-audit.v2
 require_contract_value audit_delta_schema seiri.audit-delta.v2
 require_contract_value wording_lint_schema seiri.wording-lint.v1
 require_contract_value repository_identity seiri.repository-identity.v3
-require_contract_value source_session seiri.source-session.v1
-require_contract_value stable_digest seiri.stable-digest.v2
+require_contract_value source_session seiri.source-session.v2
+require_contract_value stable_digest seiri.stable-digest.v3
 require_contract_value markdown_parser seiri.markdown-parser.v3
+require_contract_value semantic_index seiri.semantic-index.v1
+require_contract_value language_topology seiri.language-topology.v1
 require_contract_value path_classification seiri.path-classification.v2
 require_contract_value document_selection seiri.document-selection.v2
 require_contract_value coverage seiri.coverage.v2
-require_contract_value content_slots seiri.content-slots.v2
+require_contract_value content_slots seiri.content-slots.v3
 require_contract_value route_target seiri.route-target.v3
+require_contract_value route_assessment seiri.route-assessment.v3
 require_contract_value github_semantics seiri.github-semantics.v2
 require_contract_value document_consistency seiri.document-consistency.v2
 require_contract_value profiles seiri.profiles.v2
+require_contract_value rule_registry seiri.rule-registry.v1
 require_contract_value claim_projection seiri.claim-semantics.v2
+require_contract_value review_projection seiri.review-projection.v1
 require_contract_value calibration seiri.calibration-semantics.v4
-require_contract_value delta seiri.audit-delta-semantics.v3
-require_contract_value patch_planner seiri.patch-planner.v4
-require_contract_value completion seiri.completion-semantics.v4
+require_contract_value delta seiri.audit-delta-semantics.v4
+require_contract_value patch_planner seiri.patch-planner.v5
+require_contract_value completion seiri.completion-semantics.v5
 
 runtime_manifest="$plugin_root/runtime-manifest.json"
 if [ -f "$runtime_manifest" ]; then
@@ -86,22 +91,27 @@ if [ -f "$runtime_manifest" ]; then
     require_manifest_value contract_schema "$expected_contract_schema"
     require_manifest_value codex_schema "$expected_schema"
     require_manifest_value repository_identity seiri.repository-identity.v3
-    require_manifest_value source_session seiri.source-session.v1
-    require_manifest_value stable_digest seiri.stable-digest.v2
+    require_manifest_value source_session seiri.source-session.v2
+    require_manifest_value stable_digest seiri.stable-digest.v3
     require_manifest_value markdown_parser seiri.markdown-parser.v3
+    require_manifest_value semantic_index seiri.semantic-index.v1
+    require_manifest_value language_topology seiri.language-topology.v1
     require_manifest_value path_classification seiri.path-classification.v2
     require_manifest_value document_selection seiri.document-selection.v2
     require_manifest_value coverage seiri.coverage.v2
-    require_manifest_value content_slots seiri.content-slots.v2
+    require_manifest_value content_slots seiri.content-slots.v3
     require_manifest_value route_target seiri.route-target.v3
+    require_manifest_value route_assessment seiri.route-assessment.v3
     require_manifest_value github_semantics seiri.github-semantics.v2
     require_manifest_value document_consistency seiri.document-consistency.v2
     require_manifest_value profiles seiri.profiles.v2
+    require_manifest_value rule_registry seiri.rule-registry.v1
     require_manifest_value claim_projection seiri.claim-semantics.v2
+    require_manifest_value review_projection seiri.review-projection.v1
     require_manifest_value calibration seiri.calibration-semantics.v4
-    require_manifest_value delta seiri.audit-delta-semantics.v3
-    require_manifest_value patch_planner seiri.patch-planner.v4
-    require_manifest_value completion seiri.completion-semantics.v4
+    require_manifest_value delta seiri.audit-delta-semantics.v4
+    require_manifest_value patch_planner seiri.patch-planner.v5
+    require_manifest_value completion seiri.completion-semantics.v5
     source_digest=$(printf '%s' "$manifest" | sed -n 's/.*"source_digest":[[:space:]]*"\(sha256:[0-9a-f]\{64\}\)".*/\1/p')
     cargo_lock_digest=$(printf '%s' "$manifest" | sed -n 's/.*"cargo_lock_digest":[[:space:]]*"\(sha256:[0-9a-f]\{64\}\)".*/\1/p')
     [ "${#source_digest}" -eq 71 ] || fail_contract bundle_source_binding_invalid 'RepoSeiri bundle source digest is invalid'

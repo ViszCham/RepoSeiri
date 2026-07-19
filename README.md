@@ -47,7 +47,9 @@ cargo run --locked --quiet -p seiri-cli -- codex --path fixtures/readme-route-re
 - Document budget skips: `0`; byte budget skips: `0`
 - Coverage: `20` complete / `0` partial / `1` not requested; limit exceeded `0`
 - Markdown coverage: `Complete`; conflict coverage: `Complete`
-- Observations: `29` present / `46` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Observations: `28` present / `47` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Review priorities: `55`; top route `Some(Security)` / authority `Some(MaintainerDecision)`
+- Top recommendation: Review the missing content separately from route presence.
 - Patch operations: `1`
 - Patch holds: `3`
 
@@ -92,6 +94,8 @@ holdout report は route、wording、consistency、profile、planner のprecisio
 - bounded filesystem traversal、bounded UTF-8 source read、byte-accurate source span
 - framed SHA-256 identity、source-session binding、portable repository-relative evidence
 - code fence、inline code、HTML comment、raw code を可視 prose から分離する Markdown event IR
+- visible eventを一度だけ正規化する`SemanticIndex`と、route slug・日英label・target候補を所有する`ROUTE_SPECS`
+- filesystemを再読込せず、README言語topologyからsource-boundな日英ペアeditを作るplanner
 - `Present`, `Absent`, `Unknown`, `Conflict`, `Disabled` を混同しない typed state
 - private calibration body、exact prior、host absolute path を public artifact に出さない境界
 
@@ -99,7 +103,7 @@ holdout report は route、wording、consistency、profile、planner のprecisio
 
 ### Codex plugin
 
-plugin source は `plugins/reposeiri` にあります。launcher は `REPOSEIRI_BIN`、bundle-local binary、`PATH` の順に native runtime を解決し、contract、semantic revision、bundle manifest、binary SHA-256、同梱schema SHA-256を検証します。
+plugin source は `plugins/reposeiri` にあります。`1.0.0`はtool/package versionであり、現行machine contractは`seiri.contract.v4`と22個のsemantic revisionです。launcher は `REPOSEIRI_BIN`、bundle-local binary、`PATH` の順に native runtime を解決し、contract、semantic revision、bundle manifest、binary SHA-256、同梱schema SHA-256を検証します。
 
 plugin は Rust core の10 queryを使う薄い adapter です。query output は review data であり、file write、command execution、branch、commit、push、PR、merge の権限を付与しません。
 
@@ -108,15 +112,16 @@ plugin は Rust core の10 queryを使う薄い adapter です。query output �
 | 読みたいもの | 入口 |
 | --- | --- |
 | 文書地図 | [Documentation Topology](docs/README.md) |
-| 設計と Roadmap v10 | [Design Documentation](docs/design/README.md) |
-| schema migration | [Migration v3](docs/migration-v3.md) |
 | release | [Release Process](docs/release.md) |
 | lifecycle | [Lifecycle Boundary](docs/lifecycle.md) |
 | self-audit | [Self-Audit Loop](docs/self-audit.md) |
 | security report | [SECURITY.md](SECURITY.md) |
 | support | [SUPPORT.md](SUPPORT.md) |
+| Issue受付 | [Issue受付](.github/ISSUE_TEMPLATE/) |
 | contribution | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | governance | [GOVERNANCE.md](GOVERNANCE.md) |
+| license | [LICENSE](LICENSE) |
+| ownership | [CODEOWNERS](.github/CODEOWNERS) |
 | change history | [CHANGELOG.md](CHANGELOG.md) |
 
 RepoSeiri v1.0.0 は個人開発・Rust coding practice として公開しています。固定 SLA、release cadence、compatibility duration、外部 contribution 採用を約束しません。
@@ -168,7 +173,9 @@ cargo run --locked --quiet -p seiri-cli -- codex --path fixtures/readme-route-re
 - Document budget skips: `0`; byte budget skips: `0`
 - Coverage: `20` complete / `0` partial / `1` not requested; limit exceeded `0`
 - Markdown coverage: `Complete`; conflict coverage: `Complete`
-- Observations: `29` present / `46` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Observations: `28` present / `47` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Review priorities: `55`; top route `Some(Security)` / authority `Some(MaintainerDecision)`
+- Top recommendation: Review the missing content separately from route presence.
 - Patch operations: `1`
 - Patch holds: `3`
 
@@ -213,6 +220,8 @@ The holdout report emits precision, recall, false positives/negatives, coverage,
 - Bounded filesystem traversal, bounded UTF-8 source reads, and byte-accurate source spans
 - Framed SHA-256 identities, source-session binding, and portable repository-relative evidence
 - A Markdown event IR that separates code fences, inline code, HTML comments, and raw code from visible prose
+- A `SemanticIndex` that normalizes visible events once and `ROUTE_SPECS` that owns route slugs, bilingual labels, and target candidates
+- A planner that does not reread the filesystem and derives source-bound paired Japanese/English edits from README language topology
 - Typed `Present`, `Absent`, `Unknown`, `Conflict`, and `Disabled` states
 - Boundaries that keep private calibration bodies, exact priors, and host absolute paths out of public artifacts
 
@@ -220,7 +229,7 @@ Low-level design, semantic revisions, and completion conditions are in [Design D
 
 ### Codex Plugin
 
-Plugin source lives in `plugins/reposeiri`. The launcher resolves the native runtime in the order `REPOSEIRI_BIN`, bundle-local binary, then `PATH`, and validates the contract, semantic revisions, bundle manifest, binary SHA-256, and bundled-schema SHA-256 values.
+Plugin source lives in `plugins/reposeiri`. `1.0.0` is the tool/package version; the current machine contract is `seiri.contract.v4` with 22 semantic revisions. The launcher resolves the native runtime in the order `REPOSEIRI_BIN`, bundle-local binary, then `PATH`, and validates the contract, semantic revisions, bundle manifest, binary SHA-256, and bundled-schema SHA-256 values.
 
 The plugin is a thin adapter over the ten Rust-core queries. Query output is review data and does not grant authority to write files, execute commands, create branches, commit, push, open PRs, or merge.
 
@@ -229,15 +238,16 @@ The plugin is a thin adapter over the ten Rust-core queries. Query output is rev
 | Topic | Entry |
 | --- | --- |
 | Documentation map | [Documentation Topology](docs/README.md) |
-| Design and Roadmap v10 | [Design Documentation](docs/design/README.md) |
-| Schema migration | [Migration v3](docs/migration-v3.md) |
 | Release | [Release Process](docs/release.md) |
 | Lifecycle | [Lifecycle Boundary](docs/lifecycle.md) |
 | Self-audit | [Self-Audit Loop](docs/self-audit.md) |
 | Security reporting | [SECURITY.md](SECURITY.md) |
 | Support | [SUPPORT.md](SUPPORT.md) |
+| Issue intake | [Issue intake](.github/ISSUE_TEMPLATE/) |
 | Contributions | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Governance | [GOVERNANCE.md](GOVERNANCE.md) |
+| License | [LICENSE](LICENSE) |
+| Ownership | [CODEOWNERS](.github/CODEOWNERS) |
 | Change history | [CHANGELOG.md](CHANGELOG.md) |
 
 RepoSeiri v1.0.0 is public as personal development and Rust coding practice. It does not promise a fixed SLA, release cadence, compatibility duration, or acceptance of external contributions.

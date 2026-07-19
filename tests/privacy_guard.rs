@@ -70,9 +70,14 @@ fn privacy_guard_covers_tracked_public_text_surfaces() {
         "docs/design/roadmap-v9-semantic-identity-verification-closure.md",
         "docs/design/r9-sip-v1-protocol.md",
         "docs/design/r9-sip-v1-template.json",
+        "docs/design/roadmap-v11-semantic-compression.md",
+        "docs/design/r11-sccp-v1-protocol.md",
+        "docs/design/r11-sccp-v1-template.json",
+        "docs/design/current-rust-architecture.md",
         "docs/design/rcbp-v1-template.json",
         "docs/migration-v2.md",
         "docs/migration-v3.md",
+        "docs/migration-v4.md",
         "schemas/seiri.analysis.v2.json",
         "schemas/seiri.codex.v2.json",
         "schemas/seiri.completion.v3.json",
@@ -89,6 +94,7 @@ fn privacy_guard_covers_tracked_public_text_surfaces() {
         "tests/completion_batch_protocol.rs",
         "tests/hostile_input_corpus.rs",
         "tests/release_completion.rs",
+        "tests/r11_sccp_protocol.rs",
         "fuzz/fuzz_targets/markdown.rs",
     ] {
         assert!(

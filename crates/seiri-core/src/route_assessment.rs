@@ -387,18 +387,7 @@ pub enum RoutePolicyBoundary {
 impl RoutePolicyBoundary {
     #[must_use]
     pub const fn for_route(route: RouteKind) -> Self {
-        if matches!(
-            route,
-            RouteKind::License
-                | RouteKind::Security
-                | RouteKind::Lifecycle
-                | RouteKind::Governance
-                | RouteKind::Ownership
-        ) {
-            Self::MaintainerDecisionRequired
-        } else {
-            Self::Suggestible
-        }
+        route.spec().policy
     }
 }
 
@@ -481,6 +470,16 @@ pub struct RouteAssessment {
     pub(crate) policy: RoutePolicyBoundary,
     pub(crate) missing_pattern: bool,
     pub(crate) evidence: RouteEvidenceGroups,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteAssessmentAxes {
+    pub artifact: RoutePresenceAssessment,
+    pub entrypoint: ReadmeRoutingAssessment,
+    pub reachability: TargetReachabilityAssessment,
+    pub freshness: RouteFreshness,
+    pub conflict: RouteConflictAssessment,
+    pub policy: RoutePolicyBoundary,
 }
 
 impl RouteAssessment {
@@ -598,6 +597,18 @@ impl RouteAssessment {
             EvidenceConfidence::Low,
             "No root route evidence was observed.",
         )
+    }
+
+    #[must_use]
+    pub const fn axes(&self) -> RouteAssessmentAxes {
+        RouteAssessmentAxes {
+            artifact: self.presence,
+            entrypoint: self.readme.routing,
+            reachability: self.readme.target_reachability,
+            freshness: self.readme.freshness,
+            conflict: self.readme.conflict,
+            policy: self.policy,
+        }
     }
 
     #[must_use]
@@ -835,4 +846,31 @@ fn normalize_ids(ids: &mut Vec<EvidenceId>) {
 
 fn is_sorted_unique(ids: &[EvidenceId]) -> bool {
     ids.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axes_preserve_independent_policy_presence_and_entrypoint_facts() {
+        let assessment = RouteAssessment::new(
+            RouteKind::Security,
+            ReadmeRouteAssessment::default(),
+            true,
+            vec![],
+            vec![],
+            vec![],
+        )
+        .expect("route assessment");
+        let axes = assessment.axes();
+
+        assert!(!axes.artifact.root_structured());
+        assert!(!axes.entrypoint.is_present());
+        assert_eq!(axes.policy, RoutePolicyBoundary::MaintainerDecisionRequired);
+        assert_eq!(
+            assessment.summary_projection().state,
+            RouteState::UnsafeToInvent
+        );
+    }
 }

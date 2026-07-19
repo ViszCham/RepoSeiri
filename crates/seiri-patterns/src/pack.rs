@@ -327,23 +327,7 @@ fn fingerprint_for(
 }
 
 const fn route_tag(route: seiri_core::RouteKind) -> &'static str {
-    match route {
-        seiri_core::RouteKind::Identity => "identity",
-        seiri_core::RouteKind::Docs => "docs",
-        seiri_core::RouteKind::Quickstart => "quickstart",
-        seiri_core::RouteKind::Support => "support",
-        seiri_core::RouteKind::Intake => "intake",
-        seiri_core::RouteKind::Contributing => "contributing",
-        seiri_core::RouteKind::Security => "security",
-        seiri_core::RouteKind::Release => "release",
-        seiri_core::RouteKind::Lifecycle => "lifecycle",
-        seiri_core::RouteKind::Governance => "governance",
-        seiri_core::RouteKind::License => "license",
-        seiri_core::RouteKind::Automation => "automation",
-        seiri_core::RouteKind::Ownership => "ownership",
-        seiri_core::RouteKind::Hygiene => "hygiene",
-        seiri_core::RouteKind::Unknown => "unknown",
-    }
+    route.slug()
 }
 
 #[derive(Debug)]

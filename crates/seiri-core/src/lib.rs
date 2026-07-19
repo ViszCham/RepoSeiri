@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub use seiri_digest::Digest32;
 
+mod analysis_core;
 mod audit_delta;
 mod calibration_prior;
 mod claim_calibration;
@@ -16,6 +17,7 @@ mod document_scan;
 mod evidence_kernel;
 mod facets;
 mod github_local;
+mod language_topology;
 mod obligation_graph;
 mod observation;
 mod patch_proposal;
@@ -28,8 +30,12 @@ mod review_priority;
 mod route_assessment;
 mod route_content;
 mod route_content_contract;
+mod route_spec;
 mod route_target;
+mod semantic_index;
+mod source_session;
 
+pub use analysis_core::{AnalysisCoreView, AnalysisIntegrityError};
 pub use calibration_prior::{
     AggregatePrior, AggregatePriorError, CalibrationKey, CalibrationLookup, CalibrationProvider,
     CalibrationUnavailableReason, NoCalibrationProvider, PriorBasis, PriorVisibility,
@@ -81,6 +87,9 @@ pub use github_local::{
     StructuredBudgetKind, TokenPermission, Workflow, WorkflowJob, WorkflowJobCandidate,
     WorkflowJobCandidateKind, WorkflowStep, WorkflowTrigger,
 };
+pub use language_topology::{
+    DocumentLanguage, DocumentLanguageTopology, LanguageTopology, LanguageTopologyIndex,
+};
 pub use obligation_graph::{
     ConditionalObligation, DocumentConflict, DocumentConflictSide, DocumentConsistencyError,
     DocumentConsistencyReport, DocumentProposition, DocumentPropositionKind,
@@ -120,13 +129,14 @@ pub use repository_scope::{
     WorkspaceManifestKind, WorkspaceManifestObservation,
 };
 pub use review_priority::{
-    ReviewGap, ReviewGapKind, ReviewPriority, ReviewPriorityReport, ReviewPrioritySummary,
+    ReviewAuthority, ReviewGap, ReviewGapKind, ReviewPriority, ReviewPriorityReport,
+    ReviewPrioritySummary,
 };
 pub use route_assessment::{
-    ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment, RouteAssessmentError,
-    RouteAvailability, RouteCondition, RouteConflictAssessment, RouteEvidenceGroups,
-    RouteFreshness, RoutePolicyBoundary, RoutePresenceAssessment, RouteSummaryProjection,
-    TargetReachabilityAssessment,
+    ReadmeRouteAssessment, ReadmeRoutingAssessment, RouteAssessment, RouteAssessmentAxes,
+    RouteAssessmentError, RouteAvailability, RouteCondition, RouteConflictAssessment,
+    RouteEvidenceGroups, RouteFreshness, RoutePolicyBoundary, RoutePresenceAssessment,
+    RouteSummaryProjection, TargetReachabilityAssessment,
 };
 pub use route_content::RouteContentAtom;
 pub use route_content_contract::{
@@ -134,7 +144,10 @@ pub use route_content_contract::{
     ContentSlotKind, ContentSlotSpec, MeaningAtomSet, PolicySensitivity, PolicySensitivityWire,
     RouteContentReport, ROUTE_CONTENT_CONTRACT,
 };
+pub use route_spec::{RouteSpec, ROUTE_SPECS};
 pub use route_target::{classify_target_relation, RouteTargetRef, RouteTargetRole, TargetRelation};
+pub use semantic_index::{SemanticEvent, SemanticIndex};
+pub use source_session::{SourceDocument, SourceStore, SourceStoreError};
 
 pub const ANALYSIS_SCHEMA_VERSION: &str = "seiri.analysis.v2";
 pub const CALIBRATION_SCHEMA_VERSION: &str = "seiri.calibration.v2";
@@ -175,6 +188,9 @@ pub struct RepositoryAnalysis {
     pub profile: Option<ProfileReport>,
     pub findings: Vec<Finding>,
     analysis_root: RepositoryRootHandle,
+    source_store: SourceStore,
+    semantic_index: SemanticIndex,
+    language_topology: LanguageTopologyIndex,
 }
 
 impl RepositoryAnalysis {
@@ -212,12 +228,36 @@ impl RepositoryAnalysis {
             profile: None,
             findings: Vec::new(),
             analysis_root: RepositoryRootHandle(repo_root.into()),
+            source_store: SourceStore::default(),
+            semantic_index: SemanticIndex::default(),
+            language_topology: LanguageTopologyIndex::default(),
         }
     }
 
     #[must_use]
     pub fn analysis_root(&self) -> &Path {
         &self.analysis_root.0
+    }
+
+    #[must_use]
+    pub const fn source_store(&self) -> &SourceStore {
+        &self.source_store
+    }
+
+    #[must_use]
+    pub const fn semantic_index(&self) -> &SemanticIndex {
+        &self.semantic_index
+    }
+
+    #[must_use]
+    pub const fn language_topology(&self) -> &LanguageTopologyIndex {
+        &self.language_topology
+    }
+
+    pub fn attach_source_session(&mut self, source_store: SourceStore) {
+        self.source_store = source_store;
+        self.semantic_index = SemanticIndex::build(&self.document_index);
+        self.language_topology = LanguageTopologyIndex::build(&self.document_index);
     }
 }
 
@@ -940,20 +980,7 @@ pub enum ProfileKind {
 
 impl std::fmt::Display for ProfileKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::Common => "common",
-            Self::Library => "library",
-            Self::Cli => "cli",
-            Self::Infra => "infra",
-            Self::Product => "product",
-            Self::Runtime => "runtime",
-            Self::Docs => "docs",
-            Self::Tutorial => "tutorial",
-            Self::Ml => "ml",
-            Self::Research => "research",
-            Self::Template => "template",
-        };
-        f.write_str(value)
+        f.write_str(self.slug())
     }
 }
 
@@ -971,6 +998,23 @@ impl ProfileKind {
         Self::Research,
         Self::Template,
     ];
+
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Common => "common",
+            Self::Library => "library",
+            Self::Cli => "cli",
+            Self::Infra => "infra",
+            Self::Product => "product",
+            Self::Runtime => "runtime",
+            Self::Docs => "docs",
+            Self::Tutorial => "tutorial",
+            Self::Ml => "ml",
+            Self::Research => "research",
+            Self::Template => "template",
+        }
+    }
 }
 
 impl std::str::FromStr for ProfileKind {
@@ -2181,7 +2225,7 @@ pub use audit_delta::{
     ArtifactDelta, AuditDeltaReport, AuditSnapshotDigest, DeltaCompatibility, DeltaState,
     DeltaUnknownReason, EvidenceFingerprint, EvidenceIdentityDigest, EvidenceOccurrenceDigest,
     EvidenceStateDigest, ExistingTargetId, ImprovementCandidate, PatchDecisionBasis, PatchHold,
-    PatchHoldReason, PatchPlan, PortableAuditSnapshot, PortableConflictRecord,
+    PatchHoldReason, PatchPlan, PatchProposalKind, PortableAuditSnapshot, PortableConflictRecord,
     PortableContentSlotRecord, PortableCoverageRecord, PortableDocumentRecord, PortableFacetRecord,
     PortableObligationRecord, PortableObservationState, PortableRouteRecord, RegressionCandidate,
     RouteDelta, SourceSessionDigest, AUDIT_DELTA_SCHEMA_VERSION, PATCH_PLAN_SCHEMA_VERSION,

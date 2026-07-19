@@ -182,9 +182,7 @@ const fn document_roles_for_route(route: RouteKind) -> DocumentRoleMask {
             .with(DocumentRole::Governance)
             .with(DocumentRole::SupportPolicy),
         RouteKind::Governance => root_and_docs.with(DocumentRole::Governance),
-        RouteKind::License => {
-            DocumentRoleMask::only(DocumentRole::RootReadme).with(DocumentRole::OtherMarkdown)
-        }
+        RouteKind::License => DocumentRoleMask::only(DocumentRole::RootReadme),
         RouteKind::Automation => {
             DocumentRoleMask::only(DocumentRole::RootReadme).with(DocumentRole::GithubConfiguration)
         }

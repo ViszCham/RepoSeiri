@@ -339,5 +339,5 @@ fn validate_unique_ordered<'a>(
 }
 
 fn route_slug(route: RouteKind) -> String {
-    format!("{route:?}").to_ascii_lowercase()
+    route.slug().to_string()
 }

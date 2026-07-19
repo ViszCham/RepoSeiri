@@ -214,6 +214,14 @@ pub struct CodexSummary {
     pub top_profile: Option<ProfileKind>,
     pub top_profile_rank_score_x100: Option<u8>,
     pub missing_route_priorities: usize,
+    #[serde(skip)]
+    pub review_priorities: usize,
+    #[serde(skip)]
+    pub top_review_route: Option<seiri_core::RouteKind>,
+    #[serde(skip)]
+    pub top_review_authority: Option<seiri_core::ReviewAuthority>,
+    #[serde(skip)]
+    pub top_review_recommendation: Option<&'static str>,
     pub patch_operations: usize,
     pub patch_holds: usize,
     pub documents: DocumentSelectionSummary,
@@ -306,6 +314,7 @@ fn summary(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexSummary {
         observations.record(&obligation.observation);
     }
     let coverage = coverage_summary(analysis);
+    let top_review = analysis.review_priority.priorities.first();
     CodexSummary {
         source_session_digest: analysis.analysis_configuration.source_session_digest,
         entries_scanned: analysis.entry_count,
@@ -334,6 +343,10 @@ fn summary(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexSummary {
             .as_ref()
             .and_then(|profile| profile.branch_summary.top_rank_score_x100),
         missing_route_priorities: analysis.missing_route_priority.priorities.len(),
+        review_priorities: analysis.review_priority.priorities.len(),
+        top_review_route: top_review.and_then(|priority| priority.gap.route()),
+        top_review_authority: top_review.map(seiri_core::ReviewPriority::authority),
+        top_review_recommendation: top_review.map(seiri_core::ReviewPriority::recommendation),
         patch_operations: plan.operations.len(),
         patch_holds: plan.held.len(),
         documents: analysis.document_index.selection(),
@@ -453,11 +466,12 @@ fn build_pr_body(analysis: &RepositoryAnalysis, plan: &PatchPlan) -> CodexPrBody
         .collect::<Vec<_>>()
         .join("\n");
     let body = format!(
-        "## Summary\n\n- Reviewed {} repository entries and {} typed evidence facts.\n- Recorded {} route assessments and {} content slots.\n- Prepared {} dry-run patch operations; {} items remain held.\n\n## Evidence-backed observations\n\nThe audit emitted {observed_claims} observed claims. Examples:\n\n{examples}\n\n## Boundaries\n\nRepoSeiri did not write files, execute commands, call GitHub, create policy text, or establish popularity, trust, security, quality, or publication readiness.\n",
+        "## Summary\n\n- Reviewed {} repository entries and {} typed evidence facts.\n- Recorded {} route assessments, {} content slots, and {} ordered review items.\n- Prepared {} dry-run patch operations; {} items remain held.\n\n## Evidence-backed observations\n\nThe audit emitted {observed_claims} observed claims. Examples:\n\n{examples}\n\n## Boundaries\n\nRepoSeiri did not write files, execute commands, call GitHub, create policy text, or establish popularity, trust, security, quality, or publication readiness.\n",
         summary.entries_scanned,
         summary.evidence_facts,
         summary.route_assessments,
         summary.route_content_slots,
+        summary.review_priorities,
         summary.patch_operations,
         summary.patch_holds,
     );
@@ -483,7 +497,7 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
     match &view.query {
         CodexQuery::Summary(summary) => {
             out.push_str(&format!(
-                "\n- Entries: `{}`\n- Evidence facts: `{}`\n- Route assessments: `{}`\n- Content slots: `{}`\n- Findings: `{}`\n- Documents: `{}` selected / `{}` candidates; primary `{}` / `{}`\n- Document budget skips: `{}`; byte budget skips: `{}`\n- Coverage: `{}` complete / `{}` partial / `{}` not requested; limit exceeded `{}`\n- Markdown coverage: `{:?}`; conflict coverage: `{:?}`\n- Observations: `{}` present / `{}` absent / `{}` unknown (`{}` unacknowledged) / `{}` conflict\n- Patch operations: `{}`\n- Patch holds: `{}`\n",
+                "\n- Entries: `{}`\n- Evidence facts: `{}`\n- Route assessments: `{}`\n- Content slots: `{}`\n- Findings: `{}`\n- Documents: `{}` selected / `{}` candidates; primary `{}` / `{}`\n- Document budget skips: `{}`; byte budget skips: `{}`\n- Coverage: `{}` complete / `{}` partial / `{}` not requested; limit exceeded `{}`\n- Markdown coverage: `{:?}`; conflict coverage: `{:?}`\n- Observations: `{}` present / `{}` absent / `{}` unknown (`{}` unacknowledged) / `{}` conflict\n- Review priorities: `{}`; top route `{:?}` / authority `{:?}`\n- Top recommendation: {}\n- Patch operations: `{}`\n- Patch holds: `{}`\n",
                 summary.entries_scanned,
                 summary.evidence_facts,
                 summary.route_assessments,
@@ -506,6 +520,10 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
                 summary.observations.unknown,
                 summary.observations.unacknowledged_unknown,
                 summary.observations.conflict,
+                summary.review_priorities,
+                summary.top_review_route,
+                summary.top_review_authority,
+                summary.top_review_recommendation.unwrap_or("No bounded review item."),
                 summary.patch_operations,
                 summary.patch_holds,
             ));
@@ -514,13 +532,18 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
             out.push_str("\n## Routes\n");
             for assessment in routes.assessments {
                 let state = assessment.summary_projection();
+                let axes = assessment.axes();
                 out.push_str(&format!(
-                    "- `{:?}`: `{:?}`; root={}, readme={}, inherited={}\n",
+                    "- `{:?}`: `{:?}`; artifact(root={}, inherited={}), entrypoint={}, local-targets={}, freshness=`{:?}`, conflicts={}, policy=`{:?}`\n",
                     assessment.route(),
                     state.state,
-                    assessment.presence().root_structured(),
-                    assessment.readme().routing().is_present(),
-                    assessment.presence().inherited(),
+                    axes.artifact.root_structured(),
+                    axes.artifact.inherited(),
+                    axes.entrypoint.is_present(),
+                    axes.reachability.repository_local_present(),
+                    axes.freshness,
+                    axes.conflict.shared_target_count(),
+                    axes.policy,
                 ));
             }
         }
@@ -561,8 +584,10 @@ pub fn render_query_markdown(view: &CodexQueryView<'_>) -> String {
             }
         }
         CodexQuery::Patches(plan) => out.push_str(&format!(
-            "\n- Dry-run operations: `{}`\n- Held items: `{}`\n- Writes files: `{}`\n",
-            plan.operations.len(),
+            "\n- Edit-existing previews: `{}`\n- Create-skeleton review items: `{}`\n- Manual decisions: `{}`\n- Held items: `{}`\n- Writes files: `{}`\n",
+            plan.proposal_count(seiri_core::PatchProposalKind::EditExisting),
+            plan.proposal_count(seiri_core::PatchProposalKind::CreateSkeleton),
+            plan.proposal_count(seiri_core::PatchProposalKind::ManualDecision),
             plan.held.len(),
             plan.writes_files,
         )),

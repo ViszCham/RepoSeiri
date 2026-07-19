@@ -10,7 +10,10 @@ use seiri_patterns::{
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn loads_and_executes_all_group_fixture_classes_without_process_or_network() {
@@ -426,9 +429,10 @@ impl BlockZFixture {
             .duration_since(UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "reposeiri-pattern-pack-{}-{nonce}",
-            std::process::id()
+            "reposeiri-pattern-pack-{}-{nonce}-{sequence}",
+            std::process::id(),
         ));
         fs::create_dir_all(root.join("positive")).expect("positive root");
         fs::write(root.join("positive/README.md"), "# Positive\n").expect("positive file");

@@ -13,7 +13,9 @@
 - Document budget skips: `0`; byte budget skips: `0`
 - Coverage: `20` complete / `0` partial / `1` not requested; limit exceeded `0`
 - Markdown coverage: `Complete`; conflict coverage: `Complete`
-- Observations: `29` present / `46` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Observations: `28` present / `47` absent / `1` unknown (`0` unacknowledged) / `0` conflict
+- Review priorities: `55`; top route `Some(Security)` / authority `Some(MaintainerDecision)`
+- Top recommendation: Review the missing content separately from route presence.
 - Patch operations: `1`
 - Patch holds: `3`
 

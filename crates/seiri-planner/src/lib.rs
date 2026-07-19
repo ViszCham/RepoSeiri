@@ -6,7 +6,6 @@ use seiri_core::{
     PatchProposalBinding, PatchProposalDecision, PatchTextEdit, RepositoryAnalysis, RouteKind,
     RouteTargetRole, TextDocumentBase, TextEditSpan, TextEncoding,
 };
-use std::fs;
 use std::path::{Component, Path};
 
 const PATCH_ROUTES: &[RouteKind] = &[
@@ -25,7 +24,7 @@ const PATCH_ROUTES: &[RouteKind] = &[
     RouteKind::Hygiene,
 ];
 
-const PLANNER_SEMANTIC_REVISION: &str = "seiri.patch-planner.v4";
+const PLANNER_SEMANTIC_REVISION: &str = "seiri.patch-planner.v5";
 
 /// Produces bound, dry-run README links to targets that already exist locally.
 #[must_use]
@@ -45,14 +44,14 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
         hold_all(analysis, &mut report, PatchHoldReason::MissingReadme);
         return report;
     };
-    let current = match read_current_document_bytes(analysis, readme.path()) {
-        Ok(bytes) => bytes,
-        Err(_) => {
+    let current = match analysis.source_store().get(readme.path()) {
+        Some(source) => source.bytes(),
+        None => {
             hold_all(analysis, &mut report, PatchHoldReason::StaleBase);
             return report;
         }
     };
-    let base = TextDocumentBase::from_bytes(&current);
+    let base = TextDocumentBase::from_bytes(current);
     if base != *readme.base() || base.encoding() == TextEncoding::Unknown {
         hold_all(
             analysis,
@@ -70,11 +69,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
         .map(|portable| PatchBaseDigest::from_bytes(portable.digest.routes.to_string().as_bytes()))
         .unwrap_or_else(|_| PatchBaseDigest::from_bytes(analysis.schema_version.as_bytes()));
     let analysis_run = PatchAnalysisRun::new(format!("patch-plan-{run_digest}"), run_digest);
-    let pair = analysis
-        .route_content
-        .structural_pairs
-        .iter()
-        .find(|pair| pair.document_path == readme.path());
+    let topology = analysis.language_topology().for_path(readme.path());
 
     for (ordinal, route) in PATCH_ROUTES.iter().copied().enumerate() {
         if readme_has_route(analysis, route) {
@@ -120,9 +115,8 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
             continue;
         }
 
-        let paired_language = pair.is_some();
-        let spans = match insertion_spans(pair, &current) {
-            Some(spans) => spans,
+        let insertion_points = match insertion_points(topology, current) {
+            Some(points) => points,
             None => {
                 report.held.push(PatchHold {
                     route,
@@ -133,15 +127,16 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
                 continue;
             }
         };
+        let paired_language = insertion_points.len() == 2;
         let eol = base.line_ending().sequence().unwrap_or("\n");
-        let label = route_label(route);
-        let edits = spans
+        let edits = insertion_points
             .iter()
             .enumerate()
-            .map(|(index, offset)| {
+            .map(|(index, point)| {
+                let label = route_label(route, point.language);
                 PatchTextEdit::literal(
                     format!("patch-edit-{}-{}", ordinal + 1, index + 1),
-                    TextEditSpan::insertion(*offset),
+                    TextEditSpan::insertion(point.offset),
                     format!("{eol}- [{label}]({target_path}){eol}"),
                 )
             })
@@ -152,7 +147,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
             base.clone(),
             edits,
         );
-        if proposal.preflight_against(&current).decision != PatchProposalDecision::Ready {
+        if proposal.preflight_against(current).decision != PatchProposalDecision::Ready {
             report.held.push(PatchHold {
                 route,
                 target_path: Some(target_path.to_string()),
@@ -161,7 +156,7 @@ pub fn plan_patches(analysis: &RepositoryAnalysis) -> PatchPlan {
             });
             continue;
         }
-        let Ok(binding) = PatchProposalBinding::bind(analysis_run.clone(), &proposal, &current)
+        let Ok(binding) = PatchProposalBinding::bind(analysis_run.clone(), &proposal, current)
         else {
             report.held.push(PatchHold {
                 route,
@@ -264,7 +259,7 @@ fn readme_has_route(analysis: &RepositoryAnalysis, route: RouteKind) -> bool {
 }
 
 fn existing_target(analysis: &RepositoryAnalysis, route: RouteKind) -> Option<&str> {
-    target_candidates(route).iter().copied().find(|candidate| {
+    route.target_candidates().iter().copied().find(|candidate| {
         let canonical_candidate = candidate.trim_end_matches('/');
         is_safe_relative(candidate)
             && analysis.files.iter().any(|record| {
@@ -272,25 +267,6 @@ fn existing_target(analysis: &RepositoryAnalysis, route: RouteKind) -> Option<&s
                     || (candidate.ends_with('/') && record.path.starts_with(candidate))
             })
     })
-}
-
-fn target_candidates(route: RouteKind) -> &'static [&'static str] {
-    match route {
-        RouteKind::Docs => &["docs/", "docs/README.md"],
-        RouteKind::Quickstart => &["docs/getting-started.md", "docs/quickstart.md"],
-        RouteKind::Support => &["SUPPORT.md"],
-        RouteKind::Intake => &[".github/ISSUE_TEMPLATE/", "SUPPORT.md"],
-        RouteKind::Contributing => &["CONTRIBUTING.md"],
-        RouteKind::Security => &["SECURITY.md"],
-        RouteKind::Release => &["CHANGELOG.md", "docs/releases.md"],
-        RouteKind::Lifecycle => &["docs/releases.md", "CHANGELOG.md"],
-        RouteKind::Governance => &["GOVERNANCE.md"],
-        RouteKind::License => &["LICENSE", "LICENSE.md"],
-        RouteKind::Automation => &[".github/workflows/"],
-        RouteKind::Ownership => &[".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"],
-        RouteKind::Hygiene => &[".gitignore", ".gitattributes", ".editorconfig"],
-        RouteKind::Identity | RouteKind::Unknown => &[],
-    }
 }
 
 fn is_safe_relative(path: &str) -> bool {
@@ -301,80 +277,50 @@ fn is_safe_relative(path: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
-fn insertion_spans(
-    pair: Option<&seiri_core::BilingualStructuralPair>,
+#[derive(Debug, Clone, Copy)]
+struct InsertionPoint {
+    offset: usize,
+    language: seiri_core::DocumentLanguage,
+}
+
+fn insertion_points(
+    topology: Option<seiri_core::LanguageTopology>,
     source: &[u8],
-) -> Option<Vec<usize>> {
-    match pair {
-        None => Some(vec![source.len()]),
-        Some(pair) => {
-            let mut offsets = vec![pair.left_heading.byte_end, pair.right_heading.byte_end];
-            offsets.sort_unstable();
-            offsets.dedup();
-            if offsets.len() != 2
-                || offsets.iter().any(|offset| {
-                    *offset > source.len()
-                        || std::str::from_utf8(source)
-                            .map_or(true, |text| !text.is_char_boundary(*offset))
-                })
-            {
-                None
-            } else {
-                Some(offsets)
-            }
-        }
+) -> Option<Vec<InsertionPoint>> {
+    let points = match topology? {
+        seiri_core::LanguageTopology::Monolingual(language) => vec![InsertionPoint {
+            offset: source.len(),
+            language,
+        }],
+        seiri_core::LanguageTopology::Parallel {
+            japanese_insertion,
+            english_insertion,
+        } => vec![
+            InsertionPoint {
+                offset: japanese_insertion,
+                language: seiri_core::DocumentLanguage::Japanese,
+            },
+            InsertionPoint {
+                offset: english_insertion,
+                language: seiri_core::DocumentLanguage::English,
+            },
+        ],
+        seiri_core::LanguageTopology::Ambiguous => return None,
+    };
+    let text = std::str::from_utf8(source).ok()?;
+    if points.len() == 2 && points[0].offset == points[1].offset {
+        return None;
     }
-}
-
-fn route_label(route: RouteKind) -> &'static str {
-    match route {
-        RouteKind::Docs => "Documentation",
-        RouteKind::Quickstart => "Quickstart",
-        RouteKind::Support => "Support",
-        RouteKind::Intake => "Issue intake",
-        RouteKind::Contributing => "Contributing",
-        RouteKind::Security => "Security policy",
-        RouteKind::Release => "Changes and releases",
-        RouteKind::Lifecycle => "Lifecycle",
-        RouteKind::Governance => "Governance",
-        RouteKind::License => "License",
-        RouteKind::Automation => "Automation",
-        RouteKind::Ownership => "Ownership",
-        RouteKind::Hygiene => "Repository hygiene",
-        RouteKind::Identity | RouteKind::Unknown => "Repository information",
-    }
-}
-
-fn read_current_document_bytes(
-    analysis: &RepositoryAnalysis,
-    relative_path: &str,
-) -> Result<Vec<u8>, String> {
-    let relative = Path::new(relative_path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    if points
+        .iter()
+        .any(|point| point.offset > source.len() || !text.is_char_boundary(point.offset))
     {
-        return Err("Planner refused a non-repository-relative document path.".to_string());
+        None
+    } else {
+        Some(points)
     }
+}
 
-    let root = seiri_fs::RepositoryRoot::resolve(analysis.analysis_root())
-        .map_err(|error| format!("Repository root could not be resolved: {error}"))?;
-    let candidate = root.as_path().join(relative);
-    let canonical = fs::canonicalize(&candidate)
-        .map_err(|error| format!("Current document could not be resolved: {error}"))?;
-    if !canonical.starts_with(root.as_path()) {
-        return Err(
-            "Planner refused a document whose resolved path escapes the repository root."
-                .to_string(),
-        );
-    }
-    let metadata = fs::metadata(&canonical)
-        .map_err(|error| format!("Current document metadata could not be read: {error}"))?;
-    if !metadata.is_file() {
-        return Err(
-            "Planner requires the current document target to be a regular file.".to_string(),
-        );
-    }
-    fs::read(&canonical).map_err(|error| format!("Current document could not be read: {error}"))
+fn route_label(route: RouteKind, language: seiri_core::DocumentLanguage) -> &'static str {
+    route.label(language)
 }

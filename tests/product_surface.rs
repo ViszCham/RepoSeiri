@@ -1,4 +1,5 @@
 use seiri_codex::{CodexQueryKind, CodexView};
+use seiri_core::{RouteKind, RouteState};
 use std::fs;
 use std::path::PathBuf;
 
@@ -36,12 +37,17 @@ fn readme_example_is_generated_from_the_public_fixture() {
 }
 
 #[test]
-fn readme_cli_plugin_and_release_surfaces_share_the_v1_contract() {
+fn product_version_and_semantic_contract_stay_separate_across_surfaces() {
     let readme = read("README.md");
     let cli = read("crates/seiri-cli/src/main.rs");
     let skill = read("plugins/reposeiri/skills/reposeiri/SKILL.md");
-    let migration = read("docs/migration-v3.md");
+    let migration = format!(
+        "{}\n{}",
+        read("docs/migration-v3.md"),
+        read("docs/migration-v4.md")
+    );
     let release = read("docs/release.md");
+    let lifecycle = read("docs/lifecycle.md");
     let changelog = read("CHANGELOG.md");
     let cargo = read("Cargo.toml");
     let plugin: serde_json::Value =
@@ -53,6 +59,12 @@ fn readme_cli_plugin_and_release_surfaces_share_the_v1_contract() {
     for surface in [&readme, &skill, &release, &changelog] {
         assert!(surface.contains("1.0.0"));
     }
+    for surface in [&release, &lifecycle] {
+        assert!(surface.contains("seiri.contract.v4"));
+        assert!(surface.contains("22"));
+        assert!(!surface.contains("`1.0.0` source contract"));
+    }
+    assert_eq!(lifecycle.matches("migration-v4.md").count(), 2);
 
     for query in CodexQueryKind::ALL {
         let slug = query.slug();
@@ -69,6 +81,7 @@ fn readme_cli_plugin_and_release_surfaces_share_the_v1_contract() {
         "seiri.patch-plan.v2",
         "seiri.codex.v2",
         "seiri.completion.v3",
+        "seiri.contract.v4",
         "reposeiri.runtime-manifest.v3",
     ] {
         assert!(
@@ -82,6 +95,20 @@ fn readme_cli_plugin_and_release_surfaces_share_the_v1_contract() {
     assert!(japanese < english);
     assert_eq!(readme.matches("cargo test --workspace --locked").count(), 2);
     assert_eq!(readme.matches("fixtures/readme-route-repo").count(), 4);
+}
+
+#[test]
+fn readme_keeps_the_documentation_route_below_overload() {
+    let summary = seiri_markdown::analyze_readme(repository_root())
+        .expect("analyze repository README")
+        .expect("repository README");
+    let docs = summary
+        .route_map
+        .entries
+        .iter()
+        .find(|entry| entry.route == RouteKind::Docs)
+        .expect("documentation route");
+    assert_ne!(docs.state, RouteState::Overloaded);
 }
 
 #[test]

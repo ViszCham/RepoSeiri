@@ -8,5 +8,4 @@ publish.workspace = true
 
 [dependencies]
 seiri-core = { path = "../seiri-core" }
-seiri-fs = { path = "../seiri-fs" }
 seiri-delta = { path = "../seiri-delta" }

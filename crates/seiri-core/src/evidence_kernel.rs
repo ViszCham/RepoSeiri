@@ -340,6 +340,13 @@ impl EvidenceKernel {
     pub fn is_empty(&self) -> bool {
         self.facts.is_empty()
     }
+
+    #[must_use]
+    pub fn contains(&self, id: EvidenceId) -> bool {
+        self.facts
+            .get(id.ordinal() as usize - 1)
+            .is_some_and(|fact| fact.id == id)
+    }
 }
 
 impl<'de> Deserialize<'de> for EvidenceKernel {

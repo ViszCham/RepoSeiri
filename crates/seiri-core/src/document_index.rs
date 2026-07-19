@@ -320,6 +320,14 @@ impl DocumentIndex {
     }
 
     #[must_use]
+    pub fn get(&self, path: &str) -> Option<&IndexedDocument> {
+        self.entries
+            .binary_search_by(|entry| entry.path.as_str().cmp(path))
+            .ok()
+            .map(|index| &self.entries[index])
+    }
+
+    #[must_use]
     pub fn root_readme_document(&self) -> Option<&DocumentScan> {
         self.entries
             .iter()

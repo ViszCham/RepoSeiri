@@ -4,7 +4,7 @@ use seiri_core::{
     CoverageIncompleteReason, CoverageStatus, DocumentEvent, DocumentIndex, DocumentRole,
     DocumentRoleCoverage, DocumentScan, DocumentScanInvariantError, DocumentScanStatus, FileKind,
     FileRecord, IndexedDocument, PathClassification, ReadmeSummary, RepositoryScopeGraph,
-    SourceSpan, TextDocumentBase,
+    SourceDocument, SourceSpan, SourceStoreError, TextDocumentBase,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -23,7 +23,7 @@ use source::{
 };
 
 pub use classifier::{classify_route, classify_routes};
-pub use source::{DocumentSourceSession, SourceDocument};
+pub use source::DocumentSourceSession;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentScanOptions {
@@ -276,12 +276,14 @@ pub fn scan_document_source_session_with_options_and_scope(
                 Ok(bytes) => {
                     used_source_bytes = used_source_bytes.saturating_add(bytes.len());
                     indexed_documents += 1;
+                    let base = TextDocumentBase::from_bytes(&bytes);
+                    sources.push(SourceDocument::from_bytes(path.clone(), bytes));
                     entries.push(IndexedDocument::unparsed(
                         path,
                         role,
                         classification,
                         declared_bytes,
-                        TextDocumentBase::from_bytes(&bytes),
+                        base,
                     ));
                 }
                 Err(error) => entries.push(IndexedDocument::unavailable(
@@ -306,7 +308,7 @@ pub fn scan_document_source_session_with_options_and_scope(
             PreparedMarkdown::Scanned { scan, source } => {
                 used_source_bytes = used_source_bytes.saturating_add(scan.source_bytes());
                 indexed_documents += 1;
-                sources.push(SourceDocument::new(path.clone(), source));
+                sources.push(SourceDocument::from_text(path.clone(), source));
                 entries.push(IndexedDocument::scanned(
                     path,
                     role,
@@ -335,7 +337,19 @@ pub fn scan_document_source_session_with_options_and_scope(
         .collect();
     let index = DocumentIndex::try_new(entries, role_coverage)?;
     sources.sort_by(|left, right| left.path().cmp(right.path()));
-    Ok(DocumentSourceSession::new(index, sources))
+    DocumentSourceSession::new(index, sources).map_err(map_source_store_error)
+}
+
+fn map_source_store_error(error: SourceStoreError) -> seiri_core::DocumentIndexError {
+    match error {
+        SourceStoreError::EmptyPath => seiri_core::DocumentIndexError::EmptyPath,
+        SourceStoreError::DuplicatePath(path) => {
+            seiri_core::DocumentIndexError::DuplicatePath(path)
+        }
+        SourceStoreError::NonCanonicalOrder | SourceStoreError::TotalBytesOverflow => {
+            seiri_core::DocumentIndexError::NonCanonicalEntryOrder
+        }
+    }
 }
 
 #[derive(Debug)]
