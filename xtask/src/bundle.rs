@@ -564,7 +564,11 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn find_runtime_manifests(root: &Path) -> Vec<PathBuf> {
@@ -635,6 +639,17 @@ mod tests {
         let args = vec![OsString::from("--target"), OsString::from("x")];
         assert_eq!(option(&args, "--target").expect("target"), "x");
         assert!(option(&args, "--binary").is_err());
+    }
+
+    #[test]
+    fn sha256_file_renders_lowercase_digest_after_sha2_upgrade() {
+        let temporary = tempfile::tempdir().expect("bundle tempdir");
+        let path = temporary.path().join("payload");
+        fs::write(&path, b"abc").expect("payload");
+        assert_eq!(
+            sha256_file(&path).expect("digest"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

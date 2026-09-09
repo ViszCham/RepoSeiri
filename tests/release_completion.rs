@@ -136,7 +136,7 @@ fn security_dependency_floor_and_msrv_are_explicit() {
     let workspace = read("Cargo.toml");
     assert!(workspace.contains("rust-version = \"1.88\""));
     assert!(workspace.contains("gix = { version = \"=0.83.0\""));
-    assert!(workspace.contains("time = \"=0.3.47\""));
+    assert!(workspace.contains("time = \"=0.3.53\""));
 
     let ci = read(".github/workflows/ci.yml");
     assert!(ci.contains("cargo +1.88.0 check --workspace --all-targets --locked"));

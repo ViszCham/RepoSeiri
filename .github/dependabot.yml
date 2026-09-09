@@ -1,7 +1,23 @@
 version: 2
 updates:
+  # fuzz/ is `exclude`d from the root workspace but path-depends on its crates,
+  # so a root bump invalidates fuzz/Cargo.lock too. The fuzz smoke runs with
+  # --locked, so a PR carrying only the root lock fails without touching any
+  # code -- which is what happened to #15, #16, #17 and #18 alike.
+  #
+  # One job over both directories, grouped by dependency name, so each bump
+  # arrives as a single PR that refreshes both lockfiles together. Two separate
+  # jobs would not do this: they would open two independent PRs, and the root
+  # one would still reach the fuzz smoke with a stale lock.
   - package-ecosystem: cargo
-    directory: /
+    directories:
+      - /
+      - /fuzz
+    groups:
+      cargo:
+        patterns:
+          - "*"
+        group-by: dependency-name
     schedule:
       interval: weekly
       day: monday

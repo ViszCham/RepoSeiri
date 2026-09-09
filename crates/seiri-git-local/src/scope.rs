@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use toml::Value as TomlValue;
+use toml::{Table as TomlTable, Value as TomlValue};
 
 pub(crate) fn build_scope_graph(
     root: &Path,
@@ -301,7 +301,7 @@ fn manifest(
 }
 
 fn cargo_members(text: &str) -> Option<ParsedManifest> {
-    let value = text.parse::<TomlValue>().ok()?;
+    let value = text.parse::<TomlTable>().ok()?;
     let workspace = value.get("workspace");
     Some(ParsedManifest {
         members: toml_string_array(workspace.and_then(|value| value.get("members"))),
@@ -311,7 +311,7 @@ fn cargo_members(text: &str) -> Option<ParsedManifest> {
 }
 
 fn pyproject_members(text: &str) -> Option<ParsedManifest> {
-    let value = text.parse::<TomlValue>().ok()?;
+    let value = text.parse::<TomlTable>().ok()?;
     let workspace = value
         .get("tool")
         .and_then(|value| value.get("uv"))
@@ -558,4 +558,19 @@ const fn edge_from_rank(rank: u8) -> ScopeEdgeKind {
 
 const fn partial(reason: CoverageIncompleteReason) -> CoverageStatus {
     CoverageStatus::Partial(reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_package_manifest_remains_package_evidence() {
+        let text = "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n";
+        let value = text.parse::<toml::Table>().expect("valid Cargo manifest");
+        assert!(value.get("package").is_some());
+
+        let manifest = cargo_members(text).expect("parsed Cargo manifest");
+        assert!(manifest.declares_package);
+    }
 }
